@@ -1,0 +1,51 @@
+.form { width: 100%; max-width: 660px; min-height: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; color: var(--app-text); }
+.fields { min-width: 0; margin: 0; padding: 0; border: 0; display: grid; align-content: start; gap: 20px; }
+.fields :global(.app-field) { font-size: .875rem; line-height: 1.5; min-width: 0; }
+.fields textarea { resize: vertical; max-height: 320px; }
+.twoColumns { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.hint, .optional { color: var(--app-text-muted); font-size: .76rem; font-weight: 450; }
+.footer { margin-top: auto; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding-top: 20px; border-top: 1px solid var(--app-border); }
+.footer :global(.app-spinner) { width: 15px; height: 15px; }
+.errorHint { margin: 8px 0 0; font-size: .8rem; line-height: 1.5; }
+.choiceGroup { padding: 0; margin: 0; border: 0; min-width: 0; }
+.choiceGroup legend { margin-bottom: 10px; font-size: .88rem; font-weight: 650; }
+.choiceGroup legend span { display: block; margin-top: 3px; }
+.choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.specializations { display: grid; gap: 8px; }
+.choice { min-width: 0; min-height: 42px; display: flex; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-panel); cursor: pointer; font-size: .82rem; line-height: 1.4; }
+.choice:has(input:checked) { border-color: var(--app-accent); background: var(--app-accent-soft); }
+.choice:has(input:focus-visible) { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.choice input { width: 16px; height: 16px; margin: 0; flex-shrink: 0; accent-color: var(--app-accent); }
+.transfers { min-width: 0; display: grid; align-content: start; gap: 16px; padding: 18px; }
+.transferToolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.transferToolbar h2 { margin: 0; color: var(--app-text-strong); font-size: 1rem; font-weight: 700; letter-spacing: -.02em; }
+.transferToolbar p { margin: 4px 0 0; color: var(--app-text-muted); font-size: .8rem; }
+.toolbarActions { display: flex; align-items: center; gap: 8px; }
+.toolbarActions select { min-width: 144px; font-size: .82rem; }
+.empty { min-height: 220px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; padding: 22px; text-align: center; color: var(--app-text-muted); font-size: .84rem; }
+.empty strong { color: var(--app-text-strong); }
+.transferList { min-width: 0; padding: 0; margin: 0; list-style: none; border-top: 1px solid var(--app-border); }
+.transferRow { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--app-border); }
+.transferMain { min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; font-size: .82rem; }
+.transferMain strong { color: var(--app-text-strong); font-size: .9rem; }
+.transferMain span, .transferMain time { color: var(--app-text-muted); }
+.transferMain time { font-size: .75rem; }
+.transferMain p { white-space: pre-wrap; margin: 5px 0; line-height: 1.5; }
+.transferActions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
+.rowButtons { display: flex; flex-wrap: wrap; gap: 8px; }
+.confirmation { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px; border: 1px solid var(--app-warning-border); border-radius: 7px; background: var(--app-warning-soft); }
+.confirmation p { margin: 0; max-width: 440px; font-size: .82rem; }
+.notice { margin: 0; color: var(--app-success); font-size: .84rem; }
+@media (max-width: 540px) {
+  .twoColumns { grid-template-columns: minmax(0, 1fr); }
+  .choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .transfers { padding: 14px; }
+  .transferToolbar { align-items: stretch; }
+  .toolbarActions { width: 100%; }
+  .toolbarActions > label { flex: 1; }
+  .transferRow { grid-template-columns: minmax(0, 1fr); }
+  .transferActions { justify-content: space-between; }
+  .confirmation .rowButtons { width: 100%; }
+  .rowButtons :global(.app-button) { min-height: 42px; }
+  .footer :global(.app-button) { min-height: 42px; flex: 1; }
+}

@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Asset Schedule</title>
+    <style>
+      @page {
+        size: Letter;
+        margin: 6mm 6mm 10mm 6mm;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: #111827;
+        background: #ffffff;
+        font-family: "Times New Roman", Times, serif;
+        font-size: 10pt;
+        line-height: 1.15;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      .page-shell {
+        width: 100%;
+      }
+
+      .report-header {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3px;
+        margin-bottom: 7px;
+      }
+
+      .logo {
+        width: 160px;
+        height: auto;
+        object-fit: contain;
+      }
+
+      .schedule-label {
+        font-size: 13pt;
+        font-weight: 700;
+      }
+
+      .report-title {
+        font-size: 10pt;
+        font-weight: 700;
+        margin-top: 2px;
+      }
+
+      .lot-section {
+        margin-bottom: 8px;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .lot-heading {
+        font-size: 10pt;
+        font-weight: 700;
+        margin: 0 0 4px 0;
+      }
+
+      .schedule-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        page-break-inside: auto;
+      }
+
+      .schedule-table thead th {
+        background: #edf3fb;
+        color: #111827;
+        border: 1px solid #d8e2f0;
+        padding: 4px 5px;
+        text-align: center;
+        font-size: 10pt;
+        font-weight: 700;
+        vertical-align: middle;
+      }
+
+      .schedule-table tbody td {
+        border: 1px solid #e5e7eb;
+        padding: 5px;
+        vertical-align: top;
+        font-size: 10pt;
+        overflow-wrap: anywhere;
+        word-break: normal;
+        hyphens: auto;
+      }
+
+      .col-title {
+        width: 18%;
+      }
+
+      .col-serial {
+        width: 16%;
+      }
+
+      .col-description {
+        width: 37%;
+      }
+
+      .col-value {
+        width: 8%;
+      }
+
+      .col-image {
+        width: 15%;
+      }
+
+      .value-heading {
+        display: block;
+        font-weight: 700;
+      }
+
+      .value-currency {
+        display: block;
+        font-weight: 700;
+      }
+
+      .value-total {
+        display: block;
+        margin-top: 2px;
+        font-weight: 700;
+      }
+
+      .title-cell {
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .serial-cell,
+      .value-cell {
+        text-align: center;
+        font-weight: 700;
+      }
+
+      .serial-cell {
+        font-size: 10pt;
+        line-height: 1.15;
+      }
+
+      .value-cell {
+        white-space: normal;
+        line-height: 1.15;
+      }
+
+      .description-cell {
+        overflow-wrap: anywhere;
+        word-break: normal;
+      }
+
+      .description-cell {
+        font-size: 10pt;
+        line-height: 1.15;
+      }
+
+      .image-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 62px;
+      }
+
+      .asset-image {
+        width: 100%;
+        max-width: 86px;
+        height: 62px;
+        object-fit: cover;
+        border: 1px solid #d1d5db;
+      }
+
+      .image-placeholder {
+        width: 86px;
+        height: 62px;
+        border: 1px solid #d1d5db;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #6b7280;
+        font-size: 10pt;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="report-header">
+        <img src="{{logo_url}}" alt="McDougall Auctioneers" class="logo" />
+        <div class="schedule-label">Schedule A</div>
+        {{#if report_title}}
+        <div class="report-title">{{report_title}}</div>
+        {{/if}}
+      </header>
+
+      {{#each schedule_rows}}
+      <section class="lot-section">
+        <h2 class="lot-heading">Lot - {{lot_number_display}} - {{lot_heading}}</h2>
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th class="col-serial">SN/VIN</th>
+              <th class="col-description" style="width: {{../description_width}}%">Description</th>
+              {{#each valuations}}
+              <th class="col-value">
+                <span class="value-heading">{{code}}</span>
+                <span class="value-currency">({{../../currency_code}})</span>
+              </th>
+              {{/each}}
+              <th class="col-image">Image</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="serial-cell">{{serial_or_vin}}</td>
+              <td class="description-cell">{{description}}</td>
+              {{#each valuations}}
+              <td class="value-cell">{{value}}</td>
+              {{/each}}
+              <td>
+                <div class="image-wrap">
+                  {{#if image_url}}
+                  <img src="{{image_url}}" alt="{{title}}" class="asset-image" />
+                  {{else}}
+                  <div class="image-placeholder">No Image</div>
+                  {{/if}}
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+      {{/each}}
+    </div>
+  </body>
+</html>

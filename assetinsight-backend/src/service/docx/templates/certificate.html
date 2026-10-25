@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Certificate of Value</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #ffffff;
+      width: 794px;
+      height: 1123px;
+      padding: 0;
+      margin: 0;
+      overflow: hidden;
+    }
+    
+    .certificate-wrapper {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #fef2f2 0%, #ffffff 100%);
+      border-radius: 0;
+      overflow: hidden;
+      border: none;
+      margin: 0;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-sizing: border-box;
+    }
+    
+    .playfair {
+      font-family: 'Playfair Display', serif;
+    }
+  </style>
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'red': {
+              50: '#fef2f2',
+              100: '#fee2e2',
+              200: '#fecaca',
+              300: '#fca5a5',
+              400: '#f87171',
+              500: '#ef4444',
+              600: '#dc2626',
+              700: '#b91c1c',
+              800: '#991b1b',
+              900: '#7f1d1d',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="certificate-wrapper">
+    <!-- Header -->
+    <div class="bg-gradient-to-r from-red-500 via-red-600 to-red-700 px-8 py-8 relative">
+      <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-400 via-amber-400 to-red-400"></div>
+      
+      <div class="text-center">
+        <i class="fas fa-award text-white text-5xl mb-4 opacity-90"></i>
+        <h1 class="playfair text-5xl font-bold text-white tracking-wider uppercase mb-3">
+          {{TITLE}}
+        </h1>
+        <p class="text-red-100 text-lg font-medium tracking-widest uppercase">
+          Professional Business Valuation
+        </p>
+      </div>
+      
+      <div class="absolute bottom-0 left-0 w-full h-1.5 bg-amber-400"></div>
+    </div>
+    
+    <!-- Body -->
+    <div class="px-8 py-8 bg-white">
+      <!-- Statement -->
+      <div class="text-center mb-10">
+        <p class="text-gray-700 text-base leading-relaxed max-w-4xl mx-auto">
+          This document certifies that a comprehensive professional appraisal has been conducted 
+          in accordance with applicable industry standards and regulatory requirements. The 
+          valuation opinion presented herein represents our professional expertise and thorough 
+          market analysis.
+        </p>
+      </div>
+      
+      <!-- Value Showcase -->
+      {{VALUE_SECTION_START}}
+      <div class="mb-10">
+        <div class="bg-gradient-to-br from-red-500 to-red-700 rounded-lg p-8 text-center relative overflow-hidden">
+          <div class="absolute top-0 left-0 w-full h-1 bg-amber-400"></div>
+          <div class="absolute inset-0 bg-red-800 opacity-10"></div>
+          
+          <div class="relative z-10">
+            <div class="flex items-center justify-center mb-4">
+              <i class="fas fa-dollar-sign text-amber-300 text-3xl mr-3"></i>
+              <p class="text-red-100 text-sm font-bold tracking-[0.3em] uppercase">
+                Total Appraised Value
+              </p>
+            </div>
+            <p class="playfair text-6xl font-bold text-white tracking-wide">
+              {{TOTAL_VALUE}}
+            </p>
+          </div>
+        </div>
+      </div>
+      {{VALUE_SECTION_END}}
+      
+      <!-- Details Grid -->
+      <div class="grid grid-cols-2 gap-6 mb-10">
+        <!-- Client -->
+        <div class="bg-gradient-to-br from-red-50 to-white border-l-4 border-red-600 rounded-lg p-5">
+          <div class="flex items-center mb-3">
+            <i class="fas fa-user text-red-600 text-lg mr-3"></i>
+            <p class="text-xs font-bold text-gray-500 tracking-wider uppercase">Client</p>
+          </div>
+          <p class="text-xl font-semibold text-gray-900">{{CLIENT_NAME}}</p>
+        </div>
+        
+        <!-- Effective Date -->
+        <div class="bg-gradient-to-br from-red-50 to-white border-l-4 border-red-600 rounded-lg p-5">
+          <div class="flex items-center mb-3">
+            <i class="fas fa-calendar-check text-red-600 text-lg mr-3"></i>
+            <p class="text-xs font-bold text-gray-500 tracking-wider uppercase">Effective Date</p>
+          </div>
+          <p class="text-xl font-semibold text-gray-900">{{EFFECTIVE_DATE}}</p>
+        </div>
+        
+        <!-- Purpose -->
+        <div class="bg-gradient-to-br from-red-50 to-white border-l-4 border-red-600 rounded-lg p-5">
+          <div class="flex items-center mb-3">
+            <i class="fas fa-clipboard-list text-red-600 text-lg mr-3"></i>
+            <p class="text-xs font-bold text-gray-500 tracking-wider uppercase">Purpose</p>
+          </div>
+          <p class="text-xl font-semibold text-gray-900">{{PURPOSE}}</p>
+        </div>
+        
+        <!-- Prepared By -->
+        <div class="bg-gradient-to-br from-red-50 to-white border-l-4 border-red-600 rounded-lg p-5">
+          <div class="flex items-center mb-3">
+            <i class="fas fa-user-tie text-red-600 text-lg mr-3"></i>
+            <p class="text-xs font-bold text-gray-500 tracking-wider uppercase">Prepared By</p>
+          </div>
+          <p class="text-xl font-semibold text-gray-900">{{PREPARED_BY}}</p>
+        </div>
+      </div>
+      
+      <!-- Signature Section -->
+      <div class="grid grid-cols-2 gap-16 mt-12 pt-10 border-t-2 border-gray-200">
+        <!-- Authorized Signature Column -->
+        <div>
+          <div class="h-16 mb-2"></div>
+          <div class="border-t-2 border-gray-800 pt-2">
+            <div class="flex items-center justify-center">
+              <i class="fas fa-pen-fancy text-gray-600 text-sm mr-2"></i>
+              <p class="text-sm font-semibold text-gray-600 tracking-wide uppercase">Authorized Signature</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Date Column -->
+        <div>
+          <div class="h-12 mb-2 flex items-end justify-center">
+            <p class="text-base font-semibold text-gray-900">{{REPORT_DATE}}</p>
+          </div>
+          <div class="border-t-2 border-gray-800 pt-2">
+            <div class="flex items-center justify-center">
+              <i class="fas fa-calendar text-gray-600 text-sm mr-2"></i>
+              <p class="text-sm font-semibold text-gray-600 tracking-wide uppercase">Date</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Footer -->
+    <div class="bg-gradient-to-r from-red-600 to-red-700 px-8 py-5 text-center">
+      <div class="flex items-center justify-center">
+        <i class="fas fa-shield-alt text-red-200 text-lg mr-3"></i>
+        <p class="text-sm text-red-50 tracking-wide">
+          This certificate is valid for business purposes and complies with professional appraisal standards.
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

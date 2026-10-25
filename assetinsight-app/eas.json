@@ -1,0 +1,49 @@
+{
+  "cli": {
+    "version": ">= 16.17.4",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "resourceClass": "large",
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "resourceClass": "large",
+      "distribution": "internal"
+    },
+    "production": {
+      "resourceClass": "large",
+      "autoIncrement": true,
+      "environment": "production",
+      "developmentClient": false,
+      "env": {
+        "EXPO_NO_DOTENV": "1",
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.assetinsightvaluator.com/api",
+        "EXPO_PUBLIC_CAPTURE_BACKUP_ENABLED": "false"
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "credentialsSource": "remote"
+      }
+    },
+    "production-apk": {
+      "extends": "production",
+      "environment": "production",
+      "developmentClient": false,
+      "env": {
+        "EXPO_NO_DOTENV": "1",
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.assetinsightvaluator.com/api",
+        "EXPO_PUBLIC_CAPTURE_BACKUP_ENABLED": "false"
+      },
+      "android": {
+        "buildType": "apk",
+        "credentialsSource": "remote"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

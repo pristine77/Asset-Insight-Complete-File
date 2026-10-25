@@ -1,0 +1,35 @@
+node_modules/
+.expo/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+google-services.json
+web-build/
+
+
+
+
+ios
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+
+# Generated output from local Expo native modules and native CMake builds.
+modules/*/android/build/
+modules/*/android/.gradle/
+modules/*/android/.kotlin/
+modules/*/android/.cxx/
+android/app/.cxx/
+
+# macOS
+.DS_Store
+
+# Temporary files created by Metro to check the health of the file watcher
+.metro-health-check*

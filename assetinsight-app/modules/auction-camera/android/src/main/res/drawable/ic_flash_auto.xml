@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Bolt -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,2v11h3v9l7-12h-4l4-8z" />
+
+    <!-- "A" for Auto -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17.5,8 L19.5,8 L21,12 L19.8,12 L19.4,11 L17.6,11 L17.2,12 L16,12 Z M17.9,10.2 L19.1,10.2 L18.5,8.8 Z"
+        android:alpha="0.9"/>
+
+</vector>

@@ -1,0 +1,36 @@
+/** Synthetic saved-preview inputs. No provider, database or storage credentials. */
+export function realEstateDocxFixture(propertyType: "residential" | "commercial" | "agricultural", imageUrls: string[] = []) {
+  return {
+    property_type: propertyType,
+    language: "en",
+    owner_name: "Prairie Example Holdings",
+    inspector_name: "Alex Example",
+    inspector_company: "McDougall Auctioneers",
+    inspector_info: { inspector_name: "Alex Example", company_name: "McDougall Auctioneers", contact_email: "appraiser@example.test" },
+    user_email: "appraiser@example.test",
+    currency: "CAD",
+    createdAt: "2026-09-07T12:00:00.000Z",
+    effective_date: "2026-09-07",
+    report_dates: { effective_date: "2026-09-07", report_date: "2026-09-07", inspection_date: "2026-09-06" },
+    property_details: { address: "100 Prairie Example Road, Example Municipality, Saskatchewan", legal_description: "Lot 4 Block 8 Example Plan", municipality: "Example Municipality", property_type: propertyType },
+    address: "100 Prairie Example Road, Example Municipality, Saskatchewan",
+    house_details: { year_built: "2012", square_footage: "2400", lot_size_sqft: "12000", number_of_rooms: "4", number_of_full_bathrooms: "2", number_of_half_bathrooms: "1" },
+    farmland_details: { total_title_acres: 160, cultivated_acres: 145, pasture_acres: 10, other_acres: 5, soil_class: "Class 2", current_land_use: "Annual crop production", use_direct_comparable: true, use_income_approach: true, use_cost_approach: true },
+    valuation: { fair_market_value: "$725,000", value_source: "Saved appraiser conclusion", comparable_used: "Example Comparable 1", comparable_list_price: "$710,000", final_estimate_value: "Seven hundred twenty five thousand dollars", final_estimate_summary: "The saved valuation reflects the reviewed property details and selected evidence.\nThe access lane and detached improvement are included in the appraiser's saved description.", details: "The saved methodology considers the selected approach results and the evidence retained with this report." },
+    comparableProperties: Array.from({ length: 3 }, (_, index) => ({ name: `Example Comparable ${index + 1}`, address: `${101 + index} Long Example Crescent, Example Municipality, Saskatchewan`, listPrice: "$710,000", squareFootage: "2350", lotSize: "11800", bedrooms: "4", bathrooms: "2", adjustedValue: "$725,000" })),
+    farmland_valuation: propertyType === "agricultural" ? {
+      subject_name: "Example Prairie Farm", valuation_date: "2026-09-07", total_title_acres: 160, cultivated_acres: 145, rm_area: "Example Rural Municipality", notes: "Saved field access and irrigation notes remain unchanged.",
+      approaches_used: { direct_comparable: true, income_capitalization: true, cost_approach: true },
+      comparables: Array.from({ length: 2 }, (_, index) => ({ comp_id: `F-${index + 1}`, sale_date: "2026-08-01", rm_area: "Example Rural Municipality", distance_to_subject_km: 12.5, title_acres: 160, cultivated_acres: 145, sale_price: 710000, price_per_cultivated_acre: 4896.55, adjusted_rate: 5000, weight: 50, data_source: "Appraiser supplied comparable evidence" })),
+      weighted_average_rate: 5000, direct_comparison_value: 725000,
+      income_capitalization: { cultivated_acres: 145, market_rent_per_acre: 250, potential_gross_income: 36250, vacancy_loss_percent: 0, effective_gross_income: 36250, operating_expense_ratio: 0, net_operating_income: 36250, cap_rate: 5, indicated_value: 725000, indicated_value_formatted: "$725,000" },
+      cost_approach: { land_value: 600000, replacement_cost_new: 150000, total_depreciation: 25000, depreciated_improvement_value: 125000, indicated_value: 725000, indicated_value_formatted: "$725,000" },
+      reconciliation: { direct_comparison_value: 725000, direct_comparison_weight: 50, direct_comparison_weighted: 362500, income_value: 725000, income_weight: 25, income_weighted: 181250, cost_value: 725000, cost_weight: 25, cost_weighted: 181250, final_reconciled_value: 725000 },
+      fair_market_value: 725000, fair_market_value_formatted: "$725,000",
+    } : undefined,
+    ai_sections: { exec_summary: "Saved summary of the subject property and reviewed evidence.", property_description: "The property includes a principal improvement and landscaped site.\nThe north access lane remains available for inspection.", scope_of_work: "Saved inspection scope and access limitations.", market_analysis: "Saved market commentary retained for this appraisal." },
+    imageUrls,
+    extraImageUrls: [],
+    cover_image_urls: imageUrls.slice(0, 1),
+  };
+}

@@ -1,0 +1,46 @@
+# Keep generated/native caches out of the EAS source archive.
+node_modules/
+.expo/
+dist/
+web-build/
+ios/
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/app/.cxx/
+modules/*/android/build/
+modules/*/android/.gradle/
+modules/*/android/.kotlin/
+modules/*/android/.cxx/
+.DS_Store
+**/*DS_Store
+**/.idea/
+.metro-health-check*
+npm-debug.*
+*.orig.*
+
+# Signing is provided by EAS remote credentials, never the source archive.
+credentials.json
+*.jks
+*.keystore
+!android/app/debug.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+google-services.json
+.env
+.env.*
+
+# Local assistant memory, diagnostics and generated distribution files.
+AGENTS.md
+**/AGENTS.md
+.codex/
+.ai/
+coverage/
+artifacts/
+*.apk
+*.aab

@@ -1,0 +1,16 @@
+.wrap { position: relative; min-height: 250px; }
+.chart { width: 100%; height: auto; min-height: 230px; display: block; overflow: visible; touch-action: pan-y; }
+.grid { stroke: var(--app-border); stroke-width: 1; }
+.axisText { fill: var(--app-text-muted); font-size: 11px; }
+.bar { fill: color-mix(in srgb, var(--app-success) 58%, transparent); }
+.line { fill: none; stroke: var(--app-accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.crosshair { stroke: var(--app-text-muted); stroke-width: 1; stroke-dasharray: 4 4; }
+.point { fill: var(--app-panel); stroke: var(--app-accent); stroke-width: 3; }
+.legend { display: flex; justify-content: flex-end; gap: 16px; margin: 2px 8px -8px 0; color: var(--app-text-muted); font-size: 0.75rem; }
+.legend span, .tooltip span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i, .tooltip i { width: 8px; height: 8px; border-radius: 2px; background: var(--app-accent); }
+.legend i[data-series="lots"], .tooltip i[data-series="lots"] { background: var(--app-success); }
+.tooltip { position: absolute; top: 34px; z-index: 2; min-width: 118px; display: grid; gap: 5px; transform: translateX(-50%); padding: 9px 10px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel); box-shadow: var(--app-shadow-card); color: var(--app-text); font-size: 0.74rem; pointer-events: none; }
+.tooltip strong { color: var(--app-text-strong); }
+.empty { min-height: 240px; display: grid; place-items: center; color: var(--app-text-muted); font-size: 0.86rem; }
+@media (max-width: 680px) { .chart { min-height: 205px; } .legend { justify-content: flex-start; } .tooltip { top: 30px; } }

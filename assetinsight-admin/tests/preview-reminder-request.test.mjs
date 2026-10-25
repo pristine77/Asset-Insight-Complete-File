@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {readPreviewReminderRequest, PreviewResubmitRequestError} from '../lib/previewResubmitRequest.ts';
+const body={subject:'Please correct report 91019',message:'Hello Appraiser,\n\nPlease add the missing Fair Market Values.\nThank you.',baseRevision:'a'.repeat(64),requestId:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'};
+function request(value=body,headers={}){return new Request('https://admin.example.test/api/admin/preview-reports/111111111111111111111111/reminder',{method:'POST',headers:{'content-type':'application/json',origin:'https://admin.example.test',...headers},body:typeof value==='string'?value:JSON.stringify(value)});}
+async function rejects(input,status){await assert.rejects(readPreviewReminderRequest(input),error=>error instanceof PreviewResubmitRequestError&&error.status===status);}
+test('forwards reviewed text and exact retry identity, never recipient or authority',async()=>{assert.deepEqual(await readPreviewReminderRequest(request({...body,recipient:'attacker@example.test',actorId:'forged',reportError:'forged',approved:true})),body);});
+test('preserves Unicode and multiline email text without HTML conversion',async()=>{const value={...body,subject:'Révision du rapport 91019',message:'Bonjour,\n\nValeur: 1 200 $ CA.\n<script>not executable</script>\nMerci.'};assert.deepEqual(await readPreviewReminderRequest(request(value)),value);});
+test('rejects cross-origin cookie mutations and requires JSON',async()=>{await rejects(request(body,{origin:'https://evil.example.test'}),403);await rejects(request(body,{'sec-fetch-site':'cross-site'}),403);await rejects(request(body,{'content-type':'text/plain'}),415);});
+test('requires single-line bounded subject, message and valid revision/request identity',async()=>{for(const value of [{subject:' '},{subject:'ab'},{subject:'a'.repeat(181)},{subject:'Hello\r\nBCC: other@example.test'},{message:'short'},{message:'a'.repeat(10001)},{message:'bad\0text to send'},{baseRevision:'old-revision'},{requestId:'new'}])await rejects(request({...body,...value}),400);});
+test('accepts exact Unicode field limits within a bounded payload',async()=>{const value={...body,subject:'é'.repeat(180),message:'車'.repeat(10000)};assert.deepEqual(await readPreviewReminderRequest(request(value)),value);});
+test('limits declared and actual payload bytes before forwarding',async()=>{await rejects(request(body,{'content-length':'65537'}),413);await rejects(request({...body,extra:'x'.repeat(65536)}),413);});
+test('rejects malformed and nonobject JSON',async()=>{for(const value of ['{','null','[]'])await rejects(request(value),400);});

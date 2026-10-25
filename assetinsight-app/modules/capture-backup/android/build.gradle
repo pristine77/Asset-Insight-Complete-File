@@ -1,0 +1,32 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+  id 'org.jetbrains.kotlin.android'
+}
+
+group = 'expo.modules.capturebackup'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.capturebackup'
+  compileSdk rootProject.ext.compileSdkVersion
+  buildFeatures { buildConfig true }
+  defaultConfig {
+    minSdk 24
+    versionCode 1
+    versionName '1.0.0'
+    testInstrumentationRunner 'expo.modules.capturebackup.BackupInstrumentation'
+    // This also fences persisted WorkManager jobs before React can run after an upgrade/reboot.
+    buildConfigField 'boolean', 'CAPTURE_BACKUP_ENABLED', (System.getenv('EXPO_PUBLIC_CAPTURE_BACKUP_ENABLED') == 'true').toString()
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  kotlinOptions { jvmTarget = '17' }
+}
+
+dependencies {
+  implementation 'androidx.work:work-runtime:2.12.0'
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

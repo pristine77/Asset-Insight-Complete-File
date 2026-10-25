@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Certificate of Market Value</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #202020; background: #fff; width: 794px; height: 1123px; }
+    .certificate { min-height: 1123px; padding: 58px 64px 42px; display: flex; flex-direction: column; }
+    header { margin-bottom: 30px; }
+    .brand { color: #b91c1c; font-size: 14px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 22px; }
+    h1 { font-family: Georgia, 'Times New Roman', serif; color: #000; font-size: 40px; line-height: 1.14; font-weight: bold; max-width: 600px; margin-bottom: 15px; }
+    .property-type { color: #000; font-size: 17px; letter-spacing: 1px; text-transform: uppercase; }
+    .statement { font-size: 16px; line-height: 1.65; margin-bottom: 28px; }
+    .value { margin-bottom: 30px; }
+    .label { font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #525252; margin-bottom: 9px; }
+    .amount { font-family: Georgia, 'Times New Roman', serif; font-size: 48px; line-height: 1.15; font-weight: bold; color: #b91c1c; overflow-wrap: anywhere; }
+    .details { display: grid; grid-template-columns: 1fr 1fr; gap: 26px 32px; margin-bottom: 36px; }
+    .detail-value { font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; }
+    .signatures { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 46px; padding-top: 22px; }
+    .signature-space { height: 50px; display: flex; align-items: end; padding-bottom: 10px; font-size: 16px; }
+    .signature-label { border-top: 1px solid #777; padding-top: 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .8px; }
+    footer { margin-top: 34px; font-size: 12px; line-height: 1.6; color: #555; }
+  </style>
+</head>
+<body>
+  <main class="certificate">
+    <header>
+      <p class="brand">McDougall Auctioneers</p>
+      <h1>{{TITLE}}</h1>
+      <p class="property-type">{{PROPERTY_TYPE}} Valuation</p>
+    </header>
+    <p class="statement">This document certifies that a comprehensive professional real estate appraisal has been
+      conducted in accordance with the Canadian Uniform Standards of Professional Appraisal
+      Practice (CUSPAP). The market value opinion presented herein represents our professional
+      expertise and thorough analysis.</p>
+    {{VALUE_SECTION_START}}
+    <section class="value">
+      <p class="label">Fair Market Value</p>
+      <p class="amount">{{MARKET_VALUE}}</p>
+    </section>
+    {{VALUE_SECTION_END}}
+    <section class="details">
+      <div><p class="label">Property Owner</p><p class="detail-value">{{OWNER_NAME}}</p></div>
+      <div><p class="label">Property Address</p><p class="detail-value">{{PROPERTY_ADDRESS}}</p></div>
+      <div><p class="label">Effective Date</p><p class="detail-value">{{EFFECTIVE_DATE}}</p></div>
+      <div><p class="label">Prepared By</p><p class="detail-value">{{APPRAISER}}</p></div>
+    </section>
+    <section class="signatures">
+      <div><div class="signature-space"></div><p class="signature-label">Appraiser Signature</p></div>
+      <div><div class="signature-space">{{REPORT_DATE}}</div><p class="signature-label">Date</p></div>
+    </section>
+    <footer>This certificate complies with CUSPAP and professional real estate appraisal standards.</footer>
+  </main>
+</body>
+</html>

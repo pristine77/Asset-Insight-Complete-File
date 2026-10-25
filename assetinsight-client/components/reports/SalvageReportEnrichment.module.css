@@ -1,0 +1,14 @@
+.content { min-width: 0; display: grid; gap: .6rem; }
+.content h2 { font-size: 1rem; font-weight: 650; }
+.hint { color: var(--app-text-muted); font-size: .8rem; }
+.section { min-width: 0; border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-panel); }
+.section summary { padding: .85rem; font-size: .9rem; font-weight: 600; cursor: pointer; overflow-wrap: anywhere; }
+.section summary:focus-visible, .tableScroll:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.body { display: grid; gap: .7rem; padding: 0 .85rem .85rem; min-width: 0; }
+.body p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; line-height: 1.5; }
+.tableScroll { overflow-x: auto; max-width: 100%; border: 1px solid var(--app-border); border-radius: 4px; }
+.tableScroll table { width: 100%; border-collapse: collapse; font-size: .8rem; text-align: left; }
+.tableScroll th, .tableScroll td { min-width: 5rem; max-width: 30rem; padding: .6rem; vertical-align: top; border-bottom: 1px solid var(--app-border); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tableScroll th { background: var(--app-panel-alt); font-weight: 600; }
+.tableScroll tr:last-child td { border-bottom: 0; }
+.tableScroll caption { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }

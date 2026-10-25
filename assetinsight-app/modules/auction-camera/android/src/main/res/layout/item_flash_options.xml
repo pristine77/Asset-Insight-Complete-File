@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="120dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_flash_dropdown"
+    android:orientation="vertical"
+    android:layout_margin="@dimen/_2sdp"
+    android:paddingVertical="4dp">
+
+    <!-- OFF -->
+    <LinearLayout
+        android:id="@+id/flashOptionOff"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="14dp">
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/flashIconOff"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_flash_off"
+            android:tint="@android:color/white" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/flashLabelOff"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/_25sdp"
+            android:text="Off"
+            android:textColor="@android:color/white"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- ON -->
+    <LinearLayout
+        android:id="@+id/flashOptionOn"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="14dp">
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/flashIconOn"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_flash_on"
+            android:tint="@android:color/white" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/flashLabelOn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/_25sdp"
+            android:text="On"
+            android:textColor="@android:color/white"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- AUTO -->
+    <LinearLayout
+        android:id="@+id/flashOptionAuto"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="14dp">
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/flashIconAuto"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_flash_auto"
+            android:tint="@android:color/white" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/flashLabelAuto"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/_25sdp"
+            android:text="Auto"
+            android:textColor="@android:color/white"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+</LinearLayout>

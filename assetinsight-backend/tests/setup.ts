@@ -1,0 +1,14 @@
+process.env.NODE_ENV = "test";
+process.env.JWT_SECRET = "test-access-secret-with-sufficient-entropy";
+process.env.JWT_REFRESH_SECRET = "test-refresh-secret-with-sufficient-entropy";
+process.env.DEVICE_APPROVAL_ENFORCEMENT = "on";
+process.env.TRUST_PROXY_HOPS = "0";
+process.env.DEVICE_SUPPORT_NAME = "Asset Insight Security";
+process.env.DEVICE_SUPPORT_EMAIL = "security@example.test";
+process.env.DEVICE_SUPPORT_PHONE = "+44 20 7946 0000";
+process.env.R2_BUCKET_NAME = "asset-insight-test";
+delete process.env.R2_BUCKET;
+process.env.R2_PUBLIC_URL = "https://assetinsight.test";
+delete process.env.R2_CUSTOM_DOMAIN;
+process.env.R2_LEGACY_BUCKET_NAME = "sellsnap-test";
+process.env.R2_LEGACY_PUBLIC_URL = "https://images.sellsnap.test";

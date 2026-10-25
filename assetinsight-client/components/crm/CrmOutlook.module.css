@@ -1,0 +1,20 @@
+.panel { min-width: 0; padding-top: 16px; font-size: .86rem; }
+.heading { padding: 0 18px 12px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.intro { display: flex; gap: 10px; color: var(--app-accent); }
+.intro h2 { color: var(--app-text-strong); margin: 0; font-size: 1rem; }
+.intro p { color: var(--app-text-muted); margin: 4px 0 0; font-size: .82rem; }
+.connection { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 0 18px 16px; padding: 12px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-bg); }
+.connection > div { min-width: 0; display: grid; gap: 4px; }
+.connection span { color: var(--app-text-muted); overflow-wrap: anywhere; }
+.notice, .error, .results { margin: 12px 18px; padding: 12px; border: 1px solid var(--app-border); border-radius: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; overflow-wrap: anywhere; }
+.notice { background: var(--app-accent-soft); }
+.error { background: var(--app-danger-soft); border-color: var(--app-danger-border); color: var(--app-danger); }
+.results { background: var(--app-bg); max-height: 220px; overflow-y: auto; }
+.results strong { flex-basis: 100%; }
+.results a { display: inline-flex; align-items: center; gap: 4px; color: var(--app-accent); text-decoration: underline; }
+.results p { margin: 0; flex-basis: 100%; }
+.exportBar { padding: 14px 18px; border-block: 1px solid var(--app-border); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.exportBar p { margin: 4px 0 0; color: var(--app-text-muted); font-size: .77rem; max-width: 490px; line-height: 1.5; }
+.exportBar > div:last-child { display: flex; flex-shrink: 0; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 800px) { .exportBar, .connection { flex-wrap: wrap; } }
+@media (max-width: 480px) { .heading, .exportBar { padding-inline: 12px; } .connection, .notice, .error, .results { margin-inline: 12px; } .exportBar > div:last-child { width: 100%; } .exportBar button { flex: 1; } }

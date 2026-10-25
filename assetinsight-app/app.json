@@ -1,0 +1,109 @@
+{
+  "expo": {
+    "name": "Asset Insight",
+    "slug": "assetinsight",
+    "version": "1.0.3",
+    "scheme": "exp+clearvalue",
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "experiments": {
+      "tsconfigPaths": true
+    },
+    "plugins": [
+      "expo-apple-authentication",
+      "expo-localization",
+      "./plugins/withImageEnhancer",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Asset Insight to detect the report location in the background while creating reports."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Asset Insight to access your photos to select images for appraisals.",
+          "cameraPermission": "Allow Asset Insight to access your camera to capture asset photos."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Asset Insight to save captured photos to your library.",
+          "savePhotosPermission": "Allow Asset Insight to save photos to your gallery.",
+          "isAccessMediaLocationEnabled": true,
+          "granularPermissions": []
+        }
+      ],
+      "expo-font",
+      "@react-native-community/datetimepicker",
+      "expo-secure-store",
+      "expo-mail-composer",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0284C7",
+          "defaultChannel": "crm-notifications",
+          "enableBackgroundRemoteNotifications": true
+        }
+      ]
+    ],
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Asset Insight needs access to your Camera to capture photos for appraisals.",
+        "NSMicrophoneUsageDescription": "Asset Insight needs access to your Microphone for video recording.",
+        "NSPhotoLibraryUsageDescription": "Allow Asset Insight to access your photo library to select images for appraisals.",
+        "NSPhotoLibraryAddUsageDescription": "Allow Asset Insight to save captured photos to your photo library.",
+        "NSDocumentsFolderUsageDescription": "Allow Asset Insight to access and manage your files for saving appraisal content.",
+        "NSLocationWhenInUsageDescription": "Allow Asset Insight for Location Detection",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "com.assetinsight.app"
+    },
+    "android": {
+      "versionCode": 4,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.assetinsight.app",
+      "googleServicesFile": "./google-services.json",
+      "blockedPermissions": [
+        "android.permission.REQUEST_INSTALL_PACKAGES",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO"
+      ],
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f85661e5-8dd2-4a00-94ca-7322e42ec5e1"
+      }
+    }
+  }
+}

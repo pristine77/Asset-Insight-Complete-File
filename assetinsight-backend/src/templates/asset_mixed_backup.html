@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{t.assetReport}} • {{t.mixed}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Calibri:wght@400;600;700&display=swap");
+
+      :root {
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: Calibri, "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 0;
+        color: #111827;
+        font-size: 13pt;
+        line-height: 1.5;
+        background: #ffffff;
+      }
+      .container {
+        max-width: 8.5in;
+        margin: 0 auto;
+        padding: 1in;
+      }
+
+      .card {
+        background: #ffffff;
+        border: none;
+        padding: 24px 0;
+        margin-bottom: 16px;
+      }
+      .muted {
+        color: #374151;
+        font-size: 12pt;
+        line-height: 1.65;
+      }
+      .divider {
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          rgba(225, 29, 72, 0.15),
+          rgba(225, 29, 72, 0.85),
+          rgba(225, 29, 72, 0.15)
+        );
+        border: 0;
+        margin: 16px 0;
+      }
+
+      .title {
+        font-size: 18pt;
+        font-weight: 700;
+        margin: 0 0 12px 0;
+        letter-spacing: 0.01em;
+        color: #111827;
+      }
+      .subtitle {
+        font-size: 11pt;
+        color: #6b7280;
+        margin: 4px 0 0 0;
+      }
+
+      .grid {
+        display: grid;
+        gap: 12px;
+      }
+      .grid-2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .grid-3 {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: 8px;
+        align-items: center;
+      }
+      .kv .k {
+        color: #6b7280;
+        font-size: 11pt;
+      }
+      .kv .v {
+        color: #111827;
+        font-size: 12pt;
+        font-weight: 600;
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .summary .pill {
+        background: #fff1f2;
+        color: #9f1239;
+        border: 1px solid #fecdd3;
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-size: 11pt;
+      }
+      .summary .pill strong {
+        display: block;
+        font-size: 14pt;
+        color: #111827;
+        font-weight: 700;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11pt;
+        margin: 16px 0;
+      }
+      .table thead th {
+        text-align: left;
+        color: #111827;
+        font-weight: 700;
+        padding: 12px 10px;
+        border-bottom: 2px solid #e5e7eb;
+        background: #f9fafb;
+      }
+      .table tbody td {
+        padding: 12px 10px;
+        border-bottom: 1px solid #e5e7eb;
+        vertical-align: top;
+        color: #374151;
+      }
+      .table tbody tr:hover td {
+        background: #f9fafb;
+      }
+
+      .tag {
+        display: inline-block;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #dbeafe;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 10pt;
+        font-weight: 600;
+      }
+      .thumb {
+        width: 80px;
+        height: 60px;
+        object-fit: cover;
+        border-radius: 4px;
+        border: 1px solid #d1d5db;
+      }
+
+      .section-title {
+        font-size: 16pt;
+        font-weight: 700;
+        margin: 24px 0 12px;
+        color: #111827;
+      }
+      .section-subtitle {
+        font-size: 13pt;
+        font-weight: 700;
+        color: #374151;
+        margin: 16px 0 8px;
+      }
+
+      /* Page breaks for print/PDF */
+      @page {
+        size: letter;
+        margin: 0.75in;
+      }
+
+      @media print {
+        body {
+          print-color-adjust: exact;
+          -webkit-print-color-adjust: exact;
+        }
+        .page-break {
+          page-break-before: always;
+          break-before: page;
+        }
+        .page-after {
+          page-break-after: always;
+          break-after: page;
+        }
+        .no-print {
+          display: none !important;
+        }
+        .container {
+          padding: 0;
+        }
+      }
+
+      .page-break {
+        break-before: page;
+      }
+      .page-after {
+        break-after: page;
+      }
+      /* On-screen header to mirror DOCX branding; hidden in print (PDF uses its own header) */
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: #ffffff;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 12px 0;
+      }
+      .site-header .inner {
+        max-width: 8.5in;
+        margin: 0 auto;
+        padding: 0 1in;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .site-header img {
+        height: 32px;
+        object-fit: contain;
+        display: block;
+      }
+      .site-header .line {
+        color: #6b7280;
+        font-size: 10pt;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      @media print {
+        .site-header {
+          display: none;
+        }
+      }
+
+      /* Page numbers for print */
+      @media print {
+        @page {
+          @bottom-right {
+            content: "Page " counter(page) " of " counter(pages);
+            font-family: Calibri, sans-serif;
+            font-size: 10pt;
+            color: #6b7280;
+          }
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- On-screen header (hidden in print/PDF). Mirrors DOCX header branding. -->
+    <header class="site-header">
+      <div class="inner">
+        <img src="{{logo_url}}" alt="Logo" />
+        <div class="line">
+          P.O. Box 3081 Regina, SK S4P 3G7 · www.McDougallBay.com ·
+          (306)757-1747{{#if user_email}} · {{user_email}}{{/if}}
+        </div>
+      </div>
+    </header>
+    <!-- Cover Page -->
+    <section
+      class="page-after no-print"
+      style="
+        min-height: 85vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(180deg, #ffffff, #fef2f2);
+      "
+    >
+      <div style="text-align: center; padding: 48px 24px">
+        <img
+          src="{{logo_url}}"
+          alt="Logo"
+          style="
+            height: 80px;
+            object-fit: contain;
+            margin: 0 auto 24px;
+            display: block;
+          "
+        />
+        <h1
+          style="
+            font-size: 36pt;
+            margin: 0 0 12px;
+            color: #9f1239;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+          "
+        >
+          {{t.assetReport}}
+        </h1>
+        <div
+          style="
+            font-size: 18pt;
+            color: #374151;
+            margin-bottom: 32px;
+            font-weight: 600;
+          "
+        >
+          {{t.mixed}}
+        </div>
+        <div
+          style="
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          "
+        >
+          <div class="grid grid-3" style="gap: 20px">
+            <div class="kv">
+              <div class="k">{{t.client}}</div>
+              <div class="v">
+                {{#if client_name}}{{client_name}}{{else}}—{{/if}}
+              </div>
+            </div>
+            <div class="kv">
+              <div class="k">{{t.contractNo}}</div>
+              <div class="v">
+                {{#if contract_no}}{{contract_no}}{{else}}—{{/if}}
+              </div>
+            </div>
+            <div class="kv">
+              <div class="k">{{t.dateLabel}}</div>
+              <div class="v">
+                {{#if createdAt}}{{formatDate createdAt}}{{else}}—{{/if}}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Table of Contents -->
+    <section class="page-after no-print">
+      <div class="container">
+        <div class="card">
+          <h2 class="title" style="margin-bottom: 12px">
+            {{t.tableOfContents}}
+          </h2>
+          <hr class="divider" />
+          <ol
+            style="
+              line-height: 2;
+              color: #374151;
+              font-size: 12pt;
+              padding-left: 24px;
+            "
+          >
+            <li><a href="#report-summary">{{t.reportSummary}}</a></li>
+            <li><a href="#summary-of-value">{{t.summaryOfValue}}</a></li>
+            <li><a href="#report-details">{{t.reportDetails}}</a></li>
+            <li><a href="#conditions">{{t.conditionsHeading}}</a></li>
+            <li><a href="#purpose">{{t.purposeHeading}}</a></li>
+            <li><a href="#ident">{{t.identHeading}}</a></li>
+            <li><a href="#scope">{{t.scopeHeading}}</a></li>
+            <li><a href="#observations">{{t.observationsHeading}}</a></li>
+            <li><a href="#intended">{{t.intendedHeading}}</a></li>
+            <li><a href="#value-term">{{t.valueTermHeading}}</a></li>
+            <li><a href="#definitions">{{t.definitionsHeading}}</a></li>
+            <li><a href="#limiting">{{t.limitingHeading}}</a></li>
+            <li><a href="#company-subject">{{t.companySubjectHeading}}</a></li>
+            <li><a href="#approaches">{{t.approachesHeading}}</a></li>
+            <li><a href="#valuation-process">{{t.valProcessHeading}}</a></li>
+            <li><a href="#ethics">{{t.codeEthicsHeading}}</a></li>
+            <li><a href="#experience">{{t.experienceHeading}}</a></li>
+            <li><a href="#transmittal">{{t.transmittalHeading}}</a></li>
+            <li><a href="#certificate">{{t.certificateHeading}}</a></li>
+            <li><a href="#results">{{t.results}}</a></li>
+            <li><a href="#market-overview">{{t.marketOverview}}</a></li>
+            <li><a href="#appendix">{{t.appendix}}</a></li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <div class="container">
+      <!-- Transmittal Letter -->
+      <div id="transmittal" class="card page-break">
+        <h2 class="title" style="font-size: 18pt">{{t.transmittalHeading}}</h2>
+        <hr class="divider" />
+        <div
+          class="muted"
+          style="
+            font-size: 11pt;
+            margin-bottom: 12px;
+            padding: 12px;
+            background: #f9fafb;
+            border-left: 3px solid #9f1239;
+            border-radius: 4px;
+          "
+        >
+          <strong style="color: #111827">{{t.transmittalReference}}:</strong>
+          {{#if appraisal_purpose}}{{appraisal_purpose}}{{else}}—{{/if}}
+        </div>
+        <div class="muted" style="line-height: 1.65; margin-top: 16px">
+          <p style="margin: 0 0 12px 0">
+            {{t.transmittalDear}} {{#if
+            client_name}}{{client_name}}{{else}}—{{/if}},
+          </p>
+          <p style="margin: 0 0 12px 0">
+            {{t.transmittalPara1 client_name owner_name}}
+          </p>
+          <p style="margin: 0 0 12px 0">{{t.transmittalPara2}}</p>
+          <p style="margin: 0 0 12px 0">
+            {{t.transmittalPara3 (formatDate effective_date) (formatDate
+            createdAt)}}
+          </p>
+          <p style="margin: 0">{{t.transmittalPara4}}</p>
+        </div>
+      </div>
+
+      <!-- Certificate of Appraisal -->
+      <div id="certificate" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.certificateHeading}}</h2>
+        <hr class="divider" />
+        <div
+          style="
+            text-align: center;
+            border: 2px solid #fecdd3;
+            background: #fff1f2;
+            padding: 24px;
+            border-radius: 8px;
+            margin: 16px 0;
+          "
+        >
+          <div
+            class="muted"
+            style="
+              font-size: 11pt;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+              font-weight: 600;
+              color: #9f1239;
+              margin-bottom: 8px;
+            "
+          >
+            {{t.totalAppraisedValueLabel}}
+          </div>
+          {{#if total_appraised_value}}
+          <div
+            style="
+              font-weight: 700;
+              font-size: 28pt;
+              color: #9f1239;
+              letter-spacing: -0.01em;
+            "
+          >
+            {{total_appraised_value}}
+          </div>
+          {{else if total_value}}
+          <div
+            style="
+              font-weight: 700;
+              font-size: 28pt;
+              color: #9f1239;
+              letter-spacing: -0.01em;
+            "
+          >
+            {{total_value}}
+          </div>
+          {{else if analysis.total_value}}
+          <div
+            style="
+              font-weight: 700;
+              font-size: 28pt;
+              color: #9f1239;
+              letter-spacing: -0.01em;
+            "
+          >
+            {{analysis.total_value}}
+          </div>
+          {{else}}
+          <div class="muted" style="font-size: 12pt">
+            {{t.seeReportDetailsText}}
+          </div>
+          {{/if}}
+        </div>
+      </div>
+      <div class="card page-break">
+        <h1
+          id="report-summary"
+          class="title"
+          style="font-size: 20pt; margin-bottom: 8px"
+        >
+          {{t.assetReport}} • {{t.mixed}}
+        </h1>
+        <p
+          class="subtitle"
+          style="font-size: 12pt; color: #6b7280; margin-bottom: 16px"
+        >
+          {{client_name}} {{#if effective_date}}• {{formatDate
+          effective_date}}{{/if}} {{#if contract_no}}• {{t.contractNo}}:
+          {{contract_no}}{{/if}}
+        </p>
+        <hr class="divider" />
+
+        <div class="summary">
+          <div class="pill">
+            <span class="muted">{{t.groupingMode}}</span>
+            <strong>{{t.mixed}}</strong>
+          </div>
+          <div class="pill">
+            <span class="muted">{{t.totalLots}}</span>
+            <strong>{{#if lots}}{{lots.length}}{{else}}0{{/if}}</strong>
+          </div>
+          <div class="pill">
+            <span class="muted">{{t.totalImages}}</span>
+            <strong
+              >{{#if imageUrls}}{{imageUrls.length}}{{else}}0{{/if}}</strong
+            >
+          </div>
+        </div>
+
+        <h2 id="report-details" class="section-title" style="margin-top: 20px">
+          {{t.reportDetails}}
+        </h2>
+        <div
+          class="grid"
+          style="
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 16px;
+            margin-top: 16px;
+          "
+        >
+          <div class="kv">
+            <div class="k">{{t.client}}</div>
+            <div class="v">
+              {{#if client_name}}{{client_name}}{{else}}—{{/if}}
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.contractNo}}</div>
+            <div class="v">
+              {{#if contract_no}}{{contract_no}}{{else}}—{{/if}}
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.effectiveDate}}</div>
+            <div class="v">
+              {{#if effective_date}}{{formatDate effective_date}}{{else}}{{#if
+              createdAt}}{{formatDate createdAt}}{{else}}—{{/if}}{{/if}}
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.appraisalPurpose}}</div>
+            <div class="v">
+              {{#if appraisal_purpose}}{{appraisal_purpose}}{{else}}—{{/if}}
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.ownerName}}</div>
+            <div class="v">
+              {{#if owner_name}}{{owner_name}}{{else}}—{{/if}}
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.appraiser}}</div>
+            <div class="v">{{#if appraiser}}{{appraiser}}{{else}}—{{/if}}</div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.appraisalCompany}}</div>
+            <div class="v">
+              {{#if appraisal_company}}{{appraisal_company}}{{else}}—{{/if}}
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.industry}}</div>
+            <div class="v">{{#if industry}}{{industry}}{{else}}—{{/if}}</div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.inspectionDate}}</div>
+            <div class="v">
+              {{#if inspection_date}}{{formatDate
+              inspection_date}}{{else}}—{{/if}}
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">{{t.inspector}}</div>
+            <div class="v">
+              {{#if inspector_name}}{{inspector_name}}{{else}}—{{/if}}{{#if
+              user_email}} ({{user_email}}){{/if}}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary of Value -->
+      <div id="summary-of-value" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.summaryOfValue}}</h2>
+        <hr class="divider" />
+        <p
+          class="muted"
+          style="
+            font-size: 12pt;
+            white-space: pre-line;
+            line-height: 1.75;
+            margin-top: 12px;
+          "
+        >
+          {{narr.summaryValueBody}}
+        </p>
+      </div>
+
+      <!-- Narrative Sections -->
+      <div id="conditions" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.conditionsHeading}}</h2>
+        <hr class="divider" />
+        <p class="muted" style="margin-top: 12px">{{t.conditionsBody}}</p>
+      </div>
+
+      <div id="purpose" class="card">
+        <h2 class="title" style="font-size: 18pt">{{t.purposeHeading}}</h2>
+        <hr class="divider" />
+        <p class="muted" style="margin-top: 12px">{{narr.purposeBody}}</p>
+      </div>
+
+      <div id="ident" class="card">
+        <h2 class="title" style="font-size: 18pt">{{t.identHeading}}</h2>
+        <hr class="divider" />
+        <p class="muted" style="margin-top: 12px">{{t.identBody}}</p>
+      </div>
+
+      <div id="scope" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.scopeHeading}}</h2>
+        <hr class="divider" />
+        <p class="muted" style="margin-top: 12px">{{t.scopeIntro}}</p>
+        <ul class="muted" style="margin: 12px 0 0 24px; line-height: 1.75">
+          <li>{{t.scopeBullet1}}</li>
+          <li>{{t.scopeBullet2}}</li>
+        </ul>
+      </div>
+
+      <div id="observations" class="card">
+        <h2 class="title" style="font-size: 18pt">{{t.observationsHeading}}</h2>
+        <hr class="divider" />
+        <p class="muted" style="margin-top: 12px">{{t.observationsBody}}</p>
+      </div>
+
+      <div id="intended" class="card">
+        <h2 class="title" style="font-size: 18pt">{{t.intendedHeading}}</h2>
+        <hr class="divider" />
+        <p class="muted" style="margin-top: 12px">{{t.intendedBody}}</p>
+      </div>
+
+      <div id="value-term" class="card">
+        <h2 class="title" style="font-size: 18pt">{{t.valueTermHeading}}</h2>
+        <hr class="divider" />
+        <h3 class="section-subtitle">{{t.valueOLVHeading}}</h3>
+        <p class="muted">{{narr.valueOLVBody}}</p>
+        <p class="muted" style="margin-top: 12px">{{t.valueOLVScenarioBody}}</p>
+      </div>
+
+      <div id="definitions" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.definitionsHeading}}</h2>
+        <hr class="divider" />
+        <h3 class="section-subtitle">{{t.physicalDetHeading}}</h3>
+        <p class="muted" style="margin-bottom: 16px">{{t.physicalDetBody}}</p>
+        <h3 class="section-subtitle">{{t.functionalObsHeading}}</h3>
+        <p class="muted" style="margin-bottom: 16px">{{t.functionalObsBody}}</p>
+        <h3 class="section-subtitle">{{t.economicObsHeading}}</h3>
+        <p class="muted" style="margin-bottom: 16px">{{t.economicObsBody}}</p>
+        <h3 class="section-subtitle">{{t.depreciationHeading}}</h3>
+        <p class="muted">{{t.depreciationBody}}</p>
+      </div>
+
+      <div id="limiting" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.limitingHeading}}</h2>
+        <hr class="divider" />
+        <h3 class="section-subtitle">{{t.assetCondHeading}}</h3>
+        <p class="muted">{{t.assetCondBody}}</p>
+        <h3 class="section-subtitle">{{t.titleAssetsHeading}}</h3>
+        <p class="muted">{{t.titleAssetsBody}}</p>
+        <h3 class="section-subtitle">{{t.responsibleOwnHeading}}</h3>
+        <p class="muted">{{t.responsibleOwnBody}}</p>
+        <h3 class="section-subtitle">{{t.statedPurposeHeading}}</h3>
+        <p class="muted">{{t.statedPurposeBody}}</p>
+        <h3 class="section-subtitle">{{t.valuationDateHeading}}</h3>
+        <p class="muted">{{narr.valuationDateBody}}</p>
+        <h3 class="section-subtitle">{{t.inspectionHeading}}</h3>
+        <p class="muted">{{narr.inspectionBody}}</p>
+        <h3 class="section-subtitle">{{t.hazardousHeading}}</h3>
+        <p class="muted">{{t.hazardousBody}}</p>
+        <h3 class="section-subtitle">{{t.changeMarketHeading}}</h3>
+        <p class="muted">{{t.changeMarketBody}}</p>
+        <h3 class="section-subtitle">{{t.unexpectedHeading}}</h3>
+        <p class="muted">{{t.unexpectedBody}}</p>
+      </div>
+
+      <div id="company-subject" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">
+          {{t.companySubjectHeading}}
+        </h2>
+        <hr class="divider" />
+        <h3 class="section-subtitle">{{t.companyDiscussionHeading}}</h3>
+        <p class="muted">{{t.companyDiscussionBody client_name}}</p>
+        <h3 class="section-subtitle">{{t.subjectAssetsHeading}}</h3>
+        <p class="muted">{{t.subjectAssetsBody}}</p>
+      </div>
+
+      <div id="approaches" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.approachesHeading}}</h2>
+        <hr class="divider" />
+        <h3 class="section-subtitle">{{t.costApproachHeading}}</h3>
+        <p class="muted">{{t.costApproachBody}}</p>
+        <h3 class="section-subtitle">{{t.marketApproachHeading}}</h3>
+        <p class="muted">{{t.marketApproachBody}}</p>
+        <h3 class="section-subtitle">{{t.incomeApproachHeading}}</h3>
+        <p class="muted">{{t.incomeApproachBody}}</p>
+        <h3 class="section-subtitle">{{t.alternateUseHeading}}</h3>
+        <p class="muted">{{t.alternateUseBody}}</p>
+        <h3 class="section-subtitle">{{t.reconciliationHeading}}</h3>
+        <p class="muted">{{t.reconciliationBody}}</p>
+        <h3 class="section-subtitle">{{t.hbuHeading}}</h3>
+        <p class="muted">{{t.hbuBody}}</p>
+      </div>
+
+      <div id="valuation-process" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.valProcessHeading}}</h2>
+        <hr class="divider" />
+        <h3 class="section-subtitle">{{t.dataCollectionHeading}}</h3>
+        <p class="muted">{{narr.dataCollectionBody}}</p>
+        <h3 class="section-subtitle">{{t.valuationProcessHeading2}}</h3>
+        <p class="muted">{{t.valuationProcessBody}}</p>
+        <h3 class="section-subtitle">{{t.researchMethodHeading}}</h3>
+        <p class="muted">{{t.researchMethodBody}}</p>
+      </div>
+
+      <div id="ethics" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.codeEthicsHeading}}</h2>
+        <hr class="divider" />
+        <h3 class="section-subtitle">{{t.competencyHeading}}</h3>
+        <p class="muted">{{t.competencyBody}}</p>
+        <h3 class="section-subtitle">{{t.confidentialityHeading}}</h3>
+        <p class="muted">{{t.confidentialityBody}}</p>
+      </div>
+
+      <div id="experience" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.experienceHeading}}</h2>
+        <hr class="divider" />
+        <p class="muted">{{t.experienceBody1}}</p>
+        <p class="muted">{{t.experienceBody2}}</p>
+        <p class="muted">{{t.experienceBody3}}</p>
+        <p class="muted">{{t.experienceBody4}}</p>
+      </div>
+
+      <!-- Results by Group -->
+      <div id="results" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.results}}</h2>
+        <hr class="divider" />
+        {{#if groups}} {{#each groups}}
+        <h3 class="section-subtitle">{{label}}</h3>
+        <div class="overflow-x-auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{../t.lotWord}}</th>
+                <th>{{../t.groupingMode}}</th>
+                <th>{{../t.title}}</th>
+                <th>{{../t.serialNoOrLabel}}</th>
+                <th>{{../t.description}}</th>
+                <th>{{../t.details}}</th>
+                <th>{{../t.estimatedValue}}</th>
+                <th>{{../t.image}}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{#each items}}
+              <tr>
+                <td><strong>{{lot_id}}</strong></td>
+                <td>
+                  {{#if (eq this.sub_mode 'per_item')}}<span class="tag"
+                    >{{../../t.perItem}}</span
+                  >{{/if}} {{#if (eq this.sub_mode 'per_photo')}}<span
+                    class="tag"
+                    >{{../../t.perPhoto}}</span
+                  >{{/if}} {{#if (eq this.sub_mode 'single_lot')}}<span
+                    class="tag"
+                    >{{../../t.singleLot}}</span
+                  >{{/if}}
+                </td>
+                <td>{{title}}</td>
+                <td>{{serial_no_or_label}}</td>
+                <td>{{description}}</td>
+                <td>{{details}}</td>
+                <td>{{estimated_value}}</td>
+                <td>
+                  {{#if image_url}}
+                  <img class="thumb" src="{{image_url}}" alt="thumb" />
+                  {{else if image_urls}}
+                  <img class="thumb" src="{{image_urls.[0]}}" alt="thumb" />
+                  {{/if}}
+                </td>
+              </tr>
+              {{/each}}
+            </tbody>
+          </table>
+        </div>
+        <hr class="divider" />
+        {{/each}} {{else}}
+        <div class="muted">{{t.noGroupResults}}</div>
+        {{/if}}
+      </div>
+
+      <!-- Market Overview -->
+      {{#if market}}
+      <div id="market-overview" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.marketOverview}}</h2>
+        <hr class="divider" />
+        <div class="grid grid-2">
+          <div>
+            <h3 class="section-subtitle">{{t.canada}}</h3>
+            <ul class="muted" style="margin: 0 0 10px 18px">
+              {{#each market.canada.bullets}}
+              <li>{{this}}</li>
+              {{/each}}
+            </ul>
+            <img
+              src="{{market.canada.chart}}"
+              style="
+                width: 100%;
+                max-width: 100%;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                margin-top: 8px;
+              "
+            />
+          </div>
+          <div>
+            <h3 class="section-subtitle">{{t.northAmerica}}</h3>
+            <ul class="muted" style="margin: 0 0 10px 18px">
+              {{#each market.northAmerica.bullets}}
+              <li>{{this}}</li>
+              {{/each}}
+            </ul>
+            <img
+              src="{{market.northAmerica.chart}}"
+              style="
+                width: 100%;
+                max-width: 100%;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                margin-top: 8px;
+              "
+            />
+          </div>
+        </div>
+        {{#if market.sources}}
+        <div style="margin-top: 20px">
+          <h3 class="section-subtitle">{{t.references}}</h3>
+          <ul class="muted" style="margin: 8px 0 0 24px; line-height: 1.75">
+            {{#each market.sources}}
+            <li style="margin-bottom: 4px">
+              <a
+                href="{{url}}"
+                target="_blank"
+                rel="noopener noreferrer"
+                style="color: #1d4ed8; text-decoration: underline"
+                >{{title}}</a
+              >
+            </li>
+            {{/each}}
+          </ul>
+        </div>
+        {{/if}}
+      </div>
+      {{/if}}
+
+      <!-- Appendix: Photo Gallery -->
+      <div id="appendix" class="card page-after">
+        <h2 class="title" style="font-size: 18pt">{{t.appendix}}</h2>
+        <hr class="divider" />
+        <div
+          class="grid"
+          style="
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+          "
+        >
+          {{#each imageUrls}}
+          <div
+            style="
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              padding: 8px;
+              background: #f9fafb;
+            "
+          >
+            <img
+              src="{{this}}"
+              alt="Asset"
+              style="
+                width: 100%;
+                height: 140px;
+                object-fit: cover;
+                border-radius: 4px;
+                border: 1px solid #e5e7eb;
+              "
+            />
+          </div>
+          {{/each}}
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // No-op; templates are static for PDF rendering.
+    </script>
+  </body>
+</html>

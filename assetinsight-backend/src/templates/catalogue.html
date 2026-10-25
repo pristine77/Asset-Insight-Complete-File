@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Asset Catalogue - {{lots.length}} Lots ({{grouping_mode}})</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      @media print {
+        body {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        .page-break {
+          page-break-after: always;
+        }
+        /* Overlay to hide Puppeteer header on the first (cover) page */
+        .cover-header-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 80px;
+          background: #ffffff;
+          z-index: 9999;
+        }
+      }
+      body {
+        font-family: "Roboto", sans-serif;
+        background-color: #f7fafc;
+      }
+      .brand-rose {
+        color: #e11d48;
+      }
+      .bg-brand-rose {
+        background-color: #e11d48;
+      }
+      .section-title {
+        border-left: 4px solid #e11d48;
+        padding-left: 12px;
+        margin-bottom: 16px;
+        font-weight: 600;
+        color: #be123c;
+      }
+      .card {
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.06);
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .detail-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .detail-item strong {
+        color: #374151;
+      }
+      .stat-card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 8px 18px rgba(225, 29, 72, 0.08);
+        border: 1px solid #fee2e2;
+        padding: 16px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid #fecdd3; /* rose-200 */
+        color: #be123c; /* rose-700 */
+        background: #ffe4e6; /* rose-100 */
+      }
+      .lot-card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.06);
+        border: 1px solid #f3f4f6;
+        padding: 16px;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .img-tile img {
+        width: 100%;
+        height: 160px;
+        object-fit: contain;
+        border-radius: 10px;
+        border: 1px solid #fee2e2;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      thead th {
+        background: #ffe4e6; /* rose-100 */
+        color: #be123c; /* rose-700 */
+        border-bottom: 2px solid #fecdd3; /* rose-200 */
+        text-align: left;
+        font-weight: 700;
+        padding: 10px;
+        font-size: 13px;
+      }
+      tbody td {
+        border-bottom: 1px solid #f3f4f6;
+        padding: 10px;
+        font-size: 13px;
+        vertical-align: top;
+      }
+      .thumb {
+        width: 220px;
+        height: 160px;
+        object-fit: contain;
+        border-radius: 0px;
+        border: 0;
+        background: transparent;
+      }
+      /* Watermark */
+      .watermark {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        pointer-events: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .watermark-text {
+        font-size: clamp(48px, 12vw, 160px);
+        font-weight: 800;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        transform: rotate(-30deg);
+        color: rgba(0, 0, 0, 0.06);
+        -webkit-text-stroke: 1px rgba(0, 0, 0, 0.08);
+      }
+      @media print {
+        .watermark {
+          position: fixed !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-slate-50">
+    <div class="watermark">
+      <div class="watermark-text">Confidential</div>
+    </div>
+    <!-- Cover Page -->
+    <section
+      id="cover-page"
+      class="w-full h-screen flex items-center justify-center bg-white"
+    >
+      <div class="max-w-3xl w-full text-center p-10">
+        <div class="cover-header-overlay"></div>
+        <img
+          src="{{logo_url}}"
+          alt="Company Logo"
+          class="mx-auto mb-6"
+          width="180"
+          height="64"
+          style="width: 180px; height: 64px; object-fit: contain"
+        />
+        <h1 class="text-5xl font-bold brand-rose mb-2">Asset Catalogue</h1>
+        <p class="text-xl text-gray-700 mb-8">
+          {{lots.length}} Lots ({{grouping_mode}})
+        </p>
+        <div class="mx-auto max-w-2xl text-left">
+          <div
+            class="rounded-2xl border border-gray-300 shadow-md bg-white overflow-hidden"
+          >
+            <div class="flex">
+              <div class="w-1.5 bg-rose-600"></div>
+              <div class="flex-1 grid grid-cols-1 sm:grid-cols-2">
+                <div class="p-5 sm:p-6">
+                  <div class="text-xs uppercase tracking-wider text-gray-500">
+                    Prepared for
+                  </div>
+                  <div class="mt-1 text-2xl font-semibold text-gray-900">
+                    {{#if
+                    client_name}}{{client_name}}{{else}}{{inspector_name}}{{/if}}
+                  </div>
+                </div>
+                <div
+                  class="p-5 sm:p-6 border-t sm:border-t-0 sm:border-l border-gray-300"
+                >
+                  <div class="text-xs uppercase tracking-wider text-gray-500">
+                    Report Date
+                  </div>
+                  <div class="mt-1 text-2xl font-semibold text-gray-900">
+                    {{formatDate createdAt}}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-break"></div>
+
+    <div class="max-w-none mx-auto p-4 sm:p-8">
+      <!-- Contents -->
+      <section id="contents" class="card">
+        <h2 class="text-3xl font-semibold section-title">Contents</h2>
+        <ul class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-gray-700">
+          <li>
+            <a href="#transmittal-letter" class="hover:underline"
+              >Transmittal Letter</a
+            >
+          </li>
+          <li>
+            <a href="#certificate-of-appraisal" class="hover:underline"
+              >Certificate of Appraisal</a
+            >
+          </li>
+          <li>
+            <a href="#certification" class="hover:underline"
+              >Certification of Inspection and Appraisal</a
+            >
+          </li>
+          <li>
+            <a href="#report-summary" class="hover:underline">Report Summary</a>
+          </li>
+          <li>
+            <a href="#report-details" class="hover:underline">Report Details</a>
+          </li>
+          <li>
+            <a href="#conditions-of-appraisal" class="hover:underline"
+              >Conditions of Appraisal</a
+            >
+          </li>
+          <li>
+            <a href="#purpose-of-report" class="hover:underline"
+              >Purpose of This Report</a
+            >
+          </li>
+          <li>
+            <a href="#summary-of-value" class="hover:underline"
+              >Summary of Value Conclusions</a
+            >
+          </li>
+          <li>
+            <a href="#identification" class="hover:underline"
+              >Identification of Assets Appraised</a
+            >
+          </li>
+          <li>
+            <a href="#scope-of-work" class="hover:underline">Scope of Work</a>
+          </li>
+          <li>
+            <a href="#market-overview-recent" class="hover:underline"
+              >Market Overview and Recent Trends</a
+            >
+          </li>
+          <li>
+            <a href="#observations" class="hover:underline"
+              >Observations and Comments</a
+            >
+          </li>
+          <li>
+            <a href="#intended-users" class="hover:underline">Intended Users</a>
+          </li>
+          <li>
+            <a href="#value-terminology" class="hover:underline"
+              >Value Terminology (OLV)</a
+            >
+          </li>
+          <li>
+            <a href="#definitions-obsolescence" class="hover:underline"
+              >Definitions and Obsolescence</a
+            >
+          </li>
+          <li>
+            <a href="#limiting-conditions" class="hover:underline"
+              >Limiting Conditions and Critical Assumptions</a
+            >
+          </li>
+          <li>
+            <a href="#company-subject" class="hover:underline"
+              >Company, Subject Asset Description</a
+            >
+          </li>
+          <li>
+            <a href="#approaches-to-value" class="hover:underline"
+              >Approaches to Value</a
+            >
+          </li>
+          <li>
+            <a href="#valuation-process" class="hover:underline"
+              >Valuation Process and Methodology</a
+            >
+          </li>
+          <li>
+            <a href="#code-of-ethics" class="hover:underline">Code of Ethics</a>
+          </li>
+          <li><a href="#catalogue" class="hover:underline">Catalogue</a></li>
+        </ul>
+      </section>
+
+      <!-- EXPERIENCE -->
+      <section id="experience" class="card">
+        <h2 class="text-2xl font-semibold section-title">Experience</h2>
+        <div class="space-y-3 text-gray-700 leading-relaxed">
+          <p>McDougall Auctioneers Ltd. is one of Western Canada’s leading full-service auction and valuation firms, with over 40 years of experience in marketing, selling, and appraising assets across a diverse range of industries. Headquartered in Saskatchewan and operating throughout Canada and the United States, McDougall Auctioneers has built a reputation for impartial, defensible valuations that meet or exceed industry and regulatory standards.</p>
+          <p>Our appraisal team combines Certified Personal Property Appraisers, experienced auctioneers, and subject-matter specialists who have inspected and valued tens of thousands of assets annually. We deliver comprehensive appraisals for equipment, vehicles, industrial machinery, agricultural assets, and business inventories, using recognised methodologies such as the Market Approach, Cost Approach, and, where applicable, the Income Approach. All assignments are performed in compliance with the Uniform Standards of Professional Appraisal Practice (USPAP) and relevant Canadian appraisal guidelines.</p>
+          <p>McDougall’s extensive auction platform provides us with current, real-world market data on comparable sales. This proprietary database allows us to support our valuations with up-to-date evidence of pricing trends, demand fluctuations, and liquidation values. Whether for insurance, financing, litigation, or internal asset management, our appraisals provide accurate, timely, and defensible fair market values.</p>
+          <p>Our industry experience spans construction, transportation, agriculture, heavy equipment, manufacturing, and retail inventories. We are frequently engaged by banks, insolvency professionals, legal counsel, government agencies, and private owners to appraise assets ranging from single high-value machines to large, multi-site fleets.</p>
+          <p>This depth of experience ensures that every McDougall appraisal assignment is approached with professionalism, objectivity, and an understanding of how market conditions translate into asset value. Clients can rely on McDougall Auctioneers for clear, well-documented reports that withstand scrutiny from lenders, courts, insurers, and auditors alike.</p>
+        </div>
+      </section>
+      <!-- Transmittal Letter -->
+      <section id="transmittal-letter" class="card">
+        <h2 class="text-3xl font-semibold section-title">Transmittal Letter</h2>
+        <div class="text-sm text-gray-600 mb-3">
+          <strong class="text-gray-800">Reference:</strong>
+          {{#if appraisal_purpose}}{{appraisal_purpose}}{{else}}Asset Appraisal Report{{/if}}
+        </div>
+        <div class="space-y-3 text-gray-700 leading-relaxed">
+          <p>Dear {{#if client_name}}{{client_name}}{{else}}Client{{/if}},</p>
+          <p>
+            At your request, we have prepared an appraisal of certain equipment owned by {{#if client_name}}{{client_name}}{{else}}the Client{{/if}}, a copy of which is enclosed.
+            This appraisal report is intended for exclusive use by {{#if exclusive_use_by}}{{exclusive_use_by}}{{else}}{{#if client_name}}{{client_name}}{{else}}the Client{{/if}}{{/if}} and is intended only for establishing values of the listed equipment.
+          </p>
+          <p>The subject assets were appraised under the premise of Orderly Liquidation Value for internal consideration.</p>
+          <p>The cost and market approaches to value have been considered for this appraisal and have either been utilized where necessary or deemed inappropriate for the value conclusions found therein.</p>
+          <p>
+            After a thorough analysis of the assets and information made available to us, it is our opinion that as of the Effective Date ({{#if effective_date}}{{formatDate effective_date}}{{else}}{{formatDate createdAt}}{{/if}}),
+            these assets have an Orderly Liquidation Value in Canadian Funds as shown on the certificate that we have prepared.
+          </p>
+          <p>We certify that neither we nor any of our employees have any present or future interest in the appraised property. The fee charged for this appraisal was not contingent on the values reported. As such, the results stated in this letter of transmittal cannot be fully understood without the accompanying report and this letter should not be separated from the report.</p>
+          <p>If you require any additional information, please feel free to contact me at your convenience.</p>
+          <div class="pt-2">
+            <p class="font-semibold text-gray-900">{{#if appraiser}}{{appraiser}}{{else}}Appraiser{{/if}}, CPPA</p>
+            <p class="text-gray-700">Certified Appraiser</p>
+            {{#if appraisal_company}}<p class="text-gray-700">{{appraisal_company}}</p>{{/if}}
+          </div>
+        </div>
+      </section>
+
+      
+
+      <!-- Certificate of Appraisal -->
+      <section id="certificate-of-appraisal" class="card">
+        <h2 class="text-3xl font-semibold section-title">
+          Certificate of Appraisal
+        </h2>
+        <div class="space-y-3 text-gray-700 leading-relaxed">
+          <p>
+            I hereby certify that I have personally inspected the assets described herein, and have made a thorough analysis of all factors pertinent to their value,
+            in accordance with the requirements of the Uniform Standards of Professional Appraisal Practice.
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="detail-item"><strong>Client</strong><span>{{#if client_name}}{{client_name}}{{else}}—{{/if}}</span></div>
+            <div class="detail-item"><strong>Effective Date</strong><span>{{#if effective_date}}{{formatDate effective_date}}{{else}}{{formatDate createdAt}}{{/if}}</span></div>
+            <div class="detail-item"><strong>Purpose</strong><span>{{#if appraisal_purpose}}{{appraisal_purpose}}{{else}}—{{/if}}</span></div>
+            <div class="detail-item"><strong>Prepared By</strong><span>{{#if appraiser}}{{appraiser}}{{/if}}{{#if appraisal_company}}, {{appraisal_company}}{{/if}}</span></div>
+          </div>
+          <div class="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-center">
+            <div class="text-xs uppercase tracking-wide text-rose-700">Total Appraised Value</div>
+            {{#if total_appraised_value}}
+              <div class="mt-1 text-2xl font-bold text-rose-800">{{total_appraised_value}}</div>
+            {{else}}
+              {{#if total_value}}
+                <div class="mt-1 text-2xl font-bold text-rose-800">{{total_value}}</div>
+              {{else}}
+                {{#if analysis.total_value}}
+                  <div class="mt-1 text-2xl font-bold text-rose-800">{{analysis.total_value}}</div>
+                {{else}}
+                  <div class="mt-1 text-sm text-rose-700">See Report Details and item estimates for values.</div>
+                {{/if}}
+              {{/if}}
+            {{/if}}
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-8 mt-4">
+            <div class="text-center">
+              <div class="border-t border-gray-400 mt-8 pt-2 text-sm text-gray-600">Appraiser Signature</div>
+            </div>
+            <div class="text-center">
+              <div class="border-t border-gray-400 mt-8 pt-2 text-sm text-gray-600">Date: {{#if createdAt}}{{formatDate createdAt}}{{/if}}</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Report Summary -->
+      <section id="report-summary" class="card">
+        <h2 class="text-3xl font-semibold section-title">Report Summary</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="stat-card">
+            <div class="text-sm text-gray-500">Grouping Mode</div>
+            <div class="mt-1 text-xl font-semibold text-gray-900 capitalize">
+              {{grouping_mode}}
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="text-sm text-gray-500">Total Lots</div>
+            <div class="mt-1 text-xl font-semibold text-gray-900">
+              {{lots.length}}
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="text-sm text-gray-500">Total Images</div>
+            <div class="mt-1 text-xl font-semibold text-gray-900">
+              {{imageUrls.length}}
+            </div>
+          </div>
+        </div>
+        {{#if analysis.summary}}
+        <div class="mt-4 stat-card">
+          <h3 class="font-semibold brand-rose mb-1">AI Summary</h3>
+          <p class="text-gray-700">{{analysis.summary}}</p>
+        </div>
+        {{/if}}
+      </section>
+
+      <!-- Report Details -->
+      <section id="report-details" class="card">
+        <h2 class="text-2xl font-semibold section-title">Report Details</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {{#if client_name}}
+          <div class="detail-item">
+            <strong>Client Name</strong><span>{{client_name}}</span>
+          </div>
+          {{/if}} {{#if effective_date}}
+          <div class="detail-item">
+            <strong>Effective Date</strong
+            ><span>{{formatDate effective_date}}</span>
+          </div>
+          {{/if}} {{#if appraisal_purpose}}
+          <div class="detail-item">
+            <strong>Appraisal Purpose</strong><span>{{appraisal_purpose}}</span>
+          </div>
+          {{/if}} {{#if owner_name}}
+          <div class="detail-item">
+            <strong>Owner Name</strong><span>{{owner_name}}</span>
+          </div>
+          {{/if}} {{#if appraiser}}
+          <div class="detail-item">
+            <strong>Appraiser</strong><span>{{appraiser}}</span>
+          </div>
+          {{/if}} {{#if appraisal_company}}
+          <div class="detail-item">
+            <strong>Appraisal Company</strong><span>{{appraisal_company}}</span>
+          </div>
+          {{/if}} {{#if industry}}
+          <div class="detail-item">
+            <strong>Industry</strong><span>{{industry}}</span>
+          </div>
+          {{/if}} {{#if inspection_date}}
+          <div class="detail-item">
+            <strong>Inspection Date</strong
+            ><span>{{formatDate inspection_date}}</span>
+          </div>
+          {{/if}}
+        </div>
+      </section>
+
+      <!-- Conditions of Appraisal -->
+      <section id="conditions-of-appraisal" class="card">
+        <h2 class="text-2xl font-semibold section-title">Conditions of Appraisal</h2>
+        <p class="text-gray-700 leading-relaxed">
+          The value stated in this appraisal report is based on the best judgment of the appraiser, given the facts and conditions available at the date of valuation. The use of this report is limited to the purpose of determining the value of the assets. This report is to be used in its entirety only.
+        </p>
+      </section>
+
+      <!-- Purpose of This Report -->
+      <section id="purpose-of-report" class="card">
+        <h2 class="text-2xl font-semibold section-title">Purpose of This Report</h2>
+        <p class="text-gray-700 leading-relaxed">
+          The purpose of this appraisal report is to provide an opinion of value of the subject for internal consideration and to assist {{#if client_name}}{{client_name}}{{else}}the Client{{/if}} and the specified personnel within their corporation in establishing a current Orderly Liquidation Value (OLV) for financial considerations. This report is not intended to be used for any other purpose. Based on the purpose of the appraisal, we have valued the subject assets under the premise of OLV.
+        </p>
+      </section>
+
+      <!-- Summary of Value Conclusions -->
+      <section id="summary-of-value" class="card">
+        <h2 class="text-2xl font-semibold section-title">Summary of Value Conclusions</h2>
+        <p class="text-gray-700 leading-relaxed">
+          {{#if total_appraised_value}}
+            Based upon our analysis and methodology, we estimate the Orderly Liquidation Value at {{total_appraised_value}} as of {{#if effective_date}}{{formatDate effective_date}}{{else}}{{formatDate createdAt}}{{/if}}.
+          {{else}}
+            {{#if total_value}}
+              Based upon our analysis and methodology, we estimate the Orderly Liquidation Value at {{total_value}} as of {{#if effective_date}}{{formatDate effective_date}}{{else}}{{formatDate createdAt}}{{/if}}.
+            {{else}}
+              {{#if analysis.total_value}}
+                Based upon our analysis and methodology, we estimate the Orderly Liquidation Value at {{analysis.total_value}} as of {{#if effective_date}}{{formatDate effective_date}}{{else}}{{formatDate createdAt}}{{/if}}.
+              {{else}}
+                Based upon our analysis and methodology, we estimate the Orderly Liquidation Value as of {{#if effective_date}}{{formatDate effective_date}}{{else}}{{formatDate createdAt}}{{/if}}.
+              {{/if}}
+            {{/if}}
+          {{/if}}
+        </p>
+        <p class="text-gray-700 leading-relaxed">
+          The scope of work included examination of information supplied by the client. In our analysis, we considered the cost, sales comparison (market), and income approaches. The appropriate approaches were utilized and the resulting value conclusions reconciled. The value opinions expressed in this appraisal are contingent upon the analysis, facts, and conditions presented in the accompanying appraisal report.
+        </p>
+      </section>
+
+      <!-- Identification of Assets Appraised -->
+      <section id="identification" class="card">
+        <h2 class="text-2xl font-semibold section-title">Identification of Assets Appraised</h2>
+        <p class="text-gray-700 leading-relaxed">As set out in the attached Schedule, the assets appraised within this engagement include: Construction &amp; Transportation Equipment.</p>
+      </section>
+
+      <!-- Scope of Work -->
+      <section id="scope-of-work" class="card">
+        <h2 class="text-2xl font-semibold section-title">Scope of Work</h2>
+        <p class="text-gray-700 mb-3">Valuation process and methodology — the appraiser employed the following procedures to determine the value conclusions rendered herein:</p>
+        <ul class="list-disc pl-6 text-gray-700 space-y-2">
+          <li>Review and analysis of asset records and other informational materials.</li>
+          <li>Inspection and analysis of assets and equipment at the client location(s).</li>
+        </ul>
+      </section>
+
+      <!-- Market Overview and Recent Trends -->
+      <section id="market-overview-recent" class="card">
+        <h2 class="text-2xl font-semibold section-title">Market Overview and Recent Trends</h2>
+        <p class="text-gray-700 leading-relaxed">This section incorporates current market indicators and recent trends for Canada and North America.</p>
+        {{#if market}}
+          {{#if market.canada}}
+            <h3 class="text-lg font-semibold text-rose-700 mt-4 mb-2">Canada Highlights</h3>
+            {{#if market.canada.bullets}}
+              <ul class="list-disc pl-6 text-gray-700 space-y-1">
+                {{#each market.canada.bullets}}
+                  <li>{{this}}</li>
+                {{/each}}
+              </ul>
+            {{/if}}
+            {{#if market.canada.chart}}
+              <div class="mt-3 flex justify-center">
+                <img src="{{market.canada.chart}}" alt="Canada Trend" class="w-full max-w-3xl border rounded" />
+              </div>
+            {{/if}}
+          {{/if}}
+          {{#if market.northAmerica}}
+            <h3 class="text-lg font-semibold text-rose-700 mt-6 mb-2">North America Highlights</h3>
+            {{#if market.northAmerica.bullets}}
+              <ul class="list-disc pl-6 text-gray-700 space-y-1">
+                {{#each market.northAmerica.bullets}}
+                  <li>{{this}}</li>
+                {{/each}}
+              </ul>
+            {{/if}}
+            {{#if market.northAmerica.chart}}
+              <div class="mt-3 flex justify-center">
+                <img src="{{market.northAmerica.chart}}" alt="North America Trend" class="w-full max-w-3xl border rounded" />
+              </div>
+            {{/if}}
+          {{/if}}
+          {{#if market.sources}}
+            <h3 class="text-lg font-semibold text-rose-700 mt-6 mb-2">References</h3>
+            <ul class="list-disc pl-6 text-gray-700 space-y-1">
+              {{#each market.sources}}
+                <li><span class="font-medium">{{title}}</span> — <span class="text-rose-700">{{url}}</span></li>
+              {{/each}}
+            </ul>
+          {{/if}}
+        {{/if}}
+      </section>
+
+      <!-- Observations and Comments -->
+      <section id="observations" class="card">
+        <h2 class="text-2xl font-semibold section-title">Observations and Comments</h2>
+        <p class="text-gray-700 leading-relaxed">Available data and market comparables utilized were up to 120 days old. Increased weighting was given to recent regionally specific comparables when available.</p>
+      </section>
+
+      <!-- Intended Users -->
+      <section id="intended-users" class="card">
+        <h2 class="text-2xl font-semibold section-title">Intended Users</h2>
+        <p class="text-gray-700 leading-relaxed">This appraisal is not intended to be reproduced or used for any purpose other than that outlined in this appraisal and is for the internal use of the client.</p>
+      </section>
+
+      <!-- Value Terminology (OLV) -->
+      <section id="value-terminology" class="card">
+        <h2 class="text-2xl font-semibold section-title">Value Terminology</h2>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1">Orderly Liquidation Value (OLV)</h3>
+        <p class="text-gray-700 leading-relaxed">The estimated amount, expressed in terms of cash in Canadian dollars, that could typically be realized from a liquidation sale, with the seller being compelled to sell on an 'as-is condition, where-is location' basis, as of a specific date and over a 120 day period.</p>
+        <p class="text-gray-700 leading-relaxed">For the purpose of this appraisal, we have considered a properly advertised and professionally managed privately negotiated sale scenario, over a period of 120 days, during normal business operations or while winding down operations, with the buyer responsible for dismantling and removal at their own risk and expense.</p>
+      </section>
+
+      <!-- Definitions and Obsolescence -->
+      <section id="definitions-obsolescence" class="card">
+        <h2 class="text-2xl font-semibold section-title">Definitions and Obsolescence</h2>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1">Physical Deterioration</h3>
+        <p class="text-gray-700 leading-relaxed">A form of depreciation where the loss in value or usefulness of a property is due to the using up or expiration of its useful life caused by wear and tear, deterioration, exposure to various elements, physical stresses, and similar factors.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Functional Obsolescence</h3>
+        <p class="text-gray-700 leading-relaxed">A form of depreciation in which the loss in value or usefulness is caused by inefficiencies or inadequacies of the asset itself when compared to a more efficient or less costly replacement that newer technology has developed.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Economic Obsolescence</h3>
+        <p class="text-gray-700 leading-relaxed">A form of depreciation or loss in value caused by external factors such as industry economics, availability of financing, legislation, increased cost of inputs without offsetting price increases, reduced demand, increased competition, inflation, or high interest rates.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Depreciation</h3>
+        <p class="text-gray-700 leading-relaxed">The actual loss in value or worth of a property from all causes including physical deterioration, functional obsolescence, and economic obsolescence.</p>
+      </section>
+
+      <!-- Limiting Conditions and Critical Assumptions -->
+      <section id="limiting-conditions" class="card">
+        <h2 class="text-2xl font-semibold section-title">Limiting Conditions and Critical Assumptions</h2>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1">Asset Conditions</h3>
+        <p class="text-gray-700 leading-relaxed">Certain information was provided to the appraiser regarding repairs, engines, undercarriages, and upgrades. These were considered when appraising and comparing the subject assets with market comparables. Some assets may have extended warranties.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Title to the Assets</h3>
+        <p class="text-gray-700 leading-relaxed">No investigation has been made of, and no responsibility is assumed for, legal matters including title or encumbrances. Title is assumed to be good and marketable unless otherwise stated.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Responsible Ownership</h3>
+        <p class="text-gray-700 leading-relaxed">It is assumed that the subject assets are under responsible ownership and competent management.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Stated Purpose</h3>
+        <p class="text-gray-700 leading-relaxed">This appraisal and report have been made only for the stated purpose and cannot be used for any other purpose.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Valuation Date</h3>
+        <p class="text-gray-700 leading-relaxed">The valuation date is {{#if effective_date}}{{formatDate effective_date}}{{else}}{{formatDate createdAt}}{{/if}}; values are in Canadian dollars as of that date.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Inspection</h3>
+        <p class="text-gray-700 leading-relaxed">The subject assets were inspected {{#if inspection_date}}on {{formatDate inspection_date}}{{else}}as noted in the report{{/if}}. When the inspection date differs from the valuation date, no material change is assumed unless otherwise stated.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Hazardous Substances</h3>
+        <p class="text-gray-700 leading-relaxed">No allowance has been made for potential environmental problems. The value estimate assumes full compliance with applicable regulations and the absence of hazardous materials unless stated.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Change in Market Conditions</h3>
+        <p class="text-gray-700 leading-relaxed">We are not responsible for changes in market conditions after the valuation date and have no obligation to revise the report for subsequent events.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Unexpected Conditions</h3>
+        <p class="text-gray-700 leading-relaxed">It is assumed there are no hidden or non-apparent conditions that would affect value. No responsibility is assumed for such conditions.</p>
+      </section>
+
+      <!-- Company, Subject Asset Description -->
+      <section id="company-subject" class="card">
+        <h2 class="text-2xl font-semibold section-title">Company, Subject Asset Description</h2>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1">Company Discussion</h3>
+        <p class="text-gray-700 leading-relaxed">{{#if client_name}}{{client_name}}{{else}}The client{{/if}} operates across multiple divisions and locations. The subject engagement focuses on relevant operating divisions connected to the subject assets.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Subject Assets Discussion</h3>
+        <p class="text-gray-700 leading-relaxed">The major subject assets include Construction and Transportation equipment. Overall, these were found to be in good to excellent condition, subject to the assumptions and limiting conditions.</p>
+      </section>
+
+      <!-- Approaches to Value -->
+      <section id="approaches-to-value" class="card">
+        <h2 class="text-2xl font-semibold section-title">Approaches to Value</h2>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1">Cost Approach</h3>
+        <p class="text-gray-700 leading-relaxed">A set of procedures in which an appraiser derives a value indication by estimating the current cost to reproduce or replace the assets, deducting for all depreciation, including physical deterioration, functional obsolescence, and external or economic obsolescence.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Sales Comparison (Market) Approach</h3>
+        <p class="text-gray-700 leading-relaxed">A set of procedures in which an appraiser derives a value indication by comparing the assets being appraised with similar assets that have been sold recently and making appropriate adjustments.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Income Capitalization Approach</h3>
+        <p class="text-gray-700 leading-relaxed">A set of procedures in which an appraiser derives a value indication for income-producing assets by converting anticipated benefits into value via capitalization or discounting of cash flows.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Alternate Use &amp; Appropriate Market Approach</h3>
+        <p class="text-gray-700 leading-relaxed">We considered the appropriate market and level of trade, availability of reliable market data, market conditions as of the valuation date, and a marketing period consistent with the intended use identified.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Reconciliation of Valuation Approaches</h3>
+        <p class="text-gray-700 leading-relaxed">The Cost and Market approaches were utilized and reconciled. The Income approach was considered but not applied for reasons discussed within this report.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Highest and Best Use</h3>
+        <p class="text-gray-700 leading-relaxed">We considered the highest and best use of the subject assets, including what is legally permissible, physically possible, financially feasible, and maximally productive.</p>
+      </section>
+
+      <!-- Valuation Process and Methodology -->
+      <section id="valuation-process" class="card">
+        <h2 class="text-2xl font-semibold section-title">Valuation Process and Methodology</h2>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1">Data Collection</h3>
+        <p class="text-gray-700 leading-relaxed">Site visits were performed {{#if inspection_date}}in {{formatDate inspection_date}}{{else}}as required{{/if}}. Discussions with client personnel informed our understanding of operations and maintenance policies.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Valuation Process</h3>
+        <p class="text-gray-700 leading-relaxed">We considered the income, sales comparison, and cost approaches and concluded on the appropriate methods given the asset types and available data.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Research Methodology</h3>
+        <p class="text-gray-700 leading-relaxed">Research included auction and dealer results, OEM data, used equipment marketplaces, and current market/geographic conditions for similar assets.</p>
+      </section>
+
+      <!-- Code of Ethics -->
+      <section id="code-of-ethics" class="card">
+        <h2 class="text-2xl font-semibold section-title">Code of Ethics</h2>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1">Competency</h3>
+        <p class="text-gray-700 leading-relaxed">The appraiser has the appropriate knowledge and experience to develop credible results for the purpose and use outlined in this report.</p>
+        <h3 class="text-lg font-semibold text-rose-700 mb-1 mt-3">Confidentiality</h3>
+        <p class="text-gray-700 leading-relaxed">This report and supporting file documentation are confidential. Distribution to parties other than the client requires prior written consent.</p>
+      </section>
+
+      <!-- Catalogue Lots with Nested Items -->
+      <section id="catalogue"></section>
+      {{#each lots}}
+      <section class="lot-card">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <h3 class="text-xl font-bold brand-rose">
+            <span class="text-sm text-gray-500 font-medium"
+              >Lot {{lot_id}}</span
+            >
+            <span class="mx-2">—</span>{{title}}
+          </h3>
+          <div class="flex items-center gap-2">
+            {{#if condition}}<span class="badge">{{condition}}</span>{{/if}}
+            {{#if estimated_value}}<span class="badge"
+              >Est. Value: {{estimated_value}}</span
+            >{{/if}} {{#if items}}<span class="badge"
+              >Items: {{items.length}}</span
+            >{{/if}}
+          </div>
+        </div>
+        <p class="text-gray-700 mt-2 whitespace-pre-line">{{description}}</p>
+
+        <!-- Items Table -->
+        <div class="mt-4 overflow-x-auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>SN/VIN</th>
+                <th>Description</th>
+                <th>Condition</th>
+                <th>Est. Value (CAD)</th>
+                <th>Image</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{#if items}} {{#each items}}
+              <tr>
+                <td class="font-semibold text-gray-900">{{title}}</td>
+                <td>{{#if sn_vin}}{{sn_vin}}{{else}}not found{{/if}}</td>
+                <td class="whitespace-pre-line">
+                  {{#if description}}{{description}}{{else}}—{{/if}}
+                </td>
+                <td class="whitespace-pre-line">
+                  {{#if condition}}{{condition}}{{else}}{{#if
+                  details}}{{details}}{{else}}—{{/if}}{{/if}}
+                </td>
+                <td>
+                  {{#if estimated_value}}{{estimated_value}}{{else}}—{{/if}}
+                </td>
+                <td>
+                  {{#if (lookup @root.imageUrls image_local_index)}}
+                  <img
+                    src="{{lookup @root.imageUrls image_local_index}}"
+                    alt="Item"
+                    class="thumb"
+                    width="220"
+                    height="160"
+                  />
+                  {{else}} {{#if (lookup @root.imageUrls image_index)}}
+                  <img
+                    src="{{lookup @root.imageUrls image_index}}"
+                    alt="Item"
+                    class="thumb"
+                    width="220"
+                    height="160"
+                  />
+                  {{else}} {{#if image_url}}
+                  <img
+                    src="{{image_url}}"
+                    alt="Item"
+                    class="thumb"
+                    width="220"
+                    height="160"
+                  />
+                  {{else}}
+                  <div class="text-xs text-gray-400">No image</div>
+                  {{/if}} {{/if}} {{/if}}
+                </td>
+              </tr>
+              {{/each}} {{else}}
+              <tr>
+                <td colspan="6" class="text-center text-gray-500 py-4">
+                  No items found in this lot.
+                </td>
+              </tr>
+              {{/if}}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {{/each}}
+    </div>
+  </body>
+</html>

@@ -1,0 +1,1 @@
+export const ADMIN_MOBILE_TITLEBAR_HEIGHT = 56;

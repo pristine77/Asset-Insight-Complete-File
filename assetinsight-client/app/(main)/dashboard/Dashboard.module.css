@@ -1,0 +1,861 @@
+.page {
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 24px 28px 36px;
+  font-feature-settings: "tnum" 1;
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.title {
+  margin: 0;
+  color: var(--app-text-strong);
+  font-size: clamp(1.65rem, 2vw, 1.8rem);
+  font-weight: 720;
+  letter-spacing: -0.045em;
+  line-height: 1.12;
+}
+
+.subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 5px 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.subtitleDivider {
+  color: var(--app-text-subtle);
+}
+
+.createButton {
+  min-height: 40px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 15px;
+  border: 1px solid var(--app-accent);
+  border-radius: 8px;
+  background: var(--app-accent);
+  color: var(--app-on-accent);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.13);
+  font-size: 0.84rem;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.createButton:hover {
+  border-color: var(--app-accent-hover);
+  background: var(--app-accent-hover);
+  box-shadow: 0 5px 14px rgba(37, 99, 235, 0.16);
+}
+
+.createButton:active {
+  transform: translateY(0);
+}
+
+.createButton:focus-visible,
+.workflowButton:focus-visible,
+.textAction:focus-visible,
+.viewAllButton:focus-visible,
+.reportLink:focus-visible,
+.rowAction:focus-visible {
+  outline: 3px solid var(--app-accent-ring);
+  outline-offset: 2px;
+}
+
+.workflowStrip {
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-panel);
+  box-shadow: var(--app-shadow-card);
+}
+
+.workflowButton {
+  position: relative;
+  min-width: 0;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--app-text);
+  font-size: 0.84rem;
+  font-weight: 540;
+  white-space: nowrap;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.workflowButton::after {
+  position: absolute;
+  top: 11px;
+  right: 0;
+  bottom: 11px;
+  width: 1px;
+  background: var(--app-border);
+  content: "";
+}
+
+.workflowButton:last-child::after {
+  display: none;
+}
+
+.workflowButton svg {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: var(--app-accent);
+  transition: transform 140ms ease;
+}
+
+.workflowButton:hover {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+.workflowButton:hover svg {
+  transform: translateY(-1px);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(420px, 1fr);
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.summaryLeft {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.84fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.metric {
+  min-width: 0;
+  min-height: 106px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 17px 18px;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-panel);
+  box-shadow: var(--app-shadow-card);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.metric[data-emphasized="true"] {
+  border-color: var(--app-accent);
+  box-shadow:
+    0 10px 28px rgba(37, 99, 235, 0.1),
+    inset 0 0 0 1px var(--app-accent-ring);
+}
+
+.metricLabel {
+  color: var(--app-text);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.metricValue {
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--app-text-strong);
+  font-size: clamp(1.65rem, 2.35vw, 1.95rem);
+  font-weight: 720;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricIcon,
+.incomingIcon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--app-info-border);
+  border-radius: 9px;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+.metric[data-emphasized="true"] .metricIcon {
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.1);
+}
+
+.incomingCard {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 14px 18px;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-panel);
+  box-shadow: var(--app-shadow-card);
+}
+
+.incomingCopy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.incomingCopy span {
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+}
+
+.incomingCopy strong {
+  overflow: hidden;
+  color: var(--app-text-strong);
+  font-size: 1.08rem;
+  font-weight: 690;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.textAction,
+.viewAllButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--app-accent);
+  font-size: 0.79rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.textAction {
+  margin-left: auto;
+  padding: 7px 4px;
+}
+
+.textAction svg,
+.viewAllButton svg {
+  transition: transform 140ms ease;
+}
+
+.textAction:hover,
+.viewAllButton:hover,
+.reportLink:hover {
+  color: var(--app-accent-hover);
+}
+
+.textAction:hover svg,
+.viewAllButton:hover svg {
+  transform: translateX(2px);
+}
+
+.activityCard {
+  min-width: 0;
+  min-height: 300px;
+  padding: 18px;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-panel);
+  box-shadow: var(--app-shadow-card);
+}
+
+.activityHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.activityHeader p {
+  margin: 0 0 3px;
+  color: var(--app-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.activityHeader h2,
+.recentHeading h2 {
+  margin: 0;
+  color: var(--app-text-strong);
+  font-size: 0.86rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.activityControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rangeControl {
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-panel-alt);
+}
+
+.rangeControl button {
+  min-width: 39px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+  font-weight: 720;
+}
+
+.rangeControl button[data-active="true"] {
+  background: var(--app-panel);
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
+  color: var(--app-accent);
+}
+
+.leaderboardButton {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-panel);
+  color: var(--app-accent);
+}
+
+.leaderboardButton:hover {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+}
+
+.chartLoading {
+  min-height: 245px;
+  display: grid;
+  place-items: center;
+  color: var(--app-text-muted);
+}
+
+.recentCard {
+  overflow: hidden;
+  margin-top: 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-panel);
+  box-shadow: var(--app-shadow-card);
+}
+
+.recentHeading {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 8px 14px 8px 18px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.viewAllButton {
+  padding: 6px 0 6px 8px;
+}
+
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--app-text);
+  font-size: 0.78rem;
+}
+
+.table th,
+.table td {
+  padding: 0 14px;
+  border-right: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--app-border);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.table th {
+  height: 34px;
+  background: var(--app-panel-alt);
+  color: var(--app-text-muted);
+  font-size: 0.68rem;
+  font-weight: 610;
+  letter-spacing: 0.015em;
+}
+
+.table td {
+  height: 48px;
+}
+
+.table th:last-child,
+.table td:last-child {
+  border-right: 0;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.table tbody tr:hover {
+  background: var(--app-panel-alt);
+}
+
+.sortHeading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sortHeading svg {
+  color: var(--app-text-subtle);
+}
+
+.reportIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reportIdentity > :first-child {
+  width: 60px;
+  height: 38px;
+  border-radius: 5px;
+}
+
+.reportLink {
+  max-width: 250px;
+  overflow: hidden;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-accent);
+  font: inherit;
+  font-weight: 540;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 6px;
+  padding: 3px 7px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-panel-alt);
+  color: var(--app-text-muted);
+  font-size: 0.66rem;
+  font-weight: 620;
+  line-height: 1;
+}
+
+.status::before {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.status[data-tone="success"] {
+  border-color: var(--app-success-border);
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
+.status[data-tone="warning"] {
+  border-color: var(--app-warning-border);
+  background: var(--app-warning-soft);
+  color: var(--app-warning);
+}
+
+.status[data-tone="info"] {
+  border-color: var(--app-info-border);
+  background: var(--app-info-soft);
+  color: var(--app-info);
+}
+
+.status[data-tone="danger"] {
+  border-color: var(--app-danger-border);
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+
+.rowAction {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-text-muted);
+  place-items: center;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.rowAction:hover {
+  background: var(--app-panel-alt);
+  color: var(--app-text);
+}
+
+.recentEmpty {
+  min-height: 210px;
+  display: grid;
+  place-items: center;
+  color: var(--app-text-muted);
+  font-size: 0.88rem;
+}
+
+.draftStatus {
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.draftStatus[data-status="saved"] {
+  color: var(--app-success);
+}
+
+.draftStatus[data-status="error"] {
+  color: var(--app-danger);
+}
+
+.draftStatus[data-status="partial"] {
+  color: var(--app-warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .createButton,
+  .workflowButton,
+  .workflowButton svg,
+  .textAction svg,
+  .viewAllButton svg {
+    transition: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .page {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+
+  .summaryGrid {
+    grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+  }
+
+  .metric,
+  .incomingCard {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .table th,
+  .table td {
+    padding-right: 13px;
+    padding-left: 13px;
+  }
+
+  .reportIdentity {
+    gap: 10px;
+  }
+
+  .reportIdentity > :first-child {
+    width: 58px;
+  }
+}
+
+@media (max-width: 980px) {
+  .summaryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .activityCard {
+    min-height: 290px;
+  }
+}
+
+@media (max-width: 680px) {
+  .page {
+    padding: 18px 14px 26px;
+  }
+
+  .pageHeader {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+
+  .title {
+    font-size: 1.55rem;
+  }
+
+  .subtitle {
+    align-items: flex-start;
+    font-size: 0.78rem;
+  }
+
+  .subtitleDivider {
+    display: none;
+  }
+
+  .subtitle > span:last-child {
+    flex-basis: 100%;
+  }
+
+  .createButton {
+    width: 100%;
+  }
+
+  .workflowStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflowButton {
+    min-height: 52px;
+    justify-content: flex-start;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--app-border);
+    font-size: 0.8rem;
+  }
+
+  .workflowButton:nth-child(2)::after {
+    display: none;
+  }
+
+  .workflowButton:nth-child(n + 3) {
+    border-bottom: 0;
+  }
+
+  .summaryGrid {
+    gap: 14px;
+    margin-top: 16px;
+  }
+
+  .metricGrid {
+    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric {
+    min-height: 104px;
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .metricLabel {
+    font-size: 0.8rem;
+  }
+
+  .metricValue {
+    margin-top: 6px;
+    font-size: 1.42rem;
+  }
+
+  .metricIcon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .metricIcon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .incomingCard {
+    min-height: 96px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px 12px;
+    padding: 14px;
+  }
+
+  .incomingIcon {
+    width: 38px;
+    height: 38px;
+    grid-row: 1 / span 2;
+  }
+
+  .textAction {
+    grid-column: 2;
+    justify-self: start;
+    margin: -4px 0 0;
+    padding: 4px 0;
+  }
+
+  .activityCard {
+    min-height: 275px;
+    padding: 16px 14px;
+  }
+
+  .activityHeader {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .activityControls {
+    gap: 6px;
+  }
+
+  .rangeControl button {
+    min-width: 34px;
+  }
+
+  .chartLoading {
+    min-height: 220px;
+  }
+
+  .recentCard {
+    margin-top: 14px;
+  }
+
+  .recentHeading {
+    min-height: 44px;
+    padding: 8px 12px 8px 14px;
+  }
+
+  .tableWrap {
+    overflow: visible;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table tr {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--app-border);
+  }
+
+  .table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .table td {
+    min-height: 0;
+    height: auto;
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 10px;
+    padding: 4px 0;
+    border: 0;
+    white-space: normal;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    color: var(--app-text-muted);
+    font-size: 0.67rem;
+    font-weight: 650;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+  }
+
+  .reportIdentity {
+    align-items: flex-start;
+  }
+
+  .reportIdentity > :first-child {
+    width: 58px;
+    height: 42px;
+  }
+
+  .reportLink {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .rowAction {
+    width: 28px;
+    height: 28px;
+    justify-self: start;
+    margin-top: -4px;
+  }
+}
+
+@media (max-width: 390px) {
+  .metricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric {
+    min-height: 96px;
+    align-items: center;
+  }
+
+  .viewAllButton {
+    font-size: 0.8rem;
+  }
+}

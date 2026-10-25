@@ -1,0 +1,59 @@
+.page { display: flex; flex-direction: column; gap: 1rem; width: 100%; max-width: 1440px; margin: 0 auto; padding: 1rem; color: var(--app-text); min-width: 0; }
+.header, .actions, .sectionHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
+.header h1 { font-size: 1.35rem; font-weight: 700; }
+.muted { color: var(--app-text-muted); font-size: .85rem; overflow-wrap: anywhere; }
+.section { border: 1px solid var(--app-border); border-radius: 8px; padding: 1rem; background: var(--app-panel); min-width: 0; }
+.section h2 { font-size: 1rem; font-weight: 650; margin-bottom: .75rem; }
+.fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+.field { display: flex; flex-direction: column; gap: .3rem; min-width: 0; font-size: .8rem; color: var(--app-text-muted); }
+.field input, .field textarea, .field select { width: 100%; min-width: 0; border: 1px solid var(--app-control-border); border-radius: 6px; background: var(--app-control-bg, var(--app-panel)); color: var(--app-text); padding: .55rem .65rem; font-size: .875rem; }
+.field textarea { min-height: 90px; resize: vertical; }
+.field :is(input,textarea,select):focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.field :disabled { opacity: .7; cursor: not-allowed; }
+.wide { grid-column: 1 / -1; }
+.notice { border: 1px solid var(--app-info-border, var(--app-border)); background: var(--app-info-soft); border-radius: 8px; padding: .8rem 1rem; font-size: .9rem; overflow-wrap: anywhere; }
+.error { border-color: var(--app-danger-border); color: var(--app-danger); background: var(--app-danger-soft); }
+.progress { display: block; width: 100%; height: .5rem; margin-top: .75rem; accent-color: var(--app-accent); }
+.progress::-webkit-progress-bar { background: var(--app-panel-alt); border-radius: 4px; }
+.progress::-webkit-progress-value { background: var(--app-accent); border-radius: 4px; }
+.progress::-moz-progress-bar { background: var(--app-accent); border-radius: 4px; }
+.photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: .6rem; }
+.photo { border: 1px solid var(--app-border); border-radius: 6px; overflow: hidden; background: var(--app-panel-alt); cursor: pointer; }
+.photo img { display: block; width: 100%; height: 95px; object-fit: cover; }
+.photo span { display: block; padding: .35rem; font-size: .75rem; }
+.photo:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.rows { display: flex; flex-direction: column; gap: .75rem; }
+.row { border: 1px solid var(--app-border); border-radius: 6px; padding: .75rem; }
+.row .fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.footer { position: sticky; bottom: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; border: 1px solid var(--app-border); border-radius: 8px; padding: .75rem; padding-bottom: max(.75rem, env(safe-area-inset-bottom)); background: var(--app-panel); box-shadow: 0 -2px 10px rgb(0 0 0 / .04); }
+.viewer { width: min(900px, calc(100vw - 2rem)); max-height: 90dvh; padding: 1rem; border: 1px solid var(--app-border); border-radius: 8px; color: var(--app-text); background: var(--app-panel); margin: auto; }
+.viewer::backdrop { background: rgb(0 0 0 / .75); }
+.viewer img { display: block; max-width: 100%; max-height: 70dvh; object-fit: contain; margin: .75rem auto 0; }
+.analysis { display: grid; grid-template-columns: minmax(100px, 1fr) 3fr; gap: .5rem 1rem; font-size: .85rem; overflow-wrap: anywhere; }
+.analysis dt { color: var(--app-text-muted); text-transform: capitalize; }
+.analysis dd { white-space: pre-wrap; }
+.progressPage { max-width: 1100px; }
+.processingSteps { display: grid; gap: .5rem; padding: 1rem 0; }
+.processingSteps li { display: flex; gap: .7rem; align-items: flex-start; padding: .7rem; border: 1px solid var(--app-border); border-radius: 6px; color: var(--app-text-muted); }
+.processingSteps li > svg { flex-shrink: 0; margin-top: .1rem; }
+.processingSteps li span { color: var(--app-text); font-size: .875rem; }
+.processingSteps li small { display: block; color: var(--app-text-muted); font-size: .75rem; margin-top: .2rem; }
+.processingSteps li[data-state="active"] { border-color: var(--app-accent); color: var(--app-accent); background: var(--app-accent-soft); }
+.processingSteps li[data-state="completed"] { color: var(--app-success); }
+.processingSteps li[data-state="error"] { color: var(--app-danger); }
+.vehicleFields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; align-items: start; }
+.vehicleField { min-width: 0; border: 1px solid var(--app-border); border-radius: 6px; padding: .65rem; background: var(--app-panel); }
+.vehicleLabel { color: var(--app-text); font-weight: 550; }
+.vehicleStatus { margin-top: .35rem; font-size: .75rem; color: var(--app-text-muted); overflow-wrap: anywhere; }
+.vehicleConflict { color: var(--app-danger); }
+.vehicleSpecs { margin-top: 1rem; padding-top: .85rem; border-top: 1px solid var(--app-border); }
+.vehicleSpecs h3 { margin-bottom: .25rem; font-size: .9rem; font-weight: 650; }
+.vehicleEvidence { margin-top: .45rem; font-size: .75rem; overflow-wrap: anywhere; color: var(--app-text-muted); }
+.vehicleEvidence summary { cursor: pointer; padding: .2rem 0; }
+.vehicleEvidence ul { display: grid; gap: .4rem; margin-top: .4rem; }
+.evidencePhotoButton { display: inline; color: var(--app-accent); text-decoration: underline; text-underline-offset: 2px; min-height: 36px; cursor: pointer; }
+.evidencePhotoButton:focus-visible, .vehicleEvidence summary:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+@media (max-width: 700px) { .vehicleFields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; } }
+@media (max-width: 480px) { .vehicleFields { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) { .page { padding: .65rem; gap: .65rem; } .section { padding: .75rem; } .fields, .row .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .header h1 { font-size: 1.15rem; } .footer .actions { flex: 1; } .footer .actions button { flex: 1; } }
+@media (max-width: 380px) { .fields, .row .fields { grid-template-columns: minmax(0, 1fr); } .analysis { grid-template-columns: 1fr; } }

@@ -1,0 +1,30 @@
+import AdminApprovals from "@/app/components/admin/AdminApprovals";
+import AdminNavbarV2 from "@/app/components/common/AdminNavbarV2";
+import { SERVER_URL } from "@/lib/api";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+
+export default async function Page() {
+  const token = (await cookies()).get("cv_admin")?.value;
+  if (!token) redirect("/login");
+
+  const res = await fetch(`${SERVER_URL}/api/admin/me`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) redirect("/login");
+  const data: { user?: { role?: string } } = await res
+    .json()
+    .catch(() => ({} as unknown as { user?: { role?: string } }));
+  const role = data?.user?.role;
+  
+  // Admin and superadmin can access released appraisal records.
+  if (role !== "superadmin" && role !== "admin") redirect("/reports");
+
+  return (
+    <AdminNavbarV2>
+      <AdminApprovals />
+    </AdminNavbarV2>
+  );
+}

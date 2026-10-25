@@ -1,0 +1,179 @@
+.dialog {
+  width: min(760px, calc(100% - 32px));
+  margin: auto;
+  position: relative;
+  overflow: hidden;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.helpButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding-inline: 11px;
+  font-size: 13px;
+}
+
+.noticeBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, #05070a 66%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.noticePanel {
+  width: min(560px, 100%);
+  max-height: calc(100% - 8px);
+  overflow-y: auto;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-panel);
+  color: var(--app-text);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
+}
+
+.noticeHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.noticeHeader h3 {
+  margin: 3px 0 5px;
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.noticeHeader p {
+  max-width: 460px;
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.noticeEyebrow {
+  color: var(--app-accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.noticeItems {
+  display: grid;
+  gap: 1px;
+  padding: 8px 20px;
+}
+
+.noticeItem {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.noticeItem:last-child {
+  border-bottom: 0;
+}
+
+.noticeIcon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+.noticeItem h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.noticeItem p {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.noticeCallout {
+  margin: 4px 20px 0;
+  padding: 11px 12px;
+  border-left: 3px solid var(--app-accent);
+  background: var(--app-accent-soft);
+  color: var(--app-text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.noticeFooter {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 20px 20px;
+}
+
+@media (max-width: 767px) {
+  dialog.dialog {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+  }
+
+  .helpButton span {
+    display: none;
+  }
+
+  .helpButton {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .noticeBackdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .noticePanel {
+    width: 100%;
+    max-height: 92%;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 8px 8px 0 0;
+  }
+
+  .noticeHeader,
+  .noticeItems {
+    padding-inline: 16px;
+  }
+
+  .noticeCallout {
+    margin-inline: 16px;
+  }
+
+  .noticeFooter {
+    padding-inline: 16px;
+  }
+
+  .noticeFooter button {
+    width: 100%;
+  }
+}

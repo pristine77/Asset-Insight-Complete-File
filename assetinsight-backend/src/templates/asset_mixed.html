@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{#if contract_no}}Asset Report - {{contract_no}}{{else}}Asset Report{{/if}}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @page {
+      size: A4;
+      margin: 0.75in;
+      @bottom-center {
+        content: "Page " counter(page);
+        font-family: Calibri, sans-serif;
+        font-size: 10pt;
+        color: #6B7280;
+      }
+    }
+
+    * {
+      font-family: Calibri, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    body {
+      font-size: 13pt;
+      line-height: 1.5;
+      color: #111827;
+    }
+
+    .container {
+      max-width: 8.5in;
+      margin: 0 auto;
+      padding: 0 1rem;
+    }
+
+    /* Cover Page */
+    .cover-page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      page-break-after: always;
+      text-align: center;
+    }
+
+    .cover-logo {
+      max-width: 200px;
+      max-height: 58px;
+      width: 200px;
+      height: auto;
+      object-fit: contain;
+      margin-bottom: 3rem;
+    }
+
+    .cover-title {
+      font-size: 32pt;
+      font-weight: bold;
+      color: #111827;
+      margin-bottom: 2rem;
+    }
+
+    .cover-info {
+      font-size: 14pt;
+      color: #6B7280;
+      margin: 0.5rem 0;
+    }
+
+    /* Typography */
+    h1 {
+      font-size: 18pt;
+      font-weight: bold;
+      color: #111827;
+      margin-top: 2rem;
+      margin-bottom: 1rem;
+      page-break-after: avoid;
+    }
+
+    h2 {
+      font-size: 15pt;
+      font-weight: bold;
+      color: #111827;
+      margin-top: 1.5rem;
+      margin-bottom: 0.75rem;
+      page-break-after: avoid;
+    }
+
+    h3 {
+      font-size: 14pt;
+      font-weight: bold;
+      color: #111827;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    p {
+      margin-bottom: 0.75rem;
+      line-height: 1.6;
+    }
+
+    .section {
+      page-break-before: always;
+      padding-top: 1rem;
+    }
+
+    .divider {
+      height: 3px;
+      background: linear-gradient(90deg, #D4AF37 0%, #F4E5C6 100%);
+      border: none;
+      margin: 1rem 0;
+    }
+
+    /* Table of Contents */
+    .toc-list {
+      list-style: none;
+      padding: 0;
+      margin: 1rem 0;
+    }
+
+    .toc-list li {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid #F3F4F6;
+    }
+
+    .toc-list li:last-child {
+      border-bottom: none;
+    }
+
+    .toc-label {
+      font-size: 13pt;
+      color: #111827;
+    }
+
+    .toc-page {
+      color: #6B7280;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      page-break-inside: avoid;
+    }
+
+    th {
+      background: #F3F4F6;
+      padding: 0.75rem;
+      text-align: left;
+      font-weight: bold;
+      font-size: 12pt;
+      border: 1px solid #E5E7EB;
+    }
+
+    td {
+      padding: 0.75rem;
+      border: 1px solid #E5E7EB;
+      font-size: 12pt;
+    }
+
+    /* Key-Value Pairs */
+    .kv-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+
+    .kv-item {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .kv-label {
+      font-weight: bold;
+      color: #6B7280;
+      font-size: 11pt;
+      margin-bottom: 0.25rem;
+    }
+
+    .kv-value {
+      color: #111827;
+      font-size: 13pt;
+    }
+
+    /* List Styles */
+    ul {
+      margin: 1rem 0;
+      padding-left: 1.5rem;
+    }
+
+    li {
+      margin-bottom: 0.5rem;
+      line-height: 1.6;
+    }
+
+    /* Images */
+    .img-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+
+    .img-grid img {
+      width: 100%;
+      height: auto;
+      border-radius: 4px;
+      border: 1px solid #E5E7EB;
+    }
+
+    /* Print Styles */
+    @media print {
+      body {
+        font-size: 13pt;
+      }
+
+      .no-print {
+        display: none !important;
+      }
+
+      .page-break {
+        page-break-before: always;
+      }
+
+      .avoid-break {
+        page-break-inside: avoid;
+      }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .kv-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .img-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      body {
+        font-size: 12pt;
+      }
+
+      h1 {
+        font-size: 16pt;
+      }
+
+      h2 {
+        font-size: 14pt;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Cover Page -->
+  <div class="cover-page">
+    {{#if logo_url}}
+    <img src="{{logo_url}}" alt="Company Logo" class="cover-logo">
+    {{/if}}
+    <div class="cover-title">Asset Appraisal Report</div>
+    <div class="cover-info">
+      {{#if client_name}}<strong>{{client_name}}</strong>{{/if}}
+    </div>
+    <div class="cover-info">
+      {{#if contract_no}}Contract No: {{contract_no}}{{/if}}
+    </div>
+    <div class="cover-info">
+      {{#if createdAt}}{{formatDate createdAt}}{{/if}}
+    </div>
+    <div class="cover-info" style="margin-top: 2rem; color: #9CA3AF;">
+      Prepared by {{#if appraiser}}{{appraiser}}{{else}}Asset Insight{{/if}}
+    </div>
+  </div>
+
+  <!-- Table of Contents -->
+  <div class="section">
+    <div class="container">
+      <h1>Table of Contents</h1>
+      <hr class="divider">
+      <ul class="toc-list">
+        <li><span class="toc-label">Report Summary</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Summary of Value Conclusions</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Report Details</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Conditions of Appraisal</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Purpose of This Report</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Identification of Assets Appraised</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Scope of Work</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Observations and Comments</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Intended Users</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Value Terminology</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Definitions and Obsolescence</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Limiting Conditions and Critical Assumptions</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Company, Subject Asset Description</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Approaches to Value</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Valuation Process and Methodology</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Code of Ethics</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">EXPERIENCE</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Transmittal Letter</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Certificate of Appraisal</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Results</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Market Overview</span><span class="toc-page">—</span></li>
+        <li><span class="toc-label">Appendix</span><span class="toc-page">—</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Transmittal Letter -->
+  <div class="section">
+    <div class="container">
+      <h1>TRANSMITTAL LETTER</h1>
+      <hr class="divider">
+      
+      <p><strong>{{#if client_name}}{{client_name}}{{else}}Client Name{{/if}}</strong></p>
+      <p><strong>Attention:</strong> {{#if owner_name}}{{owner_name}}{{else}}To Whom It May Concern{{/if}}</p>
+      
+      <p style="margin-top: 1.5rem;">Dear Sirs,</p>
+      
+      <p><strong>Re: Asset Appraisal</strong></p>
+      
+      <p>At your request, we have prepared an appraisal of certain equipment owned by {{#if client_name}}{{client_name}}{{else}}the client{{/if}}, a copy of which is enclosed. This appraisal report is intended for exclusive use by {{#if client_name}}{{client_name}}{{else}}the client{{/if}} and is intended only for establishing values of the listed equipment.</p>
+      
+      <p>The subject assets were appraised under the premise of Orderly Liquidation Value for internal consideration.</p>
+      
+      <p>The cost and market approaches to value have been considered for this appraisal and have either been utilized where necessary or deemed inappropriate for the value conclusions found therein.</p>
+      
+      <p>After a thorough analysis of the assets and information made available to us, it is our opinion that as of the Effective Date, these assets have an Orderly Liquidation Value in {{#if currency}}{{currency}}{{else}}CAD{{/if}} Funds as shown on the certificate that we have prepared.</p>
+      
+      <p>We certify that neither we nor any of our employees have any present or future interest in the appraised property. The fee charged for this appraisal was not contingent on the values reported. As such, the results stated in this letter of transmittal cannot be fully understood without the accompanying report and this letter should not be separated from the report.</p>
+      
+      <p>If you require any additional information, please feel free to contact me at your convenience.</p>
+      
+      <p style="margin-top: 2rem;"><strong>Sincerely,</strong></p>
+      <div style="height: 4rem; width: 18rem; border-bottom: 1px solid #111827; margin: 0.5rem 0 0.75rem;"></div>
+      <p><strong>{{#if appraiser}}{{appraiser}}{{else}}Appraiser{{/if}}</strong></p>
+      <p>{{#if appraisal_company}}{{appraisal_company}}{{/if}}</p>
+    </div>
+  </div>
+
+  <!-- Certificate of Appraisal -->
+  <div class="section">
+    <div class="container">
+      <h1>CERTIFICATE OF APPRAISAL</h1>
+      <hr class="divider">
+      
+      <p>This is to certify that the assets described herein have been appraised in accordance with accepted professional standards.</p>
+      
+      <div class="kv-grid" style="margin-top: 2rem;">
+        <div class="kv-item">
+          <div class="kv-label">Client</div>
+          <div class="kv-value">{{#if client_name}}{{client_name}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Purpose</div>
+          <div class="kv-value">{{#if appraisal_purpose}}{{appraisal_purpose}}{{else}}Internal Asset Valuation{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Effective Date</div>
+          <div class="kv-value">{{#if effective_date}}{{formatDate effective_date}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Contract No</div>
+          <div class="kv-value">{{#if contract_no}}{{contract_no}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Prepared By</div>
+          <div class="kv-value">{{#if appraiser}}{{appraiser}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Date</div>
+          <div class="kv-value">{{#if createdAt}}{{formatDate createdAt}}{{else}}—{{/if}}</div>
+        </div>
+      </div>
+      
+      <p style="margin-top: 2rem;"><strong>Value: See Details</strong></p>
+      
+      <div style="margin-top: 3rem;">
+        <p><strong>Appraiser Signature</strong></p>
+        <div style="border-bottom: 1px solid #111827; width: 55%; margin-top: 4rem;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content Starts Here -->
+  
+  <!-- Report Summary -->
+  <div class="section">
+    <div class="container">
+      <h1>Report Summary</h1>
+      <hr class="divider">
+      
+      <div class="kv-grid">
+        <div class="kv-item">
+          <div class="kv-label">Grouping Mode</div>
+          <div class="kv-value">{{#if grouping_mode}}{{grouping_mode}}{{else}}Mixed{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Total Lots</div>
+          <div class="kv-value">{{#if lots}}{{lots.length}}{{else}}0{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Total Images</div>
+          <div class="kv-value">{{#if imageUrls}}{{imageUrls.length}}{{else}}0{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Language</div>
+          <div class="kv-value">{{#if language}}{{language}}{{else}}en{{/if}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Summary of Value Conclusions -->
+  <div class="section">
+    <div class="container">
+      <h1>Summary of Value Conclusions</h1>
+      <hr class="divider">
+      
+      <p>Based upon our analysis and methodology, we estimate the reported assets have a total value. Please refer to the detailed sections for specific asset valuations.</p>
+    </div>
+  </div>
+
+  <!-- Report Details -->
+  <div class="section">
+    <div class="container">
+      <h1>Report Details</h1>
+      <hr class="divider">
+      
+      <div class="kv-grid">
+        <div class="kv-item">
+          <div class="kv-label">Client Name</div>
+          <div class="kv-value">{{#if client_name}}{{client_name}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Effective Date</div>
+          <div class="kv-value">{{#if effective_date}}{{formatDate effective_date}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Appraisal Purpose</div>
+          <div class="kv-value">{{#if appraisal_purpose}}{{appraisal_purpose}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Owner Name</div>
+          <div class="kv-value">{{#if owner_name}}{{owner_name}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Appraiser</div>
+          <div class="kv-value">{{#if appraiser}}{{appraiser}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Appraisal Company</div>
+          <div class="kv-value">{{#if appraisal_company}}{{appraisal_company}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Industry</div>
+          <div class="kv-value">{{#if industry}}{{industry}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Inspection Date</div>
+          <div class="kv-value">{{#if inspection_date}}{{formatDate inspection_date}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Contract No</div>
+          <div class="kv-value">{{#if contract_no}}{{contract_no}}{{else}}—{{/if}}</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">Currency</div>
+          <div class="kv-value">{{#if currency}}{{currency}}{{else}}CAD{{/if}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Conditions of Appraisal -->
+  <div class="section">
+    <div class="container">
+      <h1>Conditions of Appraisal</h1>
+      <hr class="divider">
+      
+      <p>The value stated in this appraisal report is based on the best judgment of the appraiser, given the facts and conditions available at the date of valuation. The use of this report is limited to the purpose of determining the value of the assets. This report is to be used in its entirety only.</p>
+    </div>
+  </div>
+
+  <!-- Purpose of This Report -->
+  <div class="section">
+    <div class="container">
+      <h1>Purpose of This Report</h1>
+      <hr class="divider">
+      
+      <p>The purpose of this appraisal report is to provide an opinion of value of the subject for internal consideration and to assist {{#if client_name}}{{client_name}}{{else}}the client{{/if}} and the specified personnel within their corporation in establishing a current Orderly Liquidation Value (OLV) for financial considerations. This report is not intended to be used for any other purpose. Based on the purpose of the appraisal, we have valued the subject assets under the premise of OLV.</p>
+    </div>
+  </div>
+
+  <!-- Identification of Assets Appraised -->
+  <div class="section">
+    <div class="container">
+      <h1>Identification of Assets Appraised</h1>
+      <hr class="divider">
+      
+      <p>As set out in the attached sections of this report, the assets appraised within this engagement include: Construction & Transportation Equipment.</p>
+    </div>
+  </div>
+
+  <!-- Scope of Work -->
+  <div class="section">
+    <div class="container">
+      <h1>Scope of Work</h1>
+      <hr class="divider">
+      
+      <p><strong>Valuation process and methodology — the appraiser employed the following procedures to determine the value conclusions rendered herein:</strong></p>
+      
+      <ul>
+        <li>Review and analysis of asset records and other informational materials.</li>
+        <li>Inspection and analysis of assets and equipment at the client location(s).</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Observations and Comments -->
+  <div class="section">
+    <div class="container">
+      <h1>Observations and Comments</h1>
+      <hr class="divider">
+      
+      <p>Available data and market comparables utilized were up to 120 days old. Increased weighting was given to recent regionally specific comparables when available.</p>
+    </div>
+  </div>
+
+  <!-- Intended Users -->
+  <div class="section">
+    <div class="container">
+      <h1>Intended Users</h1>
+      <hr class="divider">
+      
+      <p>This appraisal is not intended to be reproduced or used for any purpose other than that outlined in this appraisal and is for the internal use of the client.</p>
+    </div>
+  </div>
+
+  <!-- Value Terminology -->
+  <div class="section">
+    <div class="container">
+      <h1>Value Terminology</h1>
+      <hr class="divider">
+      
+      <h2>Orderly Liquidation Value (OLV)</h2>
+      <p>The estimated amount, expressed in terms of cash in {{#if currency}}{{currency}}{{else}}CAD{{/if}}, that could typically be realized from a liquidation sale, with the seller being compelled to sell on an 'as-is condition, where-is location' basis, as of a specific date and over a 120 day period.</p>
+      
+      <p>For the purpose of this appraisal, we have considered a properly advertised and professionally managed privately negotiated sale scenario, over a period of 120 days, during normal business operations or while winding down operations, with the buyer responsible for dismantling and removal at their own risk and expense.</p>
+    </div>
+  </div>
+
+  <!-- Definitions and Obsolescence -->
+  <div class="section">
+    <div class="container">
+      <h1>Definitions and Obsolescence</h1>
+      <hr class="divider">
+      
+      <h2>Physical Deterioration</h2>
+      <p>A form of depreciation where the loss in value or usefulness of a property is due to the using up or expiration of its useful life caused by wear and tear, deterioration, exposure to various elements, physical stresses, and similar factors.</p>
+      
+      <h2>Functional Obsolescence</h2>
+      <p>A form of depreciation in which the loss in value or usefulness is caused by inefficiencies or inadequacies of the asset itself when compared to a more efficient or less costly replacement that newer technology has developed.</p>
+      
+      <h2>Economic Obsolescence</h2>
+      <p>A form of depreciation or loss in value caused by external factors such as industry economics, availability of financing, legislation, increased cost of inputs without offsetting price increases, reduced demand, increased competition, inflation, or high interest rates.</p>
+      
+      <h2>Depreciation</h2>
+      <p>The actual loss in value or worth of a property from all causes including physical deterioration, functional obsolescence, and economic obsolescence.</p>
+    </div>
+  </div>
+
+  <!-- Limiting Conditions and Critical Assumptions -->
+  <div class="section">
+    <div class="container">
+      <h1>Limiting Conditions and Critical Assumptions</h1>
+      <hr class="divider">
+      
+      <h2>Asset Conditions</h2>
+      <p>Certain information was provided to the appraiser regarding repairs, engines, undercarriages, and upgrades. These were considered when appraising and comparing the subject assets with market comparables. Some assets may have extended warranties.</p>
+      
+      <h2>Title to the Assets</h2>
+      <p>No investigation has been made of, and no responsibility is assumed for, legal matters including title or encumbrances. Title is assumed to be good and marketable unless otherwise stated.</p>
+      
+      <h2>Responsible Ownership</h2>
+      <p>It is assumed that the subject assets are under responsible ownership and competent management.</p>
+      
+      <h2>Stated Purpose</h2>
+      <p>This appraisal and report have been made only for the stated purpose and cannot be used for any other purpose.</p>
+      
+      <h2>Valuation Date</h2>
+      <p>The valuation date is {{#if effective_date}}{{formatDate effective_date}}{{else}}the effective date{{/if}}; values are in {{#if currency}}{{currency}}{{else}}CAD{{/if}} as of that date.</p>
+      
+      <h2>Inspection</h2>
+      <p>The subject assets were inspected {{#if inspection_date}}on {{formatDate inspection_date}}{{else}}as noted in the report{{/if}}. When the inspection date differs from the valuation date, no material change is assumed unless otherwise stated.</p>
+      
+      <h2>Hazardous Substances</h2>
+      <p>No allowance has been made for potential environmental problems. The value estimate assumes full compliance with applicable regulations and the absence of hazardous materials unless stated.</p>
+      
+      <h2>Change in Market Conditions</h2>
+      <p>We are not responsible for changes in market conditions after the valuation date and have no obligation to revise the report for subsequent events.</p>
+      
+      <h2>Unexpected Conditions</h2>
+      <p>It is assumed there are no hidden or non-apparent conditions that would affect value. No responsibility is assumed for such conditions.</p>
+    </div>
+  </div>
+
+  <!-- Company, Subject Asset Description -->
+  <div class="section">
+    <div class="container">
+      <h1>Company, Subject Asset Description</h1>
+      <hr class="divider">
+      
+      <h2>Company Discussion</h2>
+      <p>{{#if client_name}}{{client_name}}{{else}}The client{{/if}} operates across multiple divisions and locations. The subject engagement focuses on relevant operating divisions connected to the subject assets.</p>
+      
+      <h2>Subject Assets Discussion</h2>
+      <p>The major subject assets include Construction and Transportation equipment. Overall, these were found to be in good to excellent condition, subject to the assumptions and limiting conditions.</p>
+    </div>
+  </div>
+
+  <!-- Approaches to Value -->
+  <div class="section">
+    <div class="container">
+      <h1>Approaches to Value</h1>
+      <hr class="divider">
+      
+      <h2>Cost Approach</h2>
+      <p>A set of procedures in which an appraiser derives a value indication by estimating the current cost to reproduce or replace the assets, deducting for all depreciation, including physical deterioration, functional obsolescence, and external or economic obsolescence.</p>
+      
+      <h2>Sales Comparison (Market) Approach</h2>
+      <p>A set of procedures in which an appraiser derives a value indication by comparing the assets being appraised with similar assets that have been sold recently and making appropriate adjustments.</p>
+      
+      <h2>Income Capitalization Approach</h2>
+      <p>A set of procedures in which an appraiser derives a value indication for income-producing assets by converting anticipated benefits into value via capitalization or discounting of cash flows.</p>
+      
+      <h2>Alternate Use & Appropriate Market Approach</h2>
+      <p>We considered the appropriate market and level of trade, availability of reliable market data, market conditions as of the valuation date, and a marketing period consistent with the intended use identified.</p>
+      
+      <h2>Reconciliation of Valuation Approaches</h2>
+      <p>The Cost and Market approaches were utilized and reconciled. The Income approach was considered but not applied for reasons discussed within this report.</p>
+      
+      <h2>Highest and Best Use</h2>
+      <p>We considered the highest and best use of the subject assets, including what is legally permissible, physically possible, financially feasible, and maximally productive.</p>
+    </div>
+  </div>
+
+  <!-- Valuation Process and Methodology -->
+  <div class="section">
+    <div class="container">
+      <h1>Valuation Process and Methodology</h1>
+      <hr class="divider">
+      
+      <h2>Data Collection</h2>
+      <p>Site visits were performed {{#if inspection_date}}on {{formatDate inspection_date}}{{else}}as required{{/if}}. Discussions with client personnel informed our understanding of operations and maintenance policies.</p>
+      
+      <h2>Valuation Process</h2>
+      <p>We considered the income, sales comparison, and cost approaches and concluded on the appropriate methods given the asset types and available data.</p>
+      
+      <h2>Research Methodology</h2>
+      <p>Research included auction and dealer results, OEM data, used equipment marketplaces, and current market/geographic conditions for similar assets.</p>
+    </div>
+  </div>
+
+  <!-- Code of Ethics -->
+  <div class="section">
+    <div class="container">
+      <h1>Code of Ethics</h1>
+      <hr class="divider">
+      
+      <h2>Competency</h2>
+      <p>The appraiser has the appropriate knowledge and experience to develop credible results for the purpose and use outlined in this report.</p>
+      
+      <h2>Confidentiality</h2>
+      <p>This report and supporting file documentation are confidential. Distribution to parties other than the client requires prior written consent.</p>
+    </div>
+  </div>
+
+  <!-- EXPERIENCE -->
+  <div class="section">
+    <div class="container">
+      <h1>EXPERIENCE</h1>
+      <hr class="divider">
+      
+      <p>McDougall Auctioneers Ltd. is one of Western Canada's leading full-service auction and valuation firms, with over 40 years of experience in marketing, selling, and appraising assets across a diverse range of industries. Headquartered in Saskatchewan and operating throughout Canada and the United States, McDougall Auctioneers has built a reputation for impartial, defensible valuations that meet or exceed industry and regulatory standards.</p>
+      
+      <p>Our appraisal team combines Certified Personal Property Appraisers, experienced auctioneers, and subject-matter specialists who have inspected and valued tens of thousands of assets annually. We deliver comprehensive appraisals for equipment, vehicles, industrial machinery, agricultural assets, and business inventories, using recognised methodologies such as the Market Approach, Cost Approach, and, where applicable, the Income Approach. All assignments are performed in compliance with the Uniform Standards of Professional Appraisal Practice (USPAP) and relevant Canadian appraisal guidelines.</p>
+      
+      <p>McDougall's extensive auction platform provides us with current, real-world market data on comparable sales. This proprietary database allows us to support our valuations with up-to-date evidence of pricing trends, demand fluctuations, and liquidation values. Whether for insurance, financing, litigation, or internal asset management, our appraisals provide accurate, timely, and defensible fair market values.</p>
+      
+      <p>Our industry experience spans construction, transportation, agriculture, heavy equipment, manufacturing, and retail inventories. We are frequently engaged by banks, insolvency professionals, legal counsel, government agencies, and private owners to appraise assets ranging from single high-value machines to large, multi-site fleets. This depth of experience ensures that every McDougall appraisal assignment is approached with professionalism, objectivity, and an understanding of how market conditions translate into asset value. Clients can rely on McDougall Auctioneers for clear, well-documented reports that withstand scrutiny from lenders, courts, insurers, and auditors alike.</p>
+    </div>
+  </div>
+
+  <!-- Results Section (Lot Tables) -->
+  <div class="section">
+    <div class="container">
+      <h1>Results</h1>
+      <hr class="divider">
+      
+      {{#each lots}}
+      <div class="avoid-break" style="margin-bottom: 2rem;">
+        <h2>{{#if title}}{{title}}{{else}}Lot {{@index}}{{/if}}</h2>
+        
+        {{#if image_url}}
+        <div style="margin: 1rem 0;">
+          <img src="{{image_url}}" alt="{{title}}" style="max-width: 400px; border-radius: 4px; border: 1px solid #E5E7EB;">
+        </div>
+        {{/if}}
+        
+        <table>
+          <tr>
+            <th style="width: 30%;">Field</th>
+            <th>Value</th>
+          </tr>
+          {{#if lot_number}}
+          <tr>
+            <td><strong>Lot Number</strong></td>
+            <td>{{lot_number}}</td>
+          </tr>
+          {{/if}}
+          {{#if description}}
+          <tr>
+            <td><strong>Description</strong></td>
+            <td>{{description}}</td>
+          </tr>
+          {{/if}}
+          {{#if condition}}
+          <tr>
+            <td><strong>Condition</strong></td>
+            <td>{{condition}}</td>
+          </tr>
+          {{/if}}
+          {{#if estimated_value}}
+          <tr>
+            <td><strong>Estimated Value</strong></td>
+            <td><strong>{{estimated_value}}</strong></td>
+          </tr>
+          {{/if}}
+          {{#if serial_no_or_label}}
+          <tr>
+            <td><strong>Serial No/VIN</strong></td>
+            <td>{{serial_no_or_label}}</td>
+          </tr>
+          {{/if}}
+        </table>
+        
+        {{#if image_urls}}
+        {{#if image_urls.length}}
+        <div class="img-grid" style="margin-top: 1rem;">
+          {{#each image_urls}}
+          <img src="{{this}}" alt="Image {{@index}}" loading="lazy">
+          {{/each}}
+        </div>
+        {{/if}}
+        {{/if}}
+      </div>
+      {{/each}}
+    </div>
+  </div>
+
+  <!-- Market Overview -->
+  <div class="section">
+    <div class="container">
+      <h1>Market Overview</h1>
+      <hr class="divider">
+      
+      <h2>Canada Highlights</h2>
+      <p>The Canadian market for construction and transportation equipment remains stable with consistent demand across major regions. Regional variations exist based on local economic conditions and industry activity.</p>
+      
+      <h2>North America Highlights</h2>
+      <p>The North American market continues to show resilience with steady demand for quality used equipment. Market conditions remain favorable for orderly liquidation scenarios.</p>
+      
+      <h2>References</h2>
+      <p>Market data sourced from auction results, dealer networks, OEM pricing guides, and industry publications current as of the valuation date.</p>
+    </div>
+  </div>
+
+  <!-- Appendix -->
+  <div class="section">
+    <div class="container">
+      <h1>Appendix: Photo Gallery</h1>
+      <hr class="divider">
+      
+      {{#if imageUrls}}
+      <div class="img-grid">
+        {{#each imageUrls}}
+        <img src="{{this}}" alt="Image {{@index}}" loading="lazy">
+        {{/each}}
+      </div>
+      {{else}}
+      <p>No images available.</p>
+      {{/if}}
+    </div>
+  </div>
+
+</body>
+</html>

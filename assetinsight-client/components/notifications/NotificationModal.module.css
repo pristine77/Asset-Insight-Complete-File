@@ -1,0 +1,113 @@
+.backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 64px 22px 22px;
+  background: color-mix(in srgb, var(--app-overlay) 72%, transparent);
+  backdrop-filter: blur(4px);
+}
+
+.panel {
+  width: min(460px, 100%);
+  max-height: min(720px, calc(100vh - 86px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-panel);
+  box-shadow: var(--app-shadow-modal);
+  color: var(--app-text);
+  outline: none;
+}
+
+.header,
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.heading,
+.headerActions,
+.itemLink,
+.footer button {
+  display: flex;
+  align-items: center;
+}
+
+.heading { gap: 10px; }
+.heading h2 { margin: 0; font-size: 1rem; }
+.heading p { margin: 2px 0 0; color: var(--app-text-muted); font-size: .76rem; }
+
+.iconFrame,
+.iconButton {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+}
+
+.iconFrame { background: var(--app-accent-soft); color: var(--app-accent); }
+.iconButton { border: 1px solid var(--app-border); background: transparent; color: var(--app-text); }
+.headerActions { gap: 7px; }
+.textButton { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--app-accent); font-size: .78rem; font-weight: 700; }
+
+.list { min-height: 220px; overflow-y: auto; overscroll-behavior: contain; }
+.item { position: relative; border-bottom: 1px solid var(--app-border); }
+.item[data-unread="true"] { background: var(--app-accent-soft); }
+.itemLink { gap: 10px; min-height: 92px; padding: 13px 48px 13px 16px; color: inherit; text-decoration: none; }
+.itemLink:hover { background: var(--app-panel-alt); }
+.unreadDot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: transparent; }
+.item[data-unread="true"] .unreadDot { background: var(--app-accent); }
+.itemCopy { min-width: 0; display: grid; flex: 1; gap: 4px; }
+.itemCopy strong { font-size: .84rem; }
+.itemCopy > span { overflow: hidden; color: var(--app-text-muted); font-size: .78rem; line-height: 1.42; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.itemCopy small { color: var(--app-text-subtle); font-size: .69rem; }
+.messagePane { padding: 16px; outline: none; }
+.backButton { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--app-accent); min-height: 40px; padding: 0; margin-bottom: 12px; font-weight: 700; }
+.message { min-width: 0; display: grid; gap: 16px; color: var(--app-text); overflow-wrap: anywhere; }
+.message h3 { margin: 0; font-size: 1.06rem; line-height: 1.4; }
+.message h4 { margin: 0 0 7px; font-size: .85rem; }
+.messageMeta { margin: 0; display: grid; gap: 7px; font-size: .78rem; padding-bottom: 12px; border-bottom: 1px solid var(--app-border); }
+.messageMeta > div { display: grid; grid-template-columns: 48px minmax(0,1fr); gap: 10px; }
+.messageMeta dt { color: var(--app-text-muted); }
+.messageMeta dd { margin: 0; }
+.messageText { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: .85rem; line-height: 1.6; color: var(--app-text); }
+.messageIssue { border-left: 3px solid var(--app-danger); padding: 12px; background: var(--app-danger-soft); border-radius: 4px; }
+.message ol { margin: 0; padding-left: 22px; font-size: .84rem; line-height: 1.6; }
+.message li { white-space: pre-wrap; margin-bottom: 8px; }
+.messageNote { margin: 0; font-size: .76rem; line-height: 1.5; color: var(--app-text-muted); }
+.previewLink { display: flex; align-items: center; justify-content: center; padding: 11px 14px; min-height: 44px; border-radius: 7px; background: var(--app-accent); color: var(--app-on-accent); text-decoration: none; text-align: center; font-weight: 750; font-size: .85rem; }
+.backButton:focus-visible, .previewLink:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 3px; }
+.deleteButton { position: absolute; right: 12px; bottom: 13px; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--app-text-subtle); }
+.deleteButton:hover { background: var(--app-danger-soft); color: var(--app-danger); }
+
+.state { min-height: 270px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 24px; color: var(--app-text-muted); text-align: center; }
+.state strong { color: var(--app-text); }
+.state span { font-size: .8rem; }
+.skeleton { height: 92px; margin: 1px 0; background: linear-gradient(90deg, var(--app-panel-alt), var(--app-bg), var(--app-panel-alt)); background-size: 220% 100%; animation: pulse 1.4s linear infinite; }
+.footer { border-top: 1px solid var(--app-border); border-bottom: 0; justify-content: center; }
+.footer button {
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--app-accent);
+  font-size: .82rem;
+  font-weight: 750;
+}
+
+@keyframes pulse { to { background-position: -220% 0; } }
+
+@media (max-width: 640px) {
+  .backdrop { align-items: flex-end; padding: 0; }
+  .panel { width: 100%; max-height: min(84vh, 720px); border-radius: 12px 12px 0 0; }
+  .textButton { font-size: .72rem; }
+}

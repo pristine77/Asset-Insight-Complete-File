@@ -1,0 +1,95 @@
+.page { --dashboard-track: color-mix(in srgb, var(--admin-text) 7%, var(--admin-surface)); min-height: 100vh; padding: 16px 20px 20px; background: var(--admin-bg); color: var(--admin-text); font-variant-numeric: tabular-nums; }
+.header { display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'title tools' 'tabs updated'; align-items: center; gap: 8px 16px; border-bottom: 1px solid var(--admin-border); margin-bottom: 14px; }
+.header h1 { grid-area: title; font-size: 28px; font-weight: 650; letter-spacing: -.035em; line-height: 1.2; margin: 0; }
+.headerRight { display: contents; }
+.tools { grid-area: tools; display: flex; gap: 8px; align-items: center; }
+.tools :global(.MuiButton-root) { min-height: 38px; font-size: 12px; }
+.updated { grid-area: updated; font-size: 11px; color: var(--admin-text-muted); margin: 0; text-align: right; }
+.tabs { grid-area: tabs; width: 200px; }
+.metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--admin-border); border-radius: 4px; margin-bottom: 12px; background: var(--admin-surface); }
+.metric { display: flex; align-items: flex-start; gap: 18px; margin: 12px 0; padding: 8px 20px; min-width: 0; border-left: 1px solid var(--admin-border); }
+.metric:first-child { border-left: 0; }
+.metricIcon { color: var(--admin-text-muted); margin-top: 5px; flex-shrink: 0; }
+.metricLabel { font-size: 13px; font-weight: 500; color: var(--admin-text-muted); margin: 0 0 5px; }
+.metricValue { font-size: clamp(23px,2.1vw,30px); line-height: 1.1; letter-spacing: -.035em; font-weight: 650; }
+.metricNote { font-size: 11px; color: var(--admin-text-muted); margin: 7px 0 0; }
+.analysisRow { display: grid; grid-template-columns: minmax(0,1.8fr) minmax(0,1fr); gap: 12px; margin-bottom: 12px; }
+.operationsRow { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.5fr); gap: 12px; margin-bottom: 12px; align-items: stretch; }
+.panel { min-width: 0; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-surface); padding: 16px; }
+.panelHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.panel h2 { font-size: 17px; line-height: 1.3; font-weight: 650; letter-spacing: -.025em; margin: 0; }
+.panelHeader p { margin: 3px 0 0; font-size: 12px; line-height: 1.4; color: var(--admin-text-muted); }
+.chartControls { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.chartControls :global(.MuiButton-root) { font-size: 12px; padding: 4px 14px; min-height: 30px; }
+.peak { border-left: 1px solid var(--admin-border); padding-left: 14px; font-size: 12px; color: var(--admin-text-muted); white-space: nowrap; }
+.peak strong { color: var(--admin-text); font-size: 18px; }
+.plot { height: 210px; min-width: 0; }
+.footnote { color: var(--admin-text-muted); font-size: 11px; line-height: 1.5; margin: 10px 0 0; }
+.chartPlaceholder { height: 100%; display: grid; place-content: center; font-size: 13px; color: var(--admin-text-muted); text-align: center; padding: 16px; }
+.activityTable { height: 100%; overflow: auto; }
+.activityTable table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.activityTable th, .activityTable td { text-align: left; padding: 8px; border-bottom: 1px solid var(--admin-border); }
+.activityTable th { font-weight: 500; }
+.activityTable thead th { position: sticky; top: 0; background: var(--admin-surface); font-weight: 650; }
+.activityTable td { text-align: right; }
+.typeBars { display: flex; flex-direction: column; justify-content: space-evenly; gap: 22px; min-height: 226px; }
+.typeRow { display: grid; grid-template-columns: 76px minmax(20px,1fr) 42px 44px; align-items: center; gap: 10px; font-size: 12px; }
+.track { height: 26px; background: var(--dashboard-track); border-radius: 2px; overflow: hidden; }
+.bar { height: 100%; border-radius: 2px; }
+.typeCount { text-align: right; font-weight: 650; font-size: 15px; }
+.share { text-align: right; color: var(--admin-text-muted); font-size: 12px; }
+.workflowList { display: grid; gap: 0; }
+.workflowButton { width: 100%; display: grid; grid-template-columns: 136px minmax(16px,1fr) 36px 16px; align-items: center; gap: 10px; text-align: left; min-height: 32px; padding: 4px 0; border: 0; border-radius: 3px; color: inherit; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.workflowButton:hover { background: var(--admin-surface-muted); }
+.workflowButton:focus-visible { outline: 2px solid var(--admin-primary); outline-offset: 2px; }
+.workflowButton:disabled { cursor: default; }
+.workflowButton .track { height: 14px; }
+.workflowButton strong { text-align: right; font-size: 15px; font-weight: 650; }
+.workflowButton svg { color: var(--admin-text-muted); }
+.readyRow { border-top: 1px solid var(--admin-border); margin-top: 10px; padding-top: 8px; }
+.readyRow .workflowButton { grid-template-columns: 1fr 40px 16px; }
+.queueLink { margin-top: 2px !important; padding-left: 0 !important; min-height: 36px !important; font-size: 12px !important; }
+.recent { padding-bottom: 0; }
+.recent .panelHeader { margin-bottom: 10px; }
+.recentTable { overflow-y: auto; max-height: 260px; margin: 0 -16px; }
+.recentTable table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+.recentTable th { text-align: left; padding: 9px 8px; position: sticky; top: 0; z-index: 1; background: color-mix(in srgb, var(--admin-text) 4%, var(--admin-surface)); font-size: 11px; font-weight: 600; border-bottom: 1px solid var(--admin-border); }
+.recentTable td { padding: 8px; border-bottom: 1px solid var(--admin-border); vertical-align: middle; }
+.recentTable tr:last-child td { border-bottom: 0; }
+.recentTable th:first-child, .recentTable td:first-child { padding-left: 16px; }
+.reportName { display: flex; gap: 9px; align-items: center; min-width: 0; }
+.reportThumb { width: 34px; height: 34px; border-radius: 3px; object-fit: cover; flex-shrink: 0; }
+.reportText { min-width: 0; }
+.reportTitle { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reportMeta { font-size: 10px; line-height: 1.5; color: var(--admin-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobileReports { display: none; }
+.empty { margin: 0; padding: 28px 8px; font-size: 13px; color: var(--admin-text-muted); text-align: center; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.refreshLabel { display: inline; }
+.activityCaptionMobile { display: none; }
+@media (min-width: 1800px) { .plot { height: 275px; } .typeBars { min-height: 291px; } }
+@media (max-width: 1300px) { .metric { padding: 8px 14px; gap: 12px; } .metricIcon { width: 24px; } .workflowButton { grid-template-columns: 124px minmax(16px,1fr) 28px 14px; gap: 6px; } .typeRow { grid-template-columns: 70px minmax(20px,1fr) 38px 38px; gap: 7px; } }
+@media (max-width: 899px) { .operationsRow { grid-template-columns: 1fr; } .analysisRow { grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); } .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .metric:nth-child(3) { border-left: 0; } .metric:nth-child(n+3) { border-top: 1px solid var(--admin-border); margin-top: 0; padding-top: 16px; } .metric { margin: 12px 0; padding: 4px 16px; } .metricValue { font-size: 27px; } .metricIcon { width: 26px; } .chartControls { gap: 6px; } .peak { display: none; } .recentTable { max-height: 352px; } }
+@media (max-width: 649px) { .page { padding: 14px 12px 20px; } .header { flex-direction: column; gap: 10px; } .header h1 { font-size: 26px; } .headerRight { width: 100%; align-items: stretch; gap: 7px; } .tools { flex-wrap: wrap; gap: 8px; } .tools :global(.MuiButton-root) { min-height: 44px; } .dateButton { flex: 1; } .updated { text-align: right; } .tabs { margin: 0 0 12px; width: 100%; } .metrics { margin-bottom: 12px; } .metric { padding: 4px 12px; gap: 10px; } .metricIcon { display: none; } .metricLabel { font-size: 12px; } .metricValue { font-size: 26px; } .metricNote { font-size: 10px; line-height: 1.5; } .analysisRow { grid-template-columns: 1fr; } .panel { padding: 14px; } .panel h2 { font-size: 17px; } .panelHeader { margin-bottom: 12px; gap: 8px; } .activity .panelHeader { flex-wrap: wrap; } .chartControls { margin-left: auto; } .chartControls :global(.MuiButton-root) { min-height: 40px; min-width: 58px; padding: 4px 10px; } .plot { height: 220px; } .typeBars { min-height: 0; gap: 21px; padding: 8px 0 6px; } .typeRow { grid-template-columns: 76px minmax(20px,1fr) 40px 44px; gap: 8px; } .track { height: 25px; } .workflowButton { min-height: 46px; grid-template-columns: 130px minmax(16px,1fr) 28px 16px; gap: 8px; font-size: 12px; } .queueLink { min-height: 44px !important; } .recentTable { display: none; } .mobileReports { display: block; margin: 0 -14px; } .mobileReport { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--admin-border); } .mobileReport .reportText { flex: 1; } .mobileReport .reportTitle { font-size: 13px; } .mobileReport .reportMeta { font-size: 11px; } .mobileReport .reportThumb { width: 40px; height: 40px; } .recent { padding-bottom: 0; } }
+@media (max-width: 359px) { .page { padding-inline: 10px; } .tools { gap: 6px; } .tools :global(.MuiButton-root) { font-size: 11px; padding-inline: 10px; } .typeRow { grid-template-columns: 71px minmax(16px,1fr) 32px 37px; gap: 6px; } .typeCount { font-size: 13px; } .share { font-size: 11px; } .workflowButton { grid-template-columns: 126px minmax(10px,1fr) 23px 12px; gap: 6px; } }
+@media (max-width: 649px) {
+  .header { grid-template-columns: 1fr auto; grid-template-areas: 'title updated' 'tabs tabs' 'tools tools'; gap: 8px; border: 0; }
+  .headerRight { display: contents; }
+  .tabs { border-bottom: 1px solid var(--admin-border); margin: 0 0 4px; }
+  .tools { display: grid; grid-template-columns: minmax(0,1fr) 44px 44px; gap: 8px; }
+  .tools .dateButton { min-width: 0; padding-inline: 8px; font-size: 11px; white-space: nowrap; }
+  .tools .refreshButton { min-width: 44px; padding: 0; }
+  .refreshButton :global(.MuiButton-startIcon) { margin: 0; }
+  .refreshLabel { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+  .metricIcon { display: block; width: 22px; margin-top: 3px; }
+  .metric { gap: 10px; }
+  .activity .panelHeader { display: grid; grid-template-columns: minmax(0,1fr) auto; }
+  .chartControls { margin-left: 0; }
+  .plot { height: 140px; }
+  .activityCaptionDesktop { display: none; }
+  .activityCaptionMobile { display: inline; }
+  .typeBars { gap: 14px; padding: 4px 0; }
+  .typeRow .track { height: 20px; }
+}
+@media (max-width: 359px) { .metricIcon { display: none; } .tools .dateButton { font-size: 10px; } .updated { font-size: 10px; } }
+@media (pointer: coarse) { .workflowButton { min-height: 46px; } }

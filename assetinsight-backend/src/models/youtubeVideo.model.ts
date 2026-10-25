@@ -1,0 +1,52 @@
+import mongoose, { Schema } from "mongoose";
+
+// Independent of the report lifetime. Removing a report never removes the
+// provider receipt or permits an uncertain upload to be repeated as a new one.
+const schema = new Schema({
+  _id: { type: String, required: true },
+  reportType: { type: String, enum: ["asset", "lotListing"], required: true },
+  reportId: { type: Schema.Types.ObjectId, required: true },
+  ownerId: { type: Schema.Types.ObjectId, required: true },
+  channelId: { type: String, required: true },
+  connectionRevision: { type: Number, required: true },
+  generationToken: { type: String, required: true },
+  sourceUrl: { type: String, required: true, select: false },
+  sourceSize: Number,
+  sourceEtag: String,
+  lotId: String,
+  lotNumber: String,
+  title: String,
+  description: { type: String, select: false },
+  status: { type: String, enum: ["queued", "pending_review", "uploading", "private", "unlisted", "public", "needs_attention", "data_removed"], default: "queued" },
+  privacyStatus: { type: String, enum: ["private", "unlisted", "public"], default: "public" },
+  publicationToken: { type: String, select: false },
+  publicationGenerationToken: String,
+  publicationPolicyVersion: String,
+  publicationAuthorizedAt: Date,
+  reviewToken: { type: String, select: false },
+  reviewGenerationToken: String,
+  reviewedAt: Date,
+  reviewedBy: Schema.Types.ObjectId,
+  reviewPolicyVersion: String,
+  visibilityPending: { type: Boolean, default: false },
+  uploadAttempts: { type: Number, default: 0 },
+  videoId: String,
+  url: String,
+  sessionCipher: { type: String, select: false },
+  offset: { type: Number, default: 0 },
+  finalChunkAttempted: { type: Boolean, default: false },
+  leaseToken: { type: String, select: false },
+  leaseUntil: Date,
+  publicationAttempts: { type: Number, default: 0 },
+  nextAttemptAt: { type: Date, default: Date.now },
+  lastError: String,
+  lastErrorCode: String,
+  uploadedAt: Date,
+  publishedAt: Date,
+  providerDataCheckedAt: Date,
+  providerAvailable: Boolean,
+  dataRemovedAt: Date,
+}, { timestamps: true, versionKey: false });
+schema.index({ reportType: 1, reportId: 1, createdAt: 1 });
+schema.index({ status: 1, nextAttemptAt: 1, leaseUntil: 1 });
+export default mongoose.model("YoutubeVideo", schema);

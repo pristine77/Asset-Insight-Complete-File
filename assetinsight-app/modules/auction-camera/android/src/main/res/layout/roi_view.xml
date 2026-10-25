@@ -1,0 +1,70 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="200dp"
+    android:layout_height="300dp"
+    android:background="@drawable/ic_holo_rectangle">
+
+    <!-- Top-left -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_margin="-10dp"
+        android:layout_gravity="top|start"/>
+
+    <!-- Top-center -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_marginTop="-10dp"
+        android:layout_gravity="top|center"/>
+
+    <!-- Top-right -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_margin="-10dp"
+        android:layout_gravity="top|end"/>
+
+    <!-- Middle-left -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_marginStart="-10dp"
+        android:layout_gravity="center_vertical|start"/>
+
+    <!-- Middle-right -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_marginEnd="-10dp"
+        android:layout_gravity="center_vertical|end"/>
+
+    <!-- Bottom-left -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_margin="-10dp"
+        android:layout_gravity="bottom|start"/>
+
+    <!-- Bottom-center -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_marginBottom="-10dp"
+        android:layout_gravity="bottom|center"/>
+
+    <!-- Bottom-right -->
+    <ImageView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@drawable/handle_white"
+        android:layout_margin="-10dp"
+        android:layout_gravity="bottom|end"/>
+
+</FrameLayout>

@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_marginTop="@dimen/_10sdp"
+        android:textSize="@dimen/_12sdp"
+        android:textColor="@color/button_gray"
+        android:textStyle="normal"
+        android:id="@+id/textViewClose"
+        android:layout_marginStart="@dimen/_4sdp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        android:text="Close"/>
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_marginTop="@dimen/_10sdp"
+        android:textSize="@dimen/_12sdp"
+        android:textColor="@color/white"
+        android:textStyle="bold"
+        android:id="@+id/textViewdetails"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        android:text="Details"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="@dimen/_10sdp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/textViewdetails"
+        android:orientation="vertical">
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Name"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Time"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Dimensions"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewDimensions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Size"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewSize"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Path"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewPath"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Device"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewDevice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Focal length"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewFocalLength"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Aperture"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewAperture"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ISO"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewIso"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Flash"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewFlash"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="White balance"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewWhite"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Exposure time"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/button_gray"/>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/textViewExposure"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="reeeeeeeeeeeeeeeeeeeeeeeeee"
+            android:layout_marginTop="@dimen/_4sdp"
+            android:textStyle="normal"
+            android:textColor="@color/white"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/_1sdp"
+            android:background="@color/button_gray"
+            android:layout_marginTop="@dimen/_4sdp"/>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

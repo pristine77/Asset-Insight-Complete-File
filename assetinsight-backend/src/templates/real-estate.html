@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Real Estate Report - {{property_details.address}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      @media print {
+        body {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        .no-print {
+          display: none;
+        }
+        .page-break {
+          page-break-after: always;
+        }
+      }
+      body {
+        font-family: "Roboto", sans-serif;
+        background-color: #f7fafc;
+      }
+      .brand-blue {
+        color: #2b6cb0; /* A professional blue */
+      }
+      .bg-brand-blue {
+        background-color: #2b6cb0;
+      }
+      .border-brand-blue {
+        border-color: #2b6cb0;
+      }
+      .section-title {
+        border-left: 4px solid #2b6cb0;
+        padding-left: 12px;
+        margin-bottom: 20px;
+        font-weight: 600;
+        color: #2c5282; /* A darker blue for titles */
+      }
+      .card {
+        background-color: #ffffff;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+        padding: 24px;
+        margin-bottom: 24px;
+      }
+      .detail-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .detail-item strong {
+        color: #4a5568;
+      }
+      /* Watermark */
+      .watermark { position: fixed; inset: 0; z-index: 50; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+      .watermark-text { font-size: clamp(48px, 12vw, 160px); font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; transform: rotate(-30deg); color: rgba(0,0,0,0.06); -webkit-text-stroke: 1px rgba(0,0,0,0.08); }
+      @media print { .watermark { position: fixed !important; } }
+    </style>
+  </head>
+  <body class="bg-slate-50">
+    <div class="watermark">
+      <div class="watermark-text">Confidential</div>
+    </div>
+    <!-- Cover Page -->
+    <section id="cover-page" class="w-full h-screen flex flex-col bg-white">
+      <div class="relative flex-grow flex items-center justify-center">
+        <div class="absolute inset-0 z-0">
+          <img
+            src="{{main_image_url}}"
+            alt="Property Image"
+            class="w-full h-full object-cover opacity-10"
+          />
+          <div class="absolute -top-16 -left-16 w-72 h-72 rounded-full bg-blue-200 opacity-40 blur-3xl"></div>
+          <div class="absolute -bottom-16 -right-16 w-72 h-72 rounded-full bg-blue-200 opacity-40 blur-3xl"></div>
+          <div class="absolute inset-0 bg-gradient-to-b from-white/80 via-white/75 to-white/90"></div>
+        </div>
+        <div class="relative z-10 text-center p-8">
+          <img
+            src="{{logo_url}}"
+            alt="Company Logo"
+            class="h-20 mx-auto mb-6"
+          />
+          <h1 class="text-5xl font-bold brand-blue mb-4">
+            Real Estate Valuation Report
+          </h1>
+          <p class="text-2xl text-gray-700">{{property_details.address}}</p>
+          <div class="mt-3 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm">🔒 Confidential</div>
+          <div class="mx-auto max-w-2xl text-left mt-8">
+            <div class="rounded-2xl border border-gray-300 shadow-md bg-white overflow-hidden">
+              <div class="flex">
+                <div class="w-1.5 bg-brand-blue"></div>
+                <div class="flex-1 grid grid-cols-1 sm:grid-cols-2">
+                  <div class="p-5 sm:p-6">
+                    <div class="text-xs uppercase tracking-wider text-gray-500">Prepared for</div>
+                    <div class="mt-1 text-2xl font-semibold text-gray-900">{{owner_name}}</div>
+                  </div>
+                  <div class="p-5 sm:p-6 border-t sm:border-t-0 sm:border-l border-gray-300">
+                    <div class="text-xs uppercase tracking-wider text-gray-500">Report Date</div>
+                    <div class="mt-1 text-2xl font-semibold text-gray-900">{{report_dates.report_date}}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mt-5 flex items-center justify-center gap-3">
+            <div class="h-12 w-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-xl">🏠</div>
+            <div class="h-12 w-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-xl">📄</div>
+            <div class="h-12 w-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-xl">📊</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-break"></div>
+
+    <div class="max-w-6xl mx-auto p-4 sm:p-8">
+      <!-- Transmittal Letter -->
+      <section id="transmittal-letter" class="card">
+        <h2 class="text-3xl font-semibold section-title">Transmittal Letter</h2>
+        <div class="text-gray-700 space-y-4">
+          <p>{{report_dates.report_date}}</p>
+          <p class="font-semibold">{{owner_name}}</p>
+          <p class="whitespace-pre-line">{{property_details.address}}</p>
+          <p class="font-bold pt-4">
+            Re: Evaluation of {{property_details.address}}
+          </p>
+          <p>Dear {{owner_name}},</p>
+          <p>
+            At your request, we have prepared a real estate report of certain
+            real estate owned by you, a copy of which is enclosed. This report
+            is intended for your exclusive use along with your chosen agent and
+            is intended only for establishing values of the subject property.
+          </p>
+          <p>
+            The subject property was evaluated under the premise of Fair Market
+            Value for internal consideration. The cost and market approaches to
+            value have been considered for this report and have either been
+            utilized where necessary or deemed inappropriate for the value
+            conclusions found therein.
+          </p>
+          <p>
+            After a thorough analysis of the property and information made
+            available to us, it is our opinion that as of the Effective Date,
+            these assets have a Fair Market Value in Canadian Funds as shown on
+            the certificate that we have prepared.
+          </p>
+          <p>
+            We trust that this report will meet your requirements. Should you
+            have any questions or require further clarification, please do not
+            hesitate to contact me at your convenience.
+          </p>
+          <div class="pt-6">
+            <p>Sincerely,</p>
+            <p class="font-bold">{{inspector_info.inspector_name}}</p>
+            <p>Real Estate Division Corporate Manager</p>
+            <p>{{inspector_info.company_name}}</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Table of Contents -->
+      <section id="toc" class="card">
+        <h2 class="text-3xl font-semibold section-title">Table of Contents</h2>
+        <div class="space-y-3 text-lg">
+          <div class="toc-item">
+            <a href="#cover-page" class="brand-blue hover:underline"
+              >COVER LETTER</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>1</span>
+          </div>
+          <div class="toc-item">
+            <a href="#transmittal-letter" class="brand-blue hover:underline"
+              >TRANSMITTAL LETTER</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>2</span>
+          </div>
+          <div class="toc-item">
+            <a href="#toc" class="brand-blue hover:underline"
+              >TABLE OF CONTENTS</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>3</span>
+          </div>
+          <div class="toc-item">
+            <a href="#certificate-of-value" class="brand-blue hover:underline"
+              >CERTIFICATE OF VALUE</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>4</span>
+          </div>
+          <div class="toc-item">
+            <a href="#certification" class="brand-blue hover:underline"
+              >CERTIFICATION OF INSPECTION AND REPORT</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>5</span>
+          </div>
+          <div class="toc-item">
+            <a href="#overview" class="brand-blue hover:underline"
+              >COMPANY OVERVIEW AND CONTACT INFORMATION</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>6</span>
+          </div>
+          <div class="toc-item">
+            <a href="#overview" class="brand-blue hover:underline"
+              >REPORT OVERVIEW</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>6</span>
+          </div>
+          <div class="toc-item">
+            <a href="#overview" class="brand-blue hover:underline"
+              >ASSET OVERVIEW</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>6</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >CONDITIONS OF REPORT</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>7</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >PURPOSE OF THIS REPORT</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>7</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >SUMMARY OF VALUE CONCLUSIONS</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>7</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >SCOPE OF WORK</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>7</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >FACTORS AFFECTING VALUE</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>8</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >VALUE TERMINOLOGY</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>8</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >LIMITING CONDITIONS AND CRITICAL ASSUMPTIONS</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>8</span>
+          </div>
+          <div class="toc-item">
+            <a href="#conditions" class="brand-blue hover:underline"
+              >CODE OF ETHICS</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>9</span>
+          </div>
+          <div class="toc-item">
+            <a href="#property-details" class="brand-blue hover:underline"
+              >SCHEDULE “A”</a
+            >
+            <span
+              class="flex-grow border-b border-dotted border-gray-300 mx-2"
+            ></span>
+            <span>10</span>
+          </div>
+        </div>
+        <div class="text-center mt-8 text-xs text-gray-500">
+          <p>
+            {{inspector_info.company_name}} | P.O. Box 3081 Regina, SK S4P 3G7
+          </p>
+          <p>
+            {{inspector_info.contact_email}} | {{inspector_info.contact_phone}}
+          </p>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Certificate of Value -->
+      <section id="certificate-of-value" class="card">
+        <h2 class="text-3xl font-semibold section-title">
+          Certificate of Value
+        </h2>
+        <div
+          class="text-center bg-blue-50 p-8 rounded-lg border border-blue-200"
+        >
+          <img
+            src="{{logo_url}}"
+            alt="Company Logo"
+            class="h-16 mx-auto mb-4 opacity-50"
+          />
+          <p class="text-gray-600 mb-4">
+            This certificate confirms the valuation for the property belonging
+            to:
+          </p>
+          <p class="font-bold text-xl brand-blue">{{owner_name}}</p>
+          <p class="text-gray-800">{{property_details.address}}</p>
+          <p class="text-gray-600 mt-6">
+            The undersigned certifies that the Fair Market Value, as of the
+            effective date, is:
+          </p>
+          <div class="my-6">
+            <p class="text-5xl font-bold brand-blue">
+              {{valuation.fair_market_value}}
+            </p>
+            <p class="text-gray-500">Canadian Dollars</p>
+          </div>
+          <div class="flex items-center justify-center mt-8">
+            <div class="text-left border-l-4 border-blue-300 pl-4">
+              <p class="font-bold text-lg">{{inspector_info.inspector_name}}</p>
+              <p class="text-sm text-gray-600">
+                Certified Appraiser, {{inspector_info.company_name}}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Certification of Inspection and Report -->
+      <section id="certification" class="card">
+        <h2 class="text-3xl font-semibold section-title">
+          Certification of Inspection & Report
+        </h2>
+        <div class="space-y-4 text-gray-700">
+          <p><span class="font-semibold">I do hereby certify that:</span></p>
+          <ul class="list-disc list-inside space-y-2 pl-4">
+            <li>
+              Neither I, {{inspector_info.inspector_name}}, nor
+              {{inspector_info.company_name}} or its employees have any present
+              or future interest in the subject property. No prohibited fee was
+              assessed for this report.
+            </li>
+            <li>
+              I have successfully completed the Association of Saskatchewan
+              REALTORS®, Real Estate as a Professional Career course.
+            </li>
+            <li>
+              I have personally reviewed the subject property, and the
+              statements of fact in this report are true and correct to the best
+              of my knowledge.
+            </li>
+          </ul>
+          <div class="pt-6">
+            <p>Sincerely,</p>
+            <p class="font-bold">{{inspector_info.inspector_name}}</p>
+            <p>Real Estate Division Corporate Manager</p>
+            <p>{{inspector_info.company_name}}</p>
+          </div>
+        </div>
+      </section>
+      <div class="page-break"></div>
+      <!-- Overview -->
+      <section id="overview" class="card">
+        <h2 class="text-3xl font-semibold section-title">Report & Asset Overview</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div>
+            <h3 class="font-bold text-xl mb-4 text-gray-800">Company Overview</h3>
+            <div class="space-y-2">
+              <div class="detail-item"><strong>Owner Name:</strong> <span>{{owner_name}}</span></div>
+              <div class="detail-item"><strong>Industry:</strong> <span>Real Estate</span></div>
+              <div class="detail-item"><strong>Location Inspected:</strong> <span>{{property_details.address}}</span></div>
+            </div>
+          </div>
+          <div>
+            <h3 class="font-bold text-xl mb-4 text-gray-800">Report Overview</h3>
+            <div class="space-y-2">
+              <div class="detail-item"><strong>Method of Valuation:</strong> <span>Fair Market Value (FMV)</span></div>
+              <div class="detail-item"><strong>Date of Valuation:</strong> <span>{{report_dates.report_date}}</span></div>
+              <div class="detail-item"><strong>Inspection Date:</strong> <span>{{report_dates.inspection_date}}</span></div>
+              <div class="detail-item"><strong>Effective Date:</strong> <span>{{report_dates.effective_date}}</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div class="page-break"></div>
+      <!-- Conditions, Assumptions & Disclaimers -->
+      <section id="conditions" class="card">
+        <h2 class="text-3xl font-semibold section-title">Conditions, Assumptions & Disclaimers</h2>
+        <div class="space-y-6 text-gray-700">
+          <div>
+            <h3 class="font-semibold text-xl mb-2 brand-blue">Conditions of Evaluation</h3>
+            <p>The value stated in this evaluation report is based on the best judgement of the evaluator, given the facts and conditions available at the date of valuation.</p>
+            <p>The use of this report is limited to the purpose of determining the value of the land and buildings. This report is to be used in its entirety only.</p>
+          </div>
+          <div>
+            <h3 class="font-semibold text-xl mb-2 brand-blue">Purpose of This Report</h3>
+            <p>The purpose of this report is to estimate fair market value for the subject property as of the effective date, {{report_dates.effective_date}}.</p>
+          </div>
+          <div>
+            <h3 class="font-semibold text-xl mb-2 brand-blue">Summary of Value Conclusions</h3>
+            <p>Based upon my analysis and the methodology, I estimate the Fair Market Value at {{valuation.fair_market_value_words}} ({{valuation.fair_market_value}}), as of {{report_dates.effective_date}}.</p>
+            <p>The scope of my work was an examination of information supplied by {{owner_name}} along with their chosen agent.</p>
+          </div>
+          <div>
+            <h3 class="font-semibold text-xl mb-2 brand-blue">Scope of Work</h3>
+            <p>In my analysis, I considered all the approaches to value (i.e., the cost approach, the sales comparison approach, and the income approach). The appropriate approaches were then utilized, and the resulting value conclusions were reconciled.</p>
+            <p>The value opinions expressed in this report are contingent upon the analysis, facts, and conditions presented in the accompanying report.</p>
+            <p>I, the appraiser do understand that this valuation is being prepared for financial consideration by {{owner_name}} along with their chosen agent.</p>
+            <p>Valuation process and methodology, the appraiser employed the following procedures to determine the value conclusions rendered herein:</p>
+            <ul class="list-disc list-inside pl-4 space-y-1">
+              <li>Review and analysis of asset records and other informational materials.</li>
+              <li>Attended asset location to inspect and analyze the assets and equipment.</li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="font-semibold text-xl mb-2 brand-blue">Value Terminology</h3>
+            <p><strong>FAIR MARKET VALUE (FMV):</strong> The price at which the property would change hands between a willing buyer and a willing seller, neither being under compulsion to buy or compulsion to sell and both having reasonable knowledge of relevant facts.</p>
+          </div>
+
+          <div class="page-break"></div>
+
+          <div>
+            <h3 class="font-semibold text-xl mb-2 brand-blue">Limiting Conditions and Critical Assumptions</h3>
+            <p>This report and the above noted recovery values are based on a subject to the following conditions, qualifications, assumptions, and limitations:</p>
+            <ul class="space-y-4 text-sm">
+              <li><strong>TITLE TO THE ASSETS:</strong> No investigation has been made of, and no responsibility is assumed for, the legal description or for legal matters including title or encumbrances. Unless otherwise noted in this report, title to the property is assumed to be good and marketable.</li>
+              <li><strong>RESPONSIBLE OWNERSHIP:</strong> It is assumed that subject assets are under responsible ownership and competent management.</li>
+              <li><strong>STATED PURPOSE:</strong> This report has been made only for the purpose stated within the transmittal letter and the body of this report.</li>
+              <li><strong>VALUATION DATE:</strong> The valuation date to which the conclusions and opinions expressed in this report apply is set forth in the transmittal letter and in the report.</li>
+              <li><strong>INSPECTION:</strong> The subject assets were inspected as noted in the body of the report. When the date of inspection differs from the valuation date, we have assumed no material change in the condition of the property.</li>
+              <li><strong>HAZARDOUS SUBSTANCES:</strong> It is assumed that there is full compliance with all applicable environmental regulations and laws unless non-compliance is stated. We are not qualified to detect hazardous material, and the value estimate is predicated on the assumption that no such material exists on the property.</li>
+              <li><strong>CHANGE IN MARKET CONDITIONS:</strong> We are not responsible for changes in market conditions and assume no obligation to revise this report to reflect events or conditions which occur subsequent to the valuation date.</li>
+              <li><strong>UNEXPECTED CONDITIONS:</strong> It is assumed that there are no hidden or non-apparent conditions of the property that would affect its value.</li>
+              <li><strong>CONFIDENTIALITY / MARKETING:</strong> This report is confidential. No part of it shall be disclosed to any party without the prior written consent of both {{inspector_info.company_name}} and the client.</li>
+              <li><strong>COURT TESTIMONY:</strong> We shall not be required to give testimony or appear in court unless specific arrangements have been made.</li>
+            </ul>
+          </div>
+        </div>
+          Board, as well as active listings available through the Multiple
+          Listing System (MLS®), etc. This property was assessed by multiple
+          methods before arriving at my conclusion. The method chosen and
+          applied in the evaluation of this property was The Direct Comparison
+          Approach. The Direct Comparison method determines an estimate of value
+          by comparing properties which are similar to the subject and are
+          currently listed or recently sold. This approach most closely
+          represents behaviors of typical buyers and sellers of real estate.
+        </p>
+
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Code of Ethics -->
+      <section id="code-of-ethics" class="card">
+        <h2 class="text-3xl font-semibold section-title">Code of Ethics</h2>
+        
+        <div class="mb-6">
+          <h3 class="font-bold text-xl mb-2 brand-blue">Competency</h3>
+          <p class="text-gray-700">Under CPPAG, {{inspector_info.company_name}} must disclose if there is a lack of knowledge and/or experience that would not allow us to complete this report in a competent manner or to develop credible results. {{inspector_info.company_name}} and the appraiser performing this report have performed valuations of assets similar to the Subject Assets for various purposes in the past. In addition, the appraiser performing this report has the appropriate knowledge and experience to be able to develop credible results for the purpose and use outlined in this report.</p>
+        </div>
+
+        <div class="mb-8">
+          <h3 class="font-bold text-xl mb-2 brand-blue">Confidentiality</h3>
+          <p class="text-gray-700">This report and supporting file documentation are confidential. Neither all nor any part of the contents of this report (including the report and the supporting file documentation) shall be disclosed to any party, or conveyed orally or in writing through advertising, public relations, news, sales, or in any other manner without the prior written consent and approval of {{inspector_info.company_name}}. This Report provides a summary discussion of the data, analysis, and reasoning used by the appraiser toarrive at the opinions of value identified herein. A copy of this report and the data, reasoning, and analysis supporting our value conclusions shall remain in our files and be retained for a period of at least five (5) years after preparation, or at least two (2) years after final disposition of any judicial proceeding as required by the Records Keeping section of CPPAG.</p>
+        </div>
+
+        <div class="signature-block mt-8 pt-6 border-t border-gray-200">
+          <p class="text-gray-700">Sincerely,</p>
+          <p class="font-bold text-lg brand-blue mt-4">{{inspector_info.inspector_name}}</p>
+          <p class="text-gray-600">Real Estate Division Corporate Manager</p>
+          <p class="text-gray-600">{{inspector_info.company_name}}</p>
+        </div>
+
+        <div class="mt-8 p-4 bg-gray-50 border-l-4 border-gray-300 text-sm text-gray-600">
+          <p>As this is an Report, the conclusions and data contained herein can only be used by the Client for the purpose stated. The opinions and conclusions set forth in this report may not be understood properly by anyone else without additional information which is contained in the appraiser’s work file. Neither this report, nor any of the data contained herein should be distributed to another party.</p>
+        </div>
+      </section>
+
+      <!-- Market Trends Section -->
+      <section id="market-trends" class="mb-12">
+        <h2
+          class="text-2xl font-semibold border-b-2 border-red-200 pb-2 mb-6 text-red-700"
+        >
+          Market Trends Analysis
+        </h2>
+
+        {{#if marketTrend}} {{#each marketTrend}}
+        <div class="mb-8">
+          <h3 class="text-xl font-bold mb-4 text-gray-800">
+            2025 Market Outlook
+          </h3>
+
+          <!-- Market Trends Grid -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <!-- Benchmark Prices -->
+            <div class="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <h4 class="font-bold text-blue-800 mb-2">Benchmark Prices</h4>
+              <div class="space-y-1">
+                <p>
+                  <span class="font-semibold">March:</span> ${{numberFormat
+                  this.marketTrends2025.reginaBenchmarkPrice.march}}
+                </p>
+                <p>
+                  <span class="font-semibold">June:</span> ${{numberFormat
+                  this.marketTrends2025.reginaBenchmarkPrice.june}}
+                </p>
+                <p>
+                  <span class="font-semibold">Year-over-Year Increase:</span>
+                  {{this.marketTrends2025.reginaBenchmarkPrice.yearOverYearIncreasePercent}}%
+                </p>
+              </div>
+            </div>
+
+            <!-- Inventory Analysis -->
+            <div class="bg-green-50 p-4 rounded-lg border border-green-200">
+              <h4 class="font-bold text-green-800 mb-2">Inventory Analysis</h4>
+              <div class="space-y-1">
+                <p>
+                  <span class="font-semibold">Months of Supply:</span>
+                  {{this.marketTrends2025.inventory.monthsOfSupply}}
+                </p>
+                <p>
+                  <span class="font-semibold">Historical Average:</span>
+                  {{this.marketTrends2025.inventory.historicalAverageMonths}}
+                  months
+                </p>
+              </div>
+            </div>
+
+            <!-- Sales Activity -->
+            <div class="bg-purple-50 p-4 rounded-lg border border-purple-200">
+              <h4 class="font-bold text-purple-800 mb-2">Sales Activity</h4>
+              <p>
+                <span class="font-semibold"
+                  >Comparison to 10-Year Average:</span
+                >
+                {{this.marketTrends2025.salesActivity.comparisonTo10YearAverage}}
+              </p>
+            </div>
+
+            <!-- Price Forecast -->
+            <div class="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+              <h4 class="font-bold text-yellow-800 mb-2">Price Forecast</h4>
+              <div class="space-y-1">
+                <p>
+                  <span class="font-semibold">Low Estimate Growth:</span>
+                  {{this.marketTrends2025.forecast.lowEstimatePriceGrowthPercent}}%
+                </p>
+                <p>
+                  <span class="font-semibold">High Estimate Growth:</span>
+                  {{this.marketTrends2025.forecast.highEstimatePriceGrowthPercent}}%
+                </p>
+                <p>
+                  <span class="font-semibold">Expected Late 2025 Average:</span>
+                  ${{numberFormat
+                  this.marketTrends2025.forecast.expectedLate2025AveragePriceCAD}}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Buyer/Seller Insights -->
+          <div class="bg-blue-50 p-4 rounded-lg border border-blue-200 mb-6">
+            <h4 class="font-bold brand-blue mb-2">Buyer & Seller Insights</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <p class="font-semibold mb-1">Market Type:</p>
+                <p>{{this.buyerSellerInsights.marketType}}</p>
+              </div>
+              <div>
+                <p class="font-semibold mb-1">Recommendations:</p>
+                <p><strong>For Sellers:</strong> {{this.buyerSellerInsights.recommendation.seller}}</p>
+                <p><strong>For Buyers:</strong> {{this.buyerSellerInsights.recommendation.buyer}}</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Market Summary -->
+          <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+            <h4 class="font-bold text-gray-800 mb-2">Market Summary</h4>
+            <div class="space-y-2 text-sm">
+              <p><strong>Regina Market:</strong> {{this.summary.reginaMarket}}</p>
+              <p><strong>Lakeridge Market:</strong> {{this.summary.lakeridgeMarket}}</p>
+              <p><strong>Overall Outlook:</strong> {{this.summary.overallOutlook}}</p>
+            </div>
+          </div>
+        </div>
+        {{/each}} {{else}}
+        <div class="bg-gray-100 p-6 rounded-lg text-center">
+          <p class="text-gray-600">
+            Market trend data is not available for this property.
+          </p>
+        </div>
+        {{/if}}
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Report Summary -->
+      <section id="report-summary" class="card">
+        <h2 class="text-3xl font-semibold section-title">Report Summary</h2>
+        <div class="overflow-x-auto">
+          <table class="min-w-full table-auto">
+            <tbody class="divide-y divide-gray-200">
+              <tr>
+                <td class="py-2 pr-4 font-medium text-gray-700 w-1/3">Prepared for</td>
+                <td class="py-2 text-gray-900">{{owner_name}}</td>
+              </tr>
+              <tr>
+                <td class="py-2 pr-4 font-medium text-gray-700">Report Date</td>
+                <td class="py-2 text-gray-900">{{formatDate report_dates.report_date}}</td>
+              </tr>
+              <tr>
+                <td class="py-2 pr-4 font-medium text-gray-700">Address</td>
+                <td class="py-2 text-gray-900">{{property_details.address}}</td>
+              </tr>
+              <tr>
+                <td class="py-2 pr-4 font-medium text-gray-700">Fair Market Value</td>
+                <td class="py-2 text-gray-900">{{valuation.fair_market_value}}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Schedule A -->
+      <section id="property-details" class="card">
+        <h2 class="text-3xl font-semibold section-title">Schedule "A" - Property Details</h2>
+        <p class="text-gray-700 mb-6">{{property_description}}</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+          <div>
+            <h3 class="font-bold text-xl mb-4 brand-blue">House Details</h3>
+            <div class="space-y-2">
+              <div class="detail-item"><strong>Square Footage:</strong> <span>{{house_details.square_footage}} sq. ft.</span></div>
+              <div class="detail-item">
+                <strong>Bedrooms:</strong>
+                <span>{{house_details.number_of_rooms}}</span>
+              </div>
+              <div class="detail-item">
+                <strong>Full Bathrooms:</strong>
+                <span>{{house_details.number_of_full_bathrooms}}</span>
+              </div>
+              <div class="detail-item">
+                <strong>Half Bathrooms:</strong>
+                <span>{{house_details.number_of_half_bathrooms}}</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 class="font-bold text-xl mb-4 brand-blue">Key Information</h3>
+            <div class="space-y-2">
+              <div>
+                <h4 class="font-semibold text-gray-800">Major Features:</h4>
+                <ul class="list-disc list-inside pl-4 text-gray-700">
+                  {{#each house_details.major_features}}<li>{{this}}</li>{{/each}}
+                </ul>
+              </div>
+              <div>
+                <h4 class="font-semibold text-gray-800">Known Issues:</h4>
+                <ul class="list-disc list-inside pl-4 text-gray-700">
+                  {{#each house_details.known_issues}}<li>{{this}}</li>{{/each}}
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="text-2xl font-semibold section-title">Property Images</h3>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {{#each imageUrls}}
+          <div class="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+            <img src="{{this}}" alt="Property Image" class="w-full h-auto object-cover" />
+          </div>
+          {{/each}}
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Analysis -->
+      <section id="analysis" class="card">
+        <h2 class="text-3xl font-semibold section-title">Analysis & Final Value</h2>
+        <div>
+          <h3 class="font-bold text-xl mb-2 brand-blue">Direct Comparison Approach</h3>
+          <p class="text-gray-700">The Direct Comparison method determines an estimate of value by comparing properties which are similar to the subject and are currently listed or recently sold. This approach most closely represents behaviors of typical buyers and sellers of real estate.</p>
+        </div>
+
+        <div class="mt-8">
+          <h3 class="font-bold text-xl mb-4 brand-blue">Comparable Properties</h3>
+          <div class="overflow-x-auto">
+            <table class="min-w-full bg-white border-collapse">
+              <thead>
+                <tr class="bg-blue-100 text-left text-sm font-semibold brand-blue">
+                  <th class="p-3 border-b-2 border-blue-200">Feature</th>
+                  <th class="p-3 border-b-2 border-blue-200">Subject Property</th>
+                  {{#each (objectToArray comparableProperties)}}<th class="p-3 border-b-2 border-blue-200">{{this.key}}</th>{{/each}}
+                </tr>
+              </thead>
+              <tbody class="text-gray-800 text-sm">
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 border-b font-semibold">Address</td>
+                  <td class="p-3 border-b">{{property_details.address}}</td>
+                  {{#each (objectToArray comparableProperties)}}<td class="p-3 border-b">{{lookup this.value 'address'}}</td>{{/each}}
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 border-b font-semibold">List Price</td>
+                  <td class="p-3 border-b">N/A</td>
+                  {{#each (objectToArray comparableProperties)}}<td class="p-3 border-b">{{lookup this.value 'listPrice'}}</td>{{/each}}
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 border-b font-semibold">Square Footage</td>
+                  <td class="p-3 border-b">{{house_details.square_footage}}</td>
+                  {{#each (objectToArray comparableProperties)}}<td class="p-3 border-b">{{lookup this.value 'squareFootage'}}</td>{{/each}}
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 border-b font-semibold">Lot Size</td>
+                  <td class="p-3 border-b">{{house_details.lot_size_sqft}}</td>
+                  {{#each (objectToArray comparableProperties)}}<td class="p-3 border-b">{{lookup this.value 'lotSize'}}</td>{{/each}}
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 border-b font-semibold">Rooms</td>
+                  <td class="p-3 border-b">{{house_details.number_of_rooms}}</td>
+                  {{#each (objectToArray comparableProperties)}}<td class="p-3 border-b">{{lookup this.value 'bedrooms'}}</td>{{/each}}
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 border-b font-semibold">Bathrooms</td>
+                  <td class="p-3 border-b">{{house_details.number_of_full_bathrooms}} Full, {{house_details.number_of_half_bathrooms}} Half</td>
+                  {{#each (objectToArray comparableProperties)}}<td class="p-3 border-b">{{lookup this.value 'bathrooms'}}</td>{{/each}}
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 border-b font-semibold">Adjusted Value</td>
+                  <td class="p-3 border-b">N/A</td>
+                  {{#each (objectToArray comparableProperties)}}<td class="p-3 border-b">{{lookup this.value 'adjustedValue'}}</td>{{/each}}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Valuation Summary (aligned with DOCX) -->
+        <div class="mt-8">
+          <h3 class="font-bold text-xl mb-4 brand-blue">Valuation Summary</h3>
+          <div class="overflow-x-auto">
+            <table class="min-w-full table-auto">
+              <tbody class="divide-y divide-gray-200">
+                <tr>
+                  <td class="py-2 pr-4 font-medium text-gray-700 w-1/3">Fair Market Value</td>
+                  <td class="py-2 text-gray-900">{{valuation.fair_market_value}}</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-medium text-gray-700">Value Source</td>
+                  <td class="py-2 text-gray-900">{{valuation.value_source}}</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-medium text-gray-700">Comparable Used</td>
+                  <td class="py-2 text-gray-900">{{valuation.comparable_used}}</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-medium text-gray-700">Comparable List Price</td>
+                  <td class="py-2 text-gray-900">{{valuation.comparable_list_price}}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Final Estimate of Value -->
+        <div class="mt-8">
+          <h3 class="font-bold text-xl mb-4 brand-blue">Final Estimate of Value</h3>
+          <p class="text-gray-700 mb-4">{{valuation.final_estimate_summary}}</p>
+          <p class="text-gray-700 mb-4">{{valuation.details}}</p>
+          <div class="text-center bg-blue-50 border border-blue-200 p-6 mt-4 rounded-lg">
+            <p class="text-lg text-gray-800">The "Fair Market" Value for the property is:</p>
+            <p class="text-5xl font-bold my-2 brand-blue">{{valuation.final_estimate_value}}</p>
+            <p class="text-2xl font-semibold text-blue-500">({{valuation.fair_market_value}})</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+      <!-- Footer -->
+      <footer class="text-center text-xs text-gray-500 pt-4 mt-8 border-t">
+        <p>
+          {{inspector_info.company_name}} | P.O. Box 3081 Regina, SK S4P 3G7
+        </p>
+        <p>
+          {{inspector_info.contact_email}} | {{inspector_info.contact_phone}}
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>
+ 

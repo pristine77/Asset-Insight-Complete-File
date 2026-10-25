@@ -1,0 +1,201 @@
+@import "tailwindcss";
+
+/* Custom animations for login page */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateY(-20px);
+    opacity: 0.6;
+  }
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-4px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(4px);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
+}
+
+:root {
+  --admin-bg: #ffffff;
+  --admin-bg-elevated: #ffffff;
+  --admin-surface: #ffffff;
+  --admin-border: #dedfe1;
+  --admin-text: #17191d;
+  --admin-text-muted: #62666c;
+  --admin-red: #df111b;
+  --admin-sidebar: #111211;
+}
+
+html[data-theme="dark"] {
+  --admin-bg: #151615;
+  --admin-bg-elevated: #1d1e1d;
+  --admin-surface: #1d1e1d;
+  --admin-border: #343634;
+  --admin-text: #f4f4f3;
+  --admin-text-muted: #a8aaad;
+  /* The brighter dark-mode accent keeps small operational labels readable. */
+  --admin-red: #ff5c64;
+}
+
+html,
+body {
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--admin-bg);
+  color: var(--admin-text);
+}
+
+.admin-page-shell {
+  min-height: 100vh;
+  padding: 1.5rem;
+  background: var(--admin-bg);
+}
+
+@media (min-width: 1024px) {
+  .admin-page-shell {
+    padding: 2rem;
+  }
+}
+
+.admin-glass-surface {
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-border);
+  box-shadow: none;
+}
+
+.admin-text-muted {
+  color: var(--admin-text-muted);
+}
+
+html[data-theme="dark"] .admin-page-shell .text-gray-900,
+html[data-theme="dark"] .admin-page-shell .text-gray-800,
+html[data-theme="dark"] .admin-page-shell .text-gray-700 {
+  color: var(--admin-text) !important;
+}
+
+html[data-theme="dark"] .admin-page-shell .text-gray-600,
+html[data-theme="dark"] .admin-page-shell .text-gray-500,
+html[data-theme="dark"] .admin-page-shell .text-gray-400 {
+  color: var(--admin-text-muted) !important;
+}
+
+html[data-theme="dark"] .admin-page-shell .bg-white,
+html[data-theme="dark"] .admin-page-shell .bg-white\/70,
+html[data-theme="dark"] .admin-page-shell .bg-white\/80,
+html[data-theme="dark"] .admin-page-shell .bg-white\/90,
+html[data-theme="dark"] .admin-page-shell .bg-white\/95,
+html[data-theme="dark"] .admin-page-shell .bg-gray-50,
+html[data-theme="dark"] .admin-page-shell .bg-gray-100,
+html[data-theme="dark"] .admin-page-shell .bg-rose-50,
+html[data-theme="dark"] .admin-page-shell .bg-rose-50\/40,
+html[data-theme="dark"] .admin-page-shell .bg-rose-50\/50 {
+  background-color: rgba(15, 27, 45, 0.88) !important;
+}
+
+html[data-theme="dark"] .admin-page-shell .border-gray-200,
+html[data-theme="dark"] .admin-page-shell .border-gray-300,
+html[data-theme="dark"] .admin-page-shell .border-rose-100,
+html[data-theme="dark"] .admin-page-shell .border-rose-100\/70,
+html[data-theme="dark"] .admin-page-shell .border-rose-200,
+html[data-theme="dark"] .admin-page-shell .border-rose-300,
+html[data-theme="dark"] .admin-page-shell .border-rose-400 {
+  border-color: var(--admin-border) !important;
+}
+
+html[data-theme="dark"] .admin-page-shell .hover\:bg-rose-50:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-rose-50\/40:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-rose-50\/50:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-gray-50:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-sky-50:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-indigo-50:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-red-50:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-amber-50:hover,
+html[data-theme="dark"] .admin-page-shell .hover\:bg-emerald-50:hover {
+  background-color: rgba(30, 41, 59, 0.9) !important;
+}
+
+html[data-theme="dark"] .admin-page-shell .shadow-sm,
+html[data-theme="dark"] .admin-page-shell .shadow-md,
+html[data-theme="dark"] .admin-page-shell .shadow-lg,
+html[data-theme="dark"] .admin-page-shell .shadow-rose-100,
+html[data-theme="dark"] .admin-page-shell .shadow-rose-200 {
+  box-shadow: none !important;
+}
+
+.desktop-admin-page {
+  min-height: 100vh;
+  background: var(--admin-bg);
+  color: var(--admin-text);
+}
+
+.desktop-page-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.desktop-page-subtitle {
+  margin: 6px 0 0;
+  color: var(--admin-text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.desktop-flat-panel {
+  border: 1px solid var(--admin-border);
+  border-radius: 4px;
+  background: var(--admin-surface);
+  box-shadow: none;
+}
+
+.desktop-control {
+  min-height: 36px;
+  border-radius: 4px;
+}
+
+.desktop-reports-table {
+  border-collapse: collapse;
+}
+
+.desktop-reports-table th,
+.desktop-reports-table td {
+  border-right: 1px solid var(--admin-border);
+}
+
+.desktop-reports-table th:last-child,
+.desktop-reports-table td:last-child {
+  border-right: 0;
+}
+
+.desktop-reports-table tbody tr {
+  min-height: 84px;
+}
+
+@media (max-width: 1023px) {
+  .admin-page-shell {
+    min-height: calc(100vh - 56px);
+    padding: 1rem;
+  }
+}

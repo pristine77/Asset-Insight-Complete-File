@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:gravity="center"
+    android:orientation="horizontal"
+    android:paddingTop="2dp"
+    android:paddingBottom="2dp">
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Main: "
+        android:textColor="@android:color/white"
+        android:textSize="10sp" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:id="@+id/tvMainCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0"
+        android:textColor="@color/orange"
+        android:textSize="10sp"
+        android:textStyle="bold" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="  |  "
+        android:textColor="@android:color/white"
+        android:textSize="10sp" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Extra: "
+        android:textColor="@android:color/white"
+        android:textSize="10sp" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:id="@+id/tvExtraCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0"
+        android:textColor="@color/orange"
+        android:textSize="@dimen/_10sdp"
+        android:textStyle="bold" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="  |  "
+        android:textColor="@android:color/white"
+        android:textSize="@dimen/_10sdp" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Total: "
+        android:textColor="@android:color/white"
+        android:textSize="10sp" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:id="@+id/tvTotalCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0"
+        android:textColor="@color/orange"
+        android:textSize="10sp"
+        android:textStyle="bold" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="  |  "
+        android:visibility="gone"
+        android:textColor="@android:color/white"
+        android:textSize="@dimen/_10sdp" />
+
+    <androidx.appcompat.widget.AppCompatImageView
+        android:id="@+id/imageViewRecord"
+        android:layout_width="@dimen/_10sdp"
+        android:layout_height="@dimen/_10sdp"
+        android:visibility="gone"
+        android:src="@drawable/ic_record"
+        android:layout_marginStart="@dimen/_2sdp"/>
+
+</LinearLayout>

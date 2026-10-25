@@ -1,0 +1,17 @@
+# Dependencies and generated tool output only; keep native source/config in scope.
+**/node_modules/
+.expo/
+dist/
+web-build/
+coverage/
+**/android/build/
+**/android/.gradle/
+**/android/.kotlin/
+**/android/.cxx/
+android/app/build/
+android/app/.cxx/
+ios/build/
+ios/Pods/
+
+# Local service configuration is not source code and must not be reformatted.
+**/google-services.json
