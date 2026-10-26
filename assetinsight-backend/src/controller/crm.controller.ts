@@ -203,6 +203,118 @@ export const editCrmTaskUpdate = async (req: AuthRequest, res: Response) => {
   }
 };
 
+const CRM_CONTACT_FIELDS = {
+  clientName: "Contact name",
+  companyName: "Company",
+  phone: "Phone",
+  email: "Email",
+  address: "Address",
+  website: "Website",
+  notes: "Notes",
+} as const;
+type CrmContactField = keyof typeof CRM_CONTACT_FIELDS;
+const CRM_CONTACT_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Lets the assigned agent correct a lead's contact details. Assignment, status,
+ * quadrant and the import identity/dedupe keys are deliberately left unchanged:
+ * they describe where the lead came from, not how to reach it.
+ */
+export const updateCrmTaskContact = async (req: AuthRequest, res: Response) => {
+  try {
+    const leadId = toNonEmptyString(req.params.id);
+    if (!leadId) return res.status(400).json({ message: "Task id is required" });
+
+    const body = req.body || {};
+    const input: Partial<Record<CrmContactField, string>> = {};
+    for (const [key, label] of Object.entries(CRM_CONTACT_FIELDS) as Array<[CrmContactField, string]>) {
+      const value = body[key];
+      if (value === undefined) continue;
+      if (typeof value !== "string") return res.status(400).json({ message: `${label} must be text` });
+      const trimmed = value.trim();
+      if (trimmed.length > (key === "notes" ? 5000 : 500)) {
+        return res.status(400).json({ message: `${label} is too long` });
+      }
+      input[key] = trimmed;
+    }
+    if (!Object.keys(input).length) {
+      return res.status(400).json({ message: "Provide at least one contact field to edit" });
+    }
+    if (input.clientName === "") return res.status(400).json({ message: "Contact name is required" });
+    if (input.email && !CRM_CONTACT_EMAIL_PATTERN.test(input.email)) {
+      return res.status(400).json({ message: "Enter a valid email address" });
+    }
+    const phone = input.phone ? normalizeCrmPhone(input.phone) : null;
+    if (input.phone && !phone) return res.status(400).json({ message: "Enter a valid phone number" });
+
+    const me = await User.findById(req.userId).select("isCrmAgent isBlocked");
+    if (!me) return res.status(404).json({ message: "User not found" });
+    if ((me as any).isBlocked) return res.status(403).json({ message: "Account is blocked" });
+    if (!(me as any).isCrmAgent) {
+      return res.status(403).json({ message: "CRM access is not enabled for this account" });
+    }
+
+    const lead = await CrmLead.findOne({ _id: leadId, ...crmLeadCohortFilter(req.user) });
+    if (!lead) return res.status(404).json({ message: "CRM task not found" });
+    normalizeCrmLeadDocument(lead);
+    if (String((lead as any).assignedTo) !== String(req.userId)) {
+      return res.status(403).json({ message: "You can only edit tasks assigned to you" });
+    }
+
+    const changed: string[] = [];
+    const current = (field: string) => toNonEmptyString((lead as any)[field]);
+    const setField = (field: string, value: string, label: string) => {
+      if (current(field) === value) return;
+      lead.set(field, value || undefined);
+      changed.push(label);
+    };
+    if (input.clientName !== undefined) setField("clientName", input.clientName, "name");
+    if (input.companyName !== undefined) setField("companyName", input.companyName, "company");
+    if (input.email !== undefined) setField("email", input.email.toLowerCase(), "email");
+    if (input.phone !== undefined) {
+      const raw = phone?.raw || "";
+      const formatted = phone?.formatted || PHONE_FALLBACK;
+      if (current("phoneRaw") !== raw || current("phoneFormatted") !== formatted) {
+        lead.set("phoneRaw", raw || undefined);
+        lead.set("phoneFormatted", formatted || undefined);
+        changed.push("phone");
+      }
+    }
+    if (input.address !== undefined) {
+      // Edit the location the card shows: company first, contact as the fallback.
+      const field = current("companyLocation") || !current("contactLocation") ? "companyLocation" : "contactLocation";
+      setField(field, input.address, "address");
+    }
+    if (input.website !== undefined && (current("website") || current("companyWebsiteDomain")) !== input.website) {
+      // The card falls back to the imported domain, so both move together.
+      lead.set("website", input.website || undefined);
+      lead.set("companyWebsiteDomain", input.website || undefined);
+      changed.push("website");
+    }
+    if (input.notes !== undefined) setField("notes", input.notes, "notes");
+
+    if (changed.length) {
+      const updates = getUpdatesList(lead);
+      updates.push({
+        comment: `Contact details edited: ${changed.join(", ")}`,
+        status: (lead as any).status,
+        lostReason: (lead as any).lostReason,
+        createdBy: req.userId,
+        createdAt: new Date(),
+      });
+      lead.set("updates", updates);
+      syncLeadLatestActivityFields(lead);
+      await lead.save();
+    }
+
+    const item = await loadLeadWithUpdatesForResponse(leadId, isReviewAccount(req.user));
+    return res.status(200).json({ message: changed.length ? "Contact details saved" : "No contact changes", item });
+  } catch (e: any) {
+    console.error("updateCrmTaskContact error", e);
+    return res.status(500).json({ message: e?.message || "Failed to save contact details" });
+  }
+};
+
 export const deleteCrmTaskUpdate = async (req: AuthRequest, res: Response) => {
   try {
     const leadId = toNonEmptyString(req.params.id);

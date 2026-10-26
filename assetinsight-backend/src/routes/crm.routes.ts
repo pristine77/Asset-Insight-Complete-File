@@ -26,6 +26,7 @@ import {
   getCrmAutoFindRunForAdmin,
   getRevenueRadarForAdmin,
   updateCrmLeadForAdmin,
+  updateCrmTaskContact,
   getMsOutlookCalendarAuthUrl,
   getMsOutlookCalendarStatus,
   getMyCrmTransferRequests,
@@ -211,6 +212,7 @@ router.patch(
   ]),
   submitCrmTaskUpdate
 );
+router.patch("/tasks/:id/contact", protect, updateCrmTaskContact);
 router.patch("/tasks/:id/updates/:updateId", protect, editCrmTaskUpdate);
 router.delete("/tasks/:id/updates/:updateId", protect, deleteCrmTaskUpdate);
 router.delete("/tasks/:id/updates/:updateId/attachments", protect, deleteCrmTaskUpdateAttachments);

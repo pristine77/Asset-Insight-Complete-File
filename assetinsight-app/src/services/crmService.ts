@@ -255,6 +255,17 @@ interface TranscribeCommentAudioPayload {
   audio: UploadableFile;
 }
 
+/** Contact fields the assigned agent can correct; only the keys sent are changed. */
+export interface UpdateTaskContactPayload {
+  clientName?: string;
+  companyName?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  website?: string;
+  notes?: string;
+}
+
 interface EditTaskUpdatePayload {
   comment?: string;
   status?: CrmTaskStatus;
@@ -409,6 +420,12 @@ class CrmService {
       `${API_ENDPOINTS.CRM_TASKS}/${safeTaskId}/updates/${safeUpdateId}`,
       payload
     );
+    return data?.item as CrmTaskItem;
+  }
+
+  async updateTaskContact(taskId: string, payload: UpdateTaskContactPayload): Promise<CrmTaskItem> {
+    const safeTaskId = encodeURIComponent(taskId);
+    const { data } = await api.patch(`${API_ENDPOINTS.CRM_TASKS}/${safeTaskId}/contact`, payload);
     return data?.item as CrmTaskItem;
   }
 

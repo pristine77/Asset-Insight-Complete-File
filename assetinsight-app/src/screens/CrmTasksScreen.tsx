@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { Feather, FontAwesome } from '@expo/vector-icons';
+import { Feather, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { ensurePhotoPickerAccess } from '../utils/photoPickerAccess';
@@ -39,6 +39,7 @@ import crmTaskApi, {
   CrmTaskTransferItem,
   CrmTaskUpdateEntry,
   CrmTransferAgent,
+  UpdateTaskContactPayload,
   UploadableFile,
 } from '../services/crmService';
 import type { CrmDashboardTaskFilter } from '../services/crmService';
@@ -325,6 +326,42 @@ function buildCallOptions(task: CrmTaskItem): CallOption[] {
   return options;
 }
 
+type ContactDraft = Required<UpdateTaskContactPayload>;
+
+type ContactEditField = {
+  key: keyof ContactDraft;
+  label: string;
+  placeholder: string;
+  keyboardType?: 'phone-pad' | 'email-address' | 'url';
+  autoCapitalize?: 'none' | 'words';
+  multiline?: boolean;
+  /** Long single-line values wrap so the start stays visible; Enter still closes the keyboard. */
+  wrap?: boolean;
+};
+
+const CONTACT_EDIT_FIELDS: ContactEditField[] = [
+  { key: 'clientName', label: 'Contact name', placeholder: 'Contact name', autoCapitalize: 'words', wrap: true },
+  { key: 'companyName', label: 'Company', placeholder: 'Company name', autoCapitalize: 'words', wrap: true },
+  { key: 'phone', label: 'Phone', placeholder: '+1 (204) 555-0142', keyboardType: 'phone-pad' },
+  { key: 'email', label: 'Email', placeholder: 'name@company.com', keyboardType: 'email-address', autoCapitalize: 'none' },
+  { key: 'address', label: 'Address', placeholder: 'Street, city, province', autoCapitalize: 'words', wrap: true },
+  { key: 'website', label: 'Website', placeholder: 'https://company.com', keyboardType: 'url', autoCapitalize: 'none', wrap: true },
+  { key: 'notes', label: 'Notes', placeholder: 'Notes about this contact', multiline: true },
+];
+
+/** Edit starts from the values the card shows. */
+function contactDraftFor(task: CrmTaskItem): ContactDraft {
+  return {
+    clientName: task.clientName || '',
+    companyName: task.companyName || '',
+    phone: parseDialablePhone(task.phoneFormatted)?.display || parseDialablePhone(task.phoneRaw)?.display || '',
+    email: task.email || '',
+    address: task.companyLocation || task.contactLocation || '',
+    website: task.website || task.companyWebsiteDomain || '',
+    notes: task.notes || '',
+  };
+}
+
 function formatNumberValue(value?: number): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
   return value.toLocaleString();
@@ -567,6 +604,9 @@ const CrmTasksScreen = ({
   const [showQuickAddDuePicker, setShowQuickAddDuePicker] = useState(false);
   const [quickAddNotes, setQuickAddNotes] = useState('');
   const [quickAdding, setQuickAdding] = useState(false);
+  const [contactEditTask, setContactEditTask] = useState<CrmTaskItem | null>(null);
+  const [contactDraft, setContactDraft] = useState<ContactDraft | null>(null);
+  const [contactSaving, setContactSaving] = useState(false);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -878,6 +918,43 @@ const CrmTasksScreen = ({
       setQuickAdding(false);
     }
   }, [fetchTasks, quickAddDueDate, quickAddName, quickAddNotes, quickAddPhone, quickAddSpecialization, resetQuickAdd]);
+
+  const openContactEdit = useCallback((task: CrmTaskItem) => {
+    setContactEditTask(task);
+    setContactDraft(contactDraftFor(task));
+  }, []);
+
+  const closeContactEdit = useCallback(() => {
+    setContactEditTask(null);
+    setContactDraft(null);
+  }, []);
+
+  const saveContactEdit = useCallback(async () => {
+    if (!contactEditTask || !contactDraft) return;
+    if (!contactDraft.clientName.trim()) {
+      Alert.alert('Contact name required', 'Enter the contact name before saving.');
+      return;
+    }
+    const initial = contactDraftFor(contactEditTask);
+    // Send only what the agent changed, so untouched imported values stay as they are.
+    const changes: UpdateTaskContactPayload = {};
+    for (const key of Object.keys(contactDraft) as (keyof ContactDraft)[]) {
+      if (contactDraft[key].trim() !== initial[key].trim()) changes[key] = contactDraft[key].trim();
+    }
+    if (!Object.keys(changes).length) {
+      closeContactEdit();
+      return;
+    }
+    try {
+      setContactSaving(true);
+      applyTaskMutationResult(await crmTaskApi.updateTaskContact(contactEditTask._id, changes));
+      closeContactEdit();
+    } catch (e: any) {
+      Alert.alert('Contact not saved', e?.response?.data?.message || e?.message || 'Failed to save contact details.');
+    } finally {
+      setContactSaving(false);
+    }
+  }, [applyTaskMutationResult, closeContactEdit, contactDraft, contactEditTask]);
 
   const fetchOutlookStatus = useCallback(async (showError = false) => {
     try {
@@ -2647,6 +2724,22 @@ const CrmTasksScreen = ({
                         </Text>
                       )}
                     </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.actionBtn,
+                        isCompact && styles.actionBtnCompact,
+                        isVeryCompact && styles.actionBtnVeryCompact,
+                        styles.editContactBtn,
+                      ]}
+                      onPress={() => openContactEdit(task)} accessibilityRole="button" accessibilityLabel={`Edit ${task.clientName || 'contact'}`}>
+                      <MaterialCommunityIcons name="account-edit-outline" size={isVeryCompact ? 16 : 17} color="#fff" />
+                      {!isVeryCompact && (
+                        <Text style={[styles.actionBtnText, isCompact && styles.actionBtnTextCompact]}>
+                          Edit
+                        </Text>
+                      )}
+                    </TouchableOpacity>
                   </View>
                 </View>
               );
@@ -2752,6 +2845,50 @@ const CrmTasksScreen = ({
               </TouchableOpacity>
               <TouchableOpacity accessibilityRole="button" accessibilityLabel="Create lead" accessibilityState={{ disabled: quickAdding, busy: quickAdding }} disabled={quickAdding} onPress={submitQuickAdd} style={[styles.submitBtn, styles.quickAddCreateBtn, crmTouchTarget, quickAdding && styles.quickAddDisabledBtn]}>
                 <Text style={styles.submitBtnText}>{quickAdding ? 'Creating...' : 'Create'}</Text>
+              </TouchableOpacity>
+            </View>
+        </CrmModalFrame>
+      </Modal>
+
+      <Modal
+        visible={!!contactEditTask}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !contactSaving && closeContactEdit()}>
+        <CrmModalFrame label="Edit contact form" onClose={() => !contactSaving && closeContactEdit()}
+          cardStyle={[styles.quickAddModal, isVeryCompact && styles.quickAddModalCompact]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit contact</Text>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close Edit contact" accessibilityState={{ disabled: contactSaving }} disabled={contactSaving} onPress={closeContactEdit} style={[styles.quickAddCloseBtn, crmTouchTarget]}>
+                <Feather name="x" size={18} color="#334155" />
+              </TouchableOpacity>
+            </View>
+            {contactDraft ? CONTACT_EDIT_FIELDS.map((field) => (
+              <View key={field.key}>
+                <Text style={styles.quickAddFieldLabel}>{field.label}</Text>
+                <TextInput
+                  style={[styles.quickAddInput, styles.editContactInput, field.wrap && styles.editContactWrapInput, field.multiline && styles.quickAddNotesInput]}
+                  value={contactDraft[field.key]}
+                  accessibilityLabel={field.label}
+                  onChangeText={(value) => setContactDraft((prev) => (prev ? { ...prev, [field.key]: value } : prev))}
+                  placeholder={field.placeholder}
+                  placeholderTextColor="#94A3B8"
+                  keyboardType={field.keyboardType}
+                  autoCapitalize={field.autoCapitalize}
+                  autoCorrect={false}
+                  multiline={field.multiline || field.wrap}
+                  submitBehavior={field.multiline ? 'newline' : 'blurAndSubmit'}
+                  textAlignVertical={field.multiline ? 'top' : 'center'}
+                  editable={!contactSaving}
+                />
+              </View>
+            )) : null}
+            <View style={styles.modalFooterRow}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel Edit contact" accessibilityState={{ disabled: contactSaving }} disabled={contactSaving} onPress={closeContactEdit} style={[styles.cancelBtn, crmTouchTarget]}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save contact" accessibilityState={{ disabled: contactSaving, busy: contactSaving }} disabled={contactSaving} onPress={saveContactEdit} style={[styles.submitBtn, styles.editContactBtn, crmTouchTarget, contactSaving && styles.quickAddDisabledBtn]}>
+                <Text style={styles.submitBtnText}>{contactSaving ? 'Saving...' : 'Save'}</Text>
               </TouchableOpacity>
             </View>
         </CrmModalFrame>
@@ -4898,6 +5035,16 @@ const styles = StyleSheet.create({
   transferBtn: {
     backgroundColor: '#7E22CE',
     shadowColor: '#7E22CE',
+  },
+  editContactBtn: {
+    backgroundColor: '#059669',
+    shadowColor: '#047857',
+  },
+  editContactInput: {
+    marginTop: 0,
+  },
+  editContactWrapInput: {
+    paddingVertical: 11,
   },
   actionBtnText: {
     color: '#fff',

@@ -5,7 +5,7 @@ import CrmTasksScreen from './CrmTasksScreen';
 import CrmOutlookCalendarScreen from './CrmOutlookCalendarScreen';
 import crmTaskApi, { type CrmTaskItem } from '../services/crmService';
 
-jest.mock('@expo/vector-icons', () => ({ Feather: () => null, FontAwesome: () => null }));
+jest.mock('@expo/vector-icons', () => ({ Feather: () => null, FontAwesome: () => null, MaterialCommunityIcons: () => null }));
 jest.mock('react-native-safe-area-context', () => ({
   SafeAreaView: jest.requireActual('react-native').View,
 }));
@@ -46,6 +46,7 @@ jest.mock('../services/crmService', () => ({
     getTask: jest.fn(),
     addTaskToOutlookCalendar: jest.fn(),
     addTasksToOutlookCalendarBulk: jest.fn(),
+    updateTaskContact: jest.fn(),
   },
 }));
 
@@ -136,6 +137,51 @@ it('keeps transfer notes and actions scroll-reachable without changing the reque
   expect(screen.getByLabelText('Transfer note').props.value).toBe('First line\nSecond line');
   await fireEvent.press(screen.getByRole('button', { name: 'Cancel task transfer' }));
   expect(crmTaskApi.requestTaskTransfer).not.toHaveBeenCalled();
+});
+
+describe('Edit contact', () => {
+  const edited = { _id: 'task-1', clientName: 'Rick Argo', status: 'new_lead', email: 'client@example.test', updates: [] } as unknown as CrmTaskItem;
+
+  it('opens with the card values and sends only the fields the agent changed', async () => {
+    jest.mocked(crmTaskApi.updateTaskContact).mockResolvedValue(edited);
+    await render(<CrmTasksScreen onOpenDrawer={jest.fn()} onBack={jest.fn()} />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit Example Client' }));
+    expect(screen.getByLabelText('Edit contact form').props.keyboardShouldPersistTaps).toBe('handled');
+    expect(screen.getByLabelText('Contact name').props.value).toBe('Example Client');
+    expect(screen.getByLabelText('Email').props.value).toBe('client@example.test');
+    await fireEvent.changeText(screen.getByLabelText('Contact name'), ' Rick Argo ');
+    await fireEvent.changeText(screen.getByLabelText('Phone'), '204-555-0142');
+    await fireEvent.press(screen.getByRole('button', { name: 'Save contact' }));
+    expect(crmTaskApi.updateTaskContact).toHaveBeenCalledWith('task-1', { clientName: 'Rick Argo', phone: '204-555-0142' });
+    expect(screen.queryByLabelText('Edit contact form')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit Rick Argo' })).toBeTruthy();
+  });
+
+  it('keeps the form open without a contact name and cancel saves nothing', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    await render(<CrmTasksScreen onOpenDrawer={jest.fn()} onBack={jest.fn()} />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit Example Client' }));
+    await fireEvent.changeText(screen.getByLabelText('Contact name'), '  ');
+    await fireEvent.press(screen.getByRole('button', { name: 'Save contact' }));
+    expect(alert).toHaveBeenCalledWith('Contact name required', 'Enter the contact name before saving.');
+    expect(screen.getByLabelText('Edit contact form')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Cancel Edit contact' }));
+    expect(screen.queryByLabelText('Edit contact form')).toBeNull();
+    expect(crmTaskApi.updateTaskContact).not.toHaveBeenCalled();
+    alert.mockRestore();
+  });
+
+  it('shows the server message and keeps the edits when saving fails', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    jest.mocked(crmTaskApi.updateTaskContact).mockRejectedValue({ response: { data: { message: 'Enter a valid email address' } } });
+    await render(<CrmTasksScreen onOpenDrawer={jest.fn()} onBack={jest.fn()} />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit Example Client' }));
+    await fireEvent.changeText(screen.getByLabelText('Email'), 'not-an-email');
+    await fireEvent.press(screen.getByRole('button', { name: 'Save contact' }));
+    expect(alert).toHaveBeenCalledWith('Contact not saved', 'Enter a valid email address');
+    expect(screen.getByLabelText('Email').props.value).toBe('not-an-email');
+    alert.mockRestore();
+  });
 });
 
 it('keeps email message identity and multiline content while editing the subject', async () => {
