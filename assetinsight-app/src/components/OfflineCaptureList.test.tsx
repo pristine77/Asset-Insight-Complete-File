@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import OfflineCaptureList from './OfflineCaptureList';
 import OfflineCaptureStore from '../services/offlineCaptureStore';
@@ -7,6 +7,9 @@ import AutoSaveService from '../services/autoSaveService';
 import backgroundUploadManager, { type BackgroundUploadRequest } from '../services/backgroundUploadManager';
 import { setUploadOwner } from '../services/uploadCancellation';
 import type { DirectUploadProgressCallback } from '../services/directR2UploadService';
+import { loadNativeAuctionCamera } from './camera/nativeAuctionCameraModule';
+
+jest.mock('./camera/nativeAuctionCameraModule', () => ({ loadNativeAuctionCamera: jest.fn() }));
 
 jest.mock('../context/ThemeContext', () => ({ useAppTheme: () => ({ colors: { text: '#111', textSecondary: '#555', warning: '#a50', accent: '#c00' } }) }));
 jest.mock('../services/offlineCaptureStore', () => ({ __esModule: true, default: {
@@ -45,6 +48,40 @@ it('does not label an ordinary unsubmitted saved draft as an interrupted upload'
   await render(<OfflineCaptureList onOpen={jest.fn()} />);
   await waitFor(() => expect(screen.getByText('Offline captures · 1')).toBeTruthy());
   expect(screen.queryByText(/Report submission needs your confirmation/)).toBeNull();
+});
+
+describe('camera photos left by an interrupted session', () => {
+  const originalPlatform = Platform.OS;
+  beforeEach(() => { Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true }); });
+  afterEach(() => { Object.defineProperty(Platform, 'OS', { value: originalPlatform, configurable: true }); });
+
+  it('names the capture that holds them, so the person opens the right one', async () => {
+    jest.mocked(OfflineCaptureStore.listSummaries).mockResolvedValue(['draft-a', 'draft-b'].map((id) => ({
+      id, type: 'lotListing', captureMode: 'offline', submissionState: 'local',
+      updatedAt: '2026-10-26T09:00:00.000Z', counts: { lots: 0, images: 0, extraImages: 0, missingImages: 0, perLot: [] },
+    })) as any);
+    const getPendingCapture = jest.fn(async (_owner: string, draftId: string) => draftId === 'draft-b' ? JSON.stringify({
+      ownerId: 'owner', draftId, sessionId: draftId, revision: 40, pendingPhotoCount: 1,
+      lots: [{ id: 'lot-1', files: [{ uri: 'file:///1.jpg' }, { uri: 'file:///2.jpg' }], extraFiles: [{ uri: 'file:///3.jpg' }] }, { id: 'lot-2', files: [{ uri: 'file:///4.jpg' }] }],
+    }) : null);
+    jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera: jest.fn(), getPendingCapture });
+    await render(<OfflineCaptureList onOpen={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('An interrupted camera session saved 5 photos for this capture. Tap Open and submit, then Recover photos.')).toBeTruthy());
+    expect(screen.getAllByText(/interrupted camera session/)).toHaveLength(1);
+    expect(getPendingCapture).toHaveBeenCalledWith('owner', 'draft-a');
+    expect(getPendingCapture).toHaveBeenCalledWith('owner', 'draft-b');
+  });
+
+  it('still lists captures on a build without journal access', async () => {
+    jest.mocked(OfflineCaptureStore.listSummaries).mockResolvedValue([{
+      id: 'draft-a', type: 'lotListing', captureMode: 'offline', submissionState: 'local',
+      updatedAt: '2026-10-26T09:00:00.000Z', counts: { lots: 1, images: 3, extraImages: 0, missingImages: 0, perLot: [] },
+    }] as any);
+    jest.mocked(loadNativeAuctionCamera).mockRejectedValue(new Error('Native auction camera module is not available.'));
+    await render(<OfflineCaptureList onOpen={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('Offline captures · 1')).toBeTruthy());
+    expect(screen.queryByText(/interrupted camera session/)).toBeNull();
+  });
 });
 
 /*

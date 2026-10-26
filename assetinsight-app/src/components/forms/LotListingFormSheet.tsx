@@ -887,7 +887,9 @@ const LotListingFormSheet = ({
     if (options.replaceSubmissionId && (auctioneer || submissionIdRef.current !== options.replaceSubmissionId)) return;
     if (options.newSubmissionFromId && (auctioneer || submissionIdRef.current !== options.newSubmissionFromId)) return;
     if (!validateForm()) {
-      Alert.alert('Validation Error', 'Please fix the required fields');
+      // Offline captures may be saved without a contract number; say where to add it.
+      if (!contractNo.trim()) setDetailsExpanded(true);
+      Alert.alert('Validation Error', contractNo.trim() ? 'Please fix the required fields' : 'Enter the contract number in Listing Details, then tap Submit.');
       return;
     }
 
@@ -1318,6 +1320,10 @@ const LotListingFormSheet = ({
     contractNo.trim() &&
     totalImages > 0 &&
     lots.every(lot => lot.mode);
+  // A reopened offline capture often has no contract number yet. Submit stays
+  // tappable once there are photos so validation can say what is missing; a
+  // greyed-out button left people unable to submit (2026-10-26).
+  const canTapSubmit = totalImages > 0;
   const canSaveDraftPreview = Boolean(contractNo.trim()) && totalImages > 0;
   const uploadTitle = uploadStatus?.stage === 'preparing'
     ? 'Preparing images'
@@ -1370,10 +1376,10 @@ const LotListingFormSheet = ({
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel={saveOnly ? 'Save offline lot listing' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit lot listing'}
-                  style={[styles.submitBtn, auctioneer && styles.importedSubmitBtn, ((!saveOnly && !canSubmit) || savingDraftPreview) && styles.submitBtnDisabled]}
+                  style={[styles.submitBtn, auctioneer && styles.importedSubmitBtn, ((!saveOnly && !canTapSubmit) || savingDraftPreview) && styles.submitBtnDisabled]}
                   onPress={() => void handleSubmit()}
                   hitSlop={HEADER_HIT_SLOP}
-                  disabled={(!saveOnly && !canSubmit) || submitting || savingDraftPreview}>
+                  disabled={(!saveOnly && !canTapSubmit) || submitting || savingDraftPreview}>
                   {submitting ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (

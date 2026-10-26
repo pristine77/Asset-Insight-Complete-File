@@ -388,10 +388,14 @@ const NativeAuctionCameraScreen: React.FC<CameraScreenProps> = (props) => {
                 Alert.alert('Draft changed', 'Your current photos changed. Reopen this draft to review the camera recovery before replacing them.');
                 return;
               }
-              await current.onAutoSave(recovered, index);
-              if (!stillCurrent()) return;
+              // Give the form the recovered lots before saving, as the camera return
+              // does. A large save takes seconds; the form kept its old lots meanwhile,
+              // and a save started then (Open Camera saves first) wrote them back over
+              // the recovery: 68 lots lost on contract 95131 (2026-10-23).
               current.setLots(recovered);
               current.setActiveLotIdx(index);
+              await current.onAutoSave(recovered, index);
+              if (!stillCurrent()) return;
               if (fallbackJournal) await OfflineCaptureStore.acknowledgePendingCapture(journal, journal.revision);
               else await native?.acknowledgeCapture?.(context.ownerId, context.draftId, journal.sessionId, journal.revision);
             } catch {

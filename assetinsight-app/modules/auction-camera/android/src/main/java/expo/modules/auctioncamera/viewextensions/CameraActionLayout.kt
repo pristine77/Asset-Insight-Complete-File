@@ -17,15 +17,18 @@ class CameraActionLayout @JvmOverloads constructor(context: Context, attrs: Attr
     fun setLensesExpanded(value: Boolean) = Unit
     fun collapseLenses() = Unit
     private fun unit(value: Float) = (value * resources.displayMetrics.density * scale).roundToInt()
+    // "+ Extra" is hidden in landscape (2026-10-26); its rows went to the mode
+    // buttons and Prev/Next. The gallery and video buttons shrank from 44 to 34
+    // on the same top line, and Bundle, Item and Photo took the freed height.
+    // The Prev/Next and Done rows are unchanged.
     private val geometry = listOf(
-        intArrayOf(R.id.galleryPreviewContainer, 44, 44, 12),
-        intArrayOf(R.id.imageViewRecordVideo, 44, 44, 12),
-        intArrayOf(R.id.textViewBundle, 70, 40, 64),
-        intArrayOf(R.id.textViewItem, 70, 40, 110),
-        intArrayOf(R.id.textViewPhoto, 70, 40, 156),
-        intArrayOf(R.id.textViewBundleExtra, 82, 40, 207),
-        intArrayOf(R.id.imageLeftArrow, 42, 30, 250),
-        intArrayOf(R.id.imageRightArrow, 42, 30, 250),
+        intArrayOf(R.id.galleryPreviewContainer, 34, 34, 12),
+        intArrayOf(R.id.imageViewRecordVideo, 34, 34, 12),
+        intArrayOf(R.id.textViewBundle, 70, 55, 54),
+        intArrayOf(R.id.textViewItem, 70, 55, 115),
+        intArrayOf(R.id.textViewPhoto, 70, 55, 176),
+        intArrayOf(R.id.imageLeftArrow, 42, 40, 240),
+        intArrayOf(R.id.imageRightArrow, 42, 40, 240),
         intArrayOf(R.id.textViewDone, 90, 30, 285),
     )
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -36,7 +39,7 @@ class CameraActionLayout @JvmOverloads constructor(context: Context, attrs: Attr
         for ((id, w, h) in geometry.map { Triple(it[0], it[1], it[2]) }) {
             val child = findViewById<View>(id)
             if (child is TextView) {
-                val font = when (id) { R.id.textViewBundleExtra -> 13f; R.id.imageLeftArrow, R.id.imageRightArrow, R.id.textViewDone -> 12f; else -> 14f }
+                val font = when (id) { R.id.imageLeftArrow, R.id.imageRightArrow, R.id.textViewDone -> 12f; else -> 14f }
                 child.setTextSize(TypedValue.COMPLEX_UNIT_PX, unit(font).toFloat())
                 child.setSingleLine(true); child.setHorizontallyScrolling(false)
                 child.includeFontPadding = false
@@ -46,17 +49,19 @@ class CameraActionLayout @JvmOverloads constructor(context: Context, attrs: Attr
         }
         val thumb = findViewById<View>(R.id.galleryPreview)
         val badge = findViewById<TextView>(R.id.galleryCount)
-        if (thumb.layoutParams.width != unit(42f)) thumb.layoutParams = thumb.layoutParams.apply { this.width = unit(42f); this.height = unit(42f) }
+        if (thumb.layoutParams.width != unit(32f)) thumb.layoutParams = thumb.layoutParams.apply { this.width = unit(32f); this.height = unit(32f) }
         if (badge.layoutParams.width != unit(20f)) badge.layoutParams = badge.layoutParams.apply { this.width = unit(20f); this.height = unit(20f) }
         badge.setTextSize(TypedValue.COMPLEX_UNIT_PX, unit(10f).toFloat())
-        findViewById<View>(R.id.galleryPreviewContainer).measure(MeasureSpec.makeMeasureSpec(unit(44f), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(unit(44f), MeasureSpec.EXACTLY))
+        findViewById<View>(R.id.galleryPreviewContainer).measure(MeasureSpec.makeMeasureSpec(unit(34f), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(unit(34f), MeasureSpec.EXACTLY))
     }
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         for (entry in geometry) {
             val child = findViewById<View>(entry[0])
-            val x = when (entry[0]) {
-                R.id.galleryPreviewContainer -> (width - unit(92f)) / 2
-                R.id.imageViewRecordVideo -> (width - unit(92f)) / 2 + unit(48f)
+            // Every row sits 7 units right of centre (2026-10-26); the widest stays
+            // inside the rail, so the navigation-bar strip to its right is kept.
+            val x = unit(7f) + when (entry[0]) {
+                R.id.galleryPreviewContainer -> (width - unit(72f)) / 2
+                R.id.imageViewRecordVideo -> (width - unit(72f)) / 2 + unit(38f)
                 R.id.imageLeftArrow -> (width - unit(88f)) / 2
                 R.id.imageRightArrow -> (width - unit(88f)) / 2 + unit(46f)
                 else -> (width - child.measuredWidth) / 2

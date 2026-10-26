@@ -39,6 +39,29 @@ class AuctionCameraModule : Module() {
         // No journal/original cleanup. A late I/O writer also fences its own transport.
     }
 
+    /**
+     * The camera closed without Done: Back, or Android finishing it. Tapping the app
+     * icon after a phone call reopens the singleTask MainActivity and finishes the
+     * camera above it; the form then got a plain cancel and showed its photos only as
+     * a recovery prompt (phone test 2026-10-26). Return the saved journal like Done.
+     * Null keeps the cancel: no context, nothing saved, or photos still processing.
+     */
+    private fun interruptedCapture(context: android.content.Context, handoffId: String): String? = runCatching {
+        val input = CameraPayloadStore.input(context, handoffId)?.trim()?.takeIf { it.startsWith("{") } ?: return@runCatching null
+        val scope = org.json.JSONObject(input).optJSONObject("captureContext") ?: return@runCatching null
+        val owner = scope.getString("ownerId")
+        val draft = scope.getString("draftId")
+        val journal = CaptureJournal.read(context, owner, draft) ?: return@runCatching null
+        val identity = org.json.JSONObject().put("ownerId", owner).put("draftId", draft).put("sessionId", journal.getString("sessionId"))
+        if (expo.modules.auctioncamera.viewextensions.PendingPhotoStore.pending(context, identity, includeFailed = true).isNotEmpty()) return@runCatching null
+        val lots = journal.getJSONArray("lots")
+        val media = (0 until lots.length()).sumOf { index ->
+            val lot = lots.getJSONObject(index)
+            (lot.optJSONArray("files")?.length() ?: 0) + (lot.optJSONArray("extraFiles")?.length() ?: 0) + (if (lot.isNull("videoFile")) 0 else 1)
+        }
+        if (media == 0) null else journal.toString()
+    }.getOrNull()
+
     private fun watchLaunch(launch: CameraLaunchGate.Claim<Promise>) {
         val watch = CameraLaunchWatch(SystemClock.elapsedRealtime())
         val check = object : Runnable {
@@ -54,7 +77,8 @@ class AuctionCameraModule : Module() {
                     // Android can return to RN without delivering onActivityResult.
                     // Recover the exact receipt when present; never start another camera.
                     val json = context?.let { runCatching { CameraPayloadStore.result(it,
-                        Intent().putExtra(CameraPayloadStore.EXTRA_HANDOFF_ID, launch.handoffId), launch.handoffId) }.getOrNull() }
+                        Intent().putExtra(CameraPayloadStore.EXTRA_HANDOFF_ID, launch.handoffId), launch.handoffId) }.getOrNull()
+                        ?: if (watch.opened) interruptedCapture(it, launch.handoffId) else null }
                     if (json != null && cameraLaunchGate.release(launch)) {
                         stopLaunchWatch(); launch.receiver.resolve(json)
                         context?.let { runCatching { CameraPayloadStore.discard(it, launch.handoffId) } }
@@ -193,7 +217,11 @@ class AuctionCameraModule : Module() {
                 } else if (payload.data?.getStringExtra(CameraPayloadStore.EXTRA_ERROR_CODE) != null) {
                     promise.reject("E_CAMERA_INPUT", "The camera could not restore this draft. Your saved photos are unchanged.", null)
                 } else {
-                    promise.reject("E_CANCELLED", "User cancelled the camera", null)
+                    val interrupted = context?.let { interruptedCapture(it, handoffId) }
+                    if (interrupted != null) {
+                        Log.d("AuctionCameraTiming", "interrupted_return payloadBytes=${interrupted.length}")
+                        promise.resolve(interrupted)
+                    } else promise.reject("E_CANCELLED", "User cancelled the camera", null)
                 }
             } catch (error: Exception) {
                 promise.reject("E_CAMERA_RESULT", "Captured photos remain saved on this device. Reopen this draft to recover the camera capture.", error)

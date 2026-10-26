@@ -1,12 +1,38 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, AppState, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, AppState, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAppTheme } from '../context/ThemeContext';
 import OfflineCaptureStore, { OfflineDraftSummary } from '../services/offlineCaptureStore';
 import AutoSaveService, { OfflineReportDraft } from '../services/autoSaveService';
 import { needsExplicitUploadResume } from '../services/offlineDraftPolicy';
 import backgroundUploadManager, { describeBackgroundUpload } from '../services/backgroundUploadManager';
+import { loadNativeAuctionCamera } from './camera/nativeAuctionCameraModule';
 import LotPhotoCounts from './LotPhotoCounts';
 import { useBackgroundUploads } from './useBackgroundUploads';
+
+/**
+ * Photos held by an interrupted camera session, per draft. If Android closes the
+ * app during a phone call, the form is gone when the person returns; the photos
+ * wait in the camera journal and are offered only when that exact draft is opened.
+ * A count here says which capture to open (2026-10-26).
+ */
+async function interruptedCameraPhotos(ownerId: string, ids: string[]): Promise<Record<string, number>> {
+  if (Platform.OS !== 'android' || !ids.length) return {};
+  const native = await loadNativeAuctionCamera().catch(() => undefined);
+  if (!native?.getPendingCapture) return {};
+  const counts: Record<string, number> = {};
+  for (const id of ids) {
+    try {
+      const raw = await native.getPendingCapture(ownerId, id);
+      if (!raw) continue;
+      const journal = JSON.parse(raw);
+      const photos = (Array.isArray(journal.lots) ? journal.lots : []).reduce((sum: number, lot: any) =>
+        sum + (Array.isArray(lot?.files) ? lot.files.length : 0) + (Array.isArray(lot?.extraFiles) ? lot.extraFiles.length : 0), 0)
+        + (Number.isInteger(journal.pendingPhotoCount) ? journal.pendingPhotoCount : 0);
+      if (photos > 0) counts[id] = photos;
+    } catch { /* An unreadable journal stays on the device for support recovery. */ }
+  }
+  return counts;
+}
 
 export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, type: 'asset' | 'lotListing') => void }) {
   const { colors } = useAppTheme();
@@ -17,6 +43,7 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
   const [page, setPage] = useState(0);
   const [legacyLimit, setLegacyLimit] = useState(20);
   const [expanded, setExpanded] = useState<string>();
+  const [cameraWaiting, setCameraWaiting] = useState<Record<string, number>>({});
   // Re-renders with every background upload change; statusFor() reads it.
   useBackgroundUploads();
   const refresh = useCallback(async () => {
@@ -25,7 +52,10 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
       const [summaries, old, jobs] = await Promise.all([OfflineCaptureStore.listSummaries(), OfflineCaptureStore.listLegacyDrafts(), OfflineCaptureStore.listLegacyJobs()]);
       if (owner !== OfflineCaptureStore.getOwnerId()) return;
       const captures = summaries.filter((item) => item.captureMode === 'offline' || item.manualSubmissionRequired);
+      const waiting = owner ? await interruptedCameraPhotos(owner, captures.map((item) => item.id)) : {};
+      if (owner !== OfflineCaptureStore.getOwnerId()) return;
       setItems(captures); setPage((current) => Math.min(current, Math.max(0, Math.ceil(captures.length / 20) - 1)));
+      setCameraWaiting(waiting);
       setLegacy(old); setLegacyJobs(jobs); setError('');
     } catch { setError('Could not read saved captures. Your local files have not been deleted.'); }
   }, []);
@@ -71,6 +101,7 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
       <Text style={{ color: colors.textSecondary }}>{item.counts.lots} lots · {item.counts.images} photos · {item.counts.extraImages} report-only{item.counts.missingImages ? ` · ${item.counts.missingImages} missing` : ''}</Text>
       {background ? <Text accessibilityLiveRegion="polite" style={{ color: background.status === 'attention' ? colors.warning : colors.info }}>Background upload: {describeBackgroundUpload(background)}</Text>
         : needsExplicitUploadResume(item.submissionState) ? <Text style={{ color: colors.warning }}>Report submission needs your confirmation — open the draft, then tap Resume upload. Cloud backup does not submit it.</Text> : null}
+      {cameraWaiting[item.id] ? <Text style={{ color: colors.warning }}>An interrupted camera session saved {cameraWaiting[item.id]} photo{cameraWaiting[item.id] === 1 ? '' : 's'} for this capture. Tap Open and submit, then Recover photos.</Text> : null}
       {item.inventoryError ? <Text accessibilityRole="alert" style={{ color: colors.warning }}>{item.inventoryError}</Text> : null}
       <View style={styles.actions}>
         <TouchableOpacity accessibilityRole="button" accessibilityHint="Review saved data first. The report is submitted only after you tap Submit; cloud backup is separate." onPress={() => onOpen(item.id, item.type)} style={styles.button}><Text style={{ color: colors.accent }}>Open and submit</Text></TouchableOpacity>

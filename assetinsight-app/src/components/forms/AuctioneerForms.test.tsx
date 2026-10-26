@@ -958,6 +958,24 @@ describe.each(['asset', 'lotListing'] as const)('%s offline save then review', t
   });
 });
 
+describe('lotListing offline capture saved without a contract number', () => {
+  it('keeps Submit tappable, says where to add the contract number, then submits', async () => {
+    const value = draft('lotListing');
+    delete (value.formData as any).auctioneerWorkItemId;
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...value, contractNo: undefined, captureMode: 'offline',
+      manualSubmissionRequired: true, submissionState: 'local', formData: { ...value.formData, contractNo: '', captureMode: 'offline' } } as any);
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(1));
+    await fireEvent.press(screen.getByRole('button', { name: 'Submit lot listing' }));
+    expect(Alert.alert).toHaveBeenCalledWith('Validation Error', 'Enter the contract number in Listing Details, then tap Submit.');
+    expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+    await fireEvent.changeText(screen.getByLabelText('Contract number, required'), '93530.3-A');
+    await fireEvent.press(screen.getByRole('button', { name: 'Submit lot listing' }));
+    await waitFor(() => expect(lotListingService.createLotListing).toHaveBeenCalledTimes(1));
+    expect(jest.mocked(lotListingService.createLotListing).mock.calls[0][0]).toMatchObject({ contract_no: '93530.3-A' });
+  });
+});
+
 describe.each(['asset', 'lotListing'] as const)('%s incoming create-and-continue', (type) => {
   async function mount(submissionState?: 'ready' | 'uploading' | 'paused', fields: AutoSaveFormData = {}, reflectSetup = false) {
     const current = setup(type);

@@ -139,6 +139,27 @@ it('offers owner-scoped recovery on a cold draft reopen without opening the came
   expect(input.onAutoSave).toHaveBeenCalledWith([expect.objectContaining({ id: lot.id })], 0);
 });
 
+it('puts recovered photos in the form before the slow draft save, so a save started meanwhile cannot write the old lots', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const acknowledgeCapture = jest.fn().mockResolvedValue(true);
+  const recoveredLot = { ...lot, files: [photo, { ...photo, uri: 'file:///second.jpg', name: 'second.jpg' }] };
+  const getPendingCapture = jest.fn().mockResolvedValue(JSON.stringify({ ownerId: 'owner', draftId: 'draft', sessionId: 'interrupted', revision: 9, lots: [recoveredLot] }));
+  const input = { ...props(), visible: false, captureContext: { ownerId: 'owner', draftId: 'draft', sessionId: 'new' } };
+  let finishSave!: () => void;
+  input.onAutoSave.mockReturnValue(new Promise<void>((resolve) => { finishSave = resolve; }));
+  jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera, getPendingCapture, acknowledgeCapture });
+  await render(<NativeAuctionCameraScreen {...input} />);
+  await waitFor(() => expect(alert).toHaveBeenCalledWith('Recover camera photos?', expect.stringContaining('2 photos'), expect.any(Array)));
+  await act(async () => { alert.mock.calls[0][2]?.find((button) => button.text === 'Recover photos')?.onPress?.(); });
+  // The save of a large recovery takes seconds. The form already holds the
+  // recovered lots, so Open Camera or Close in that time saves them too.
+  await waitFor(() => expect(input.onAutoSave).toHaveBeenCalled());
+  expect(input.setLots).toHaveBeenCalledWith([expect.objectContaining({ id: lot.id, files: [expect.objectContaining({ uri: photo.uri }), expect.objectContaining({ uri: 'file:///second.jpg' })] })]);
+  expect(acknowledgeCapture).not.toHaveBeenCalled();
+  await act(async () => { finishSave(); });
+  await waitFor(() => expect(acknowledgeCapture).toHaveBeenCalledWith('owner', 'draft', 'interrupted', 9));
+});
+
 it('recovers the fallback camera journal on iOS only after the draft save commits', async () => {
   Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
   const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});

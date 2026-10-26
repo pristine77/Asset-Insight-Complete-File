@@ -46,6 +46,10 @@ object CameraPayloadStore {
         return file(context, id, false).openRead().bufferedReader().use { it.readText() }
     }
 
+    /** The launch input for [id], or null once it was discarded. */
+    fun input(context: Context, id: String): String? =
+        runCatching { file(context, id, false).openRead().bufferedReader().use { it.readText() } }.getOrNull()
+
     fun resultIntent(context: Context, launchIntent: Intent, payload: String): Intent {
         // Legacy callers have no handoff token; give their result a fresh token too.
         val id = launchIntent.getStringExtra(EXTRA_HANDOFF_ID) ?: UUID.randomUUID().toString()

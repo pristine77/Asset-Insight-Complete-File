@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.drawable.BitmapDrawable
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
+import android.media.AudioManager
 import android.media.MediaActionSound
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -180,6 +181,13 @@ class CameraViewActivity : BaseActivity() {
     private val sound = runCatching {
         MediaActionSound().apply { load(MediaActionSound.SHUTTER_CLICK) }
     }.getOrNull()
+
+    /** The click follows the phone's sound setting: Silent and Vibrate stay quiet, unless the region requires it. */
+    private fun playShutterSound() {
+        val required = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && MediaActionSound.mustPlayShutterSound()
+        if (!required && getSystemService(AudioManager::class.java)?.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+        runCatching { sound?.play(MediaActionSound.SHUTTER_CLICK) }
+    }
     private var isUserDraggingZoom = false
     private var suppressZoomUICallback = false
     private val clearSuppressRunnable = Runnable { suppressZoomUICallback = false }
@@ -1832,7 +1840,7 @@ class CameraViewActivity : BaseActivity() {
             "AuctionCameraTiming",
             "shutter_tap mode=$mode extra=$isExtra cameraMode=$currentCameraMode extension=${engine.getActiveExtensionMode().label}"
         )
-        runCatching { sound?.play(MediaActionSound.SHUTTER_CLICK) }
+        playShutterSound()
         HapticCaptureHelper.hapticPulse(this)
 
         engine.previewViewWidth = binding.previewView.width
