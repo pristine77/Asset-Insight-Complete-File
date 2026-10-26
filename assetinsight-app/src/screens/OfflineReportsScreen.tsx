@@ -975,6 +975,48 @@ const OfflineReportsScreen = ({
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      {/* A slim top bar replaced the tall red header (2026-10-26), so saved
+          captures show on the first screen. */}
+      <View style={styles.topBar}>
+        <TouchableOpacity onPress={onOpenDrawer} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Open menu">
+          <Feather name="menu" size={22} color="#111827" />
+        </TouchableOpacity>
+        <Text style={styles.topBarTitle}>Drafts</Text>
+        <View
+          style={[
+            styles.onlineBadge,
+            online
+              ? styles.onlineBadgeOk
+              : connectionWarning
+                ? styles.onlineBadgeWarn
+                : styles.onlineBadgeOff,
+          ]}
+        >
+          <Feather
+            name={(online ? 'wifi' : connectionWarning ? 'alert-circle' : 'wifi-off') as any}
+            size={12}
+            color={online ? '#07875F' : connectionWarning ? '#B76408' : '#D62F3F'}
+          />
+          <Text
+            style={[
+              styles.onlineText,
+              !online && (connectionWarning ? styles.onlineTextWarn : styles.onlineTextOff),
+            ]}
+          >
+            {connectionLabel}
+          </Text>
+        </View>
+        {onOpenNotifications ? (
+          <TouchableOpacity onPress={onOpenNotifications} style={styles.iconBtn} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Notifications">
+            <Feather name="bell" size={20} color="#111827" />
+            {unreadCount > 0 ? (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        ) : null}
+      </View>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -983,129 +1025,58 @@ const OfflineReportsScreen = ({
         }
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.hero}>
-          <View style={styles.heroGlow} />
-          <View style={styles.heroContent}>
-            <View style={styles.heroTop}>
-              <View style={styles.heroLeft}>
-                <TouchableOpacity onPress={onOpenDrawer} style={styles.menuBtn}>
-                  <Feather name="menu" size={22} color="#FFFFFF" />
-                </TouchableOpacity>
-                <View style={styles.heroTitleSection}>
-                  <Text style={styles.heroTitle}>Drafts</Text>
-                  <Text style={styles.heroSubtitle}>
-                    Offline captures stay on this device until you submit. Only counts and status sync automatically.
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.heroActions}>
-                {onOpenNotifications ? (
-                  <TouchableOpacity onPress={onOpenNotifications} style={styles.notifBtn} activeOpacity={0.85}>
-                    <Feather name="bell" size={20} color="#fff" />
-                    {unreadCount > 0 ? (
-                      <View style={styles.notifBadge}>
-                        <Text style={styles.notifBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-                      </View>
-                    ) : null}
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </View>
+        <Text style={styles.pageCaption}>
+          Offline captures stay on this device until you submit. Only counts and status sync automatically.
+        </Text>
 
-            <View style={styles.heroMetaRow}>
-              <View
-                style={[
-                  styles.onlineBadge,
-                  online
-                    ? styles.onlineBadgeOk
-                    : connectionWarning
-                      ? styles.onlineBadgeWarn
-                      : styles.onlineBadgeOff,
-                ]}
-              >
-                <Feather
-                  name={(online ? 'wifi' : connectionWarning ? 'alert-circle' : 'wifi-off') as any}
-                  size={12}
-                  color={online ? '#BBF7D0' : connectionWarning ? '#FDE68A' : '#FCA5A5'}
-                />
-                <Text
-                  style={[
-                    styles.onlineText,
-                    !online && (connectionWarning ? styles.onlineTextWarn : styles.onlineTextOff),
-                  ]}
-                >
-                  {connectionLabel}
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryRow}>
+            <View style={styles.summaryStats}>
+              {([[totals.total, 'Drafts'], [totals.local, 'Local'], [totals.queued, 'Queued']] as const).map(([value, label]) => (
+                <Text key={label} style={styles.summaryValue}>
+                  {value}{'\n'}<Text style={styles.summaryLabel}>{label}</Text>
                 </Text>
-              </View>
+              ))}
             </View>
-
-            <View style={styles.heroStats}>
-              <View style={styles.heroStat}>
-                <Text style={styles.heroStatValue}>{totals.total}</Text>
-                <Text style={styles.heroStatLabel}>Drafts</Text>
-              </View>
-              <View style={styles.heroDivider} />
-              <View style={styles.heroStat}>
-                <Text style={styles.heroStatValue}>{totals.local}</Text>
-                <Text style={styles.heroStatLabel}>Local</Text>
-              </View>
-              <View style={styles.heroDivider} />
-              <View style={styles.heroStat}>
-                <Text style={styles.heroStatValue}>{totals.queued}</Text>
-                <Text style={styles.heroStatLabel}>Queued</Text>
-              </View>
-            </View>
-
-            {storageSummary ? (
-              <View style={styles.storageRow}>
-                <View style={styles.storageTextWrap}>
-                  <Text style={styles.storageLabel}>Offline media storage</Text>
-                  <Text style={styles.storageValue}>
-                    {storageSummary.formatted} used - {storageSummary.images} images
-                    {storageSummary.videos ? `, ${storageSummary.videos} videos` : ''}
-                  </Text>
-                  <Text style={styles.storageAvailable}>
-                    Device available: {storageSummary.availableFormatted || 'Unknown'}
-                    {storageSummary.totalFormatted ? ` of ${storageSummary.totalFormatted}` : ''}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.cleanBtn}
-                  onPress={cleanCompletedStorage}
-                  activeOpacity={0.85}
-                >
-                  <Feather name="trash-2" size={13} color="#FFFFFF" />
-                  <Text style={styles.cleanBtnText}>Free up</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-          </View>
-        </View>
-
-        {showSyncAll || showSendReady ? (
-          <View style={styles.topActions}>
             {showSyncAll ? (
               <TouchableOpacity
-                style={[styles.topAction, syncing && styles.actionDisabled]}
+                style={[styles.summaryAction, syncing && styles.actionDisabled]}
                 onPress={syncAll}
                 disabled={syncing}
               >
-                {syncing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Feather name="cloud" size={16} color="#FFFFFF" />}
-                <Text style={styles.topActionText}>Sync All</Text>
-              </TouchableOpacity>
-            ) : null}
-            {showSendReady ? (
-              <TouchableOpacity
-                style={[styles.topAction, styles.topActionGreen, syncing && styles.actionDisabled]}
-                onPress={sendAll}
-                disabled={syncing}
-              >
-                {syncing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Feather name="upload-cloud" size={16} color="#FFFFFF" />}
-                <Text style={styles.topActionText}>Send Ready</Text>
+                {syncing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Feather name="cloud" size={15} color="#FFFFFF" />}
+                <Text style={styles.summaryActionText}>Sync All</Text>
               </TouchableOpacity>
             ) : null}
           </View>
-        ) : null}
+          {showSendReady ? (
+            <TouchableOpacity
+              style={[styles.summaryAction, styles.summaryActionGreen, syncing && styles.actionDisabled]}
+              onPress={sendAll}
+              disabled={syncing}
+            >
+              {syncing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Feather name="upload-cloud" size={15} color="#FFFFFF" />}
+              <Text style={styles.summaryActionText}>Send Ready</Text>
+            </TouchableOpacity>
+          ) : null}
+          {storageSummary ? (
+            <View style={styles.storageRow}>
+              <Feather name="hard-drive" size={14} color="#7C8798" />
+              <Text style={styles.storageValue}>
+                {storageSummary.formatted} used - {storageSummary.images} images
+                {storageSummary.videos ? `, ${storageSummary.videos} videos` : ''}
+                {storageSummary.availableFormatted ? ` · ${storageSummary.availableFormatted} free` : ''}
+              </Text>
+              <TouchableOpacity
+                style={styles.cleanBtn}
+                onPress={cleanCompletedStorage}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.cleanBtnText}>Free up</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
 
         <CaptureBackupPanel />
         <UploadContinuationPanel onOpen={onContinueDraft} />
@@ -1141,97 +1112,44 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
+    padding: 12,
     paddingBottom: 36,
   },
-  hero: {
-    backgroundColor: '#F43F5E',
-    borderRadius: 22,
-    marginBottom: 16,
-    overflow: 'hidden',
-    shadowColor: '#F43F5E',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.45,
-    shadowRadius: 20,
-    elevation: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  heroGlow: {
-    position: 'absolute',
-    top: -50,
-    right: -50,
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  heroContent: {
-    padding: 16,
-  },
-  heroTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 14,
-  },
-  heroLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  menuBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    marginRight: 14,
-  },
-  heroTitleSection: {
-    flex: 1,
-    minWidth: 0,
-  },
-  heroTitle: {
-    color: '#FFFFFF',
-    fontSize: 26,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-  },
-  heroSubtitle: {
-    marginTop: 2,
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  heroActions: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    flexShrink: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E5EC',
   },
-  notifBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
+  iconBtn: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarTitle: {
+    flex: 1,
+    color: '#111827',
+    fontSize: 19,
+    fontWeight: '700',
   },
   notifBadge: {
     position: 'absolute',
-    top: 3,
-    right: 3,
+    top: 4,
+    right: 2,
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#E11D48',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 4,
     borderWidth: 2,
-    borderColor: '#F43F5E',
+    borderColor: '#FFFFFF',
   },
   notifBadgeText: {
     color: '#fff',
@@ -1239,141 +1157,111 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
-  heroMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 10,
-  },
   onlineBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 999,
-    paddingHorizontal: 10,
-    minHeight: 32,
-    gap: 5,
-    borderWidth: 1,
+    paddingHorizontal: 9,
+    minHeight: 26,
+    gap: 4,
   },
   onlineBadgeOk: {
-    backgroundColor: 'rgba(22, 163, 74, 0.22)',
-    borderColor: 'rgba(187, 247, 208, 0.48)',
+    backgroundColor: '#E6F7F0',
   },
   onlineBadgeOff: {
-    backgroundColor: 'rgba(185, 28, 28, 0.26)',
-    borderColor: 'rgba(252, 165, 165, 0.5)',
+    backgroundColor: '#FFF0F1',
   },
   onlineBadgeWarn: {
-    backgroundColor: 'rgba(161, 98, 7, 0.28)',
-    borderColor: 'rgba(253, 230, 138, 0.5)',
+    backgroundColor: '#FFF4DB',
   },
   onlineText: {
-    color: '#DCFCE7',
-    fontSize: 11,
-    fontWeight: '900',
+    color: '#07875F',
+    fontSize: 12,
+    fontWeight: '700',
   },
   onlineTextOff: {
-    color: '#FEE2E2',
+    color: '#D62F3F',
   },
   onlineTextWarn: {
-    color: '#FEF3C7',
+    color: '#B76408',
   },
-  heroStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    paddingVertical: 12,
+  pageCaption: {
+    color: '#475569',
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 8,
+    marginHorizontal: 2,
   },
-  storageRow: {
-    marginTop: 12,
-    borderRadius: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.16)',
+  summaryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    padding: 10,
+    borderColor: '#E0E5EC',
+    padding: 12,
+    gap: 10,
+    marginBottom: 4,
+  },
+  summaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
-  storageTextWrap: {
+  summaryStats: {
     flex: 1,
-    minWidth: 0,
+    flexDirection: 'row',
+    columnGap: 18,
   },
-  storageLabel: {
-    color: 'rgba(255,255,255,0.76)',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  storageValue: {
-    marginTop: 2,
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  storageAvailable: {
-    marginTop: 3,
-    color: 'rgba(255,255,255,0.78)',
-    fontSize: 11,
+  summaryValue: {
+    color: '#111827',
+    fontSize: 18,
+    lineHeight: 22,
     fontWeight: '700',
   },
-  cleanBtn: {
-    minHeight: 34,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 5,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  cleanBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  heroStat: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  heroStatValue: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  heroStatLabel: {
-    marginTop: 3,
-    color: 'rgba(255,255,255,0.72)',
+  summaryLabel: {
+    color: '#475569',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
   },
-  heroDivider: {
-    width: 1,
-    height: 36,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-  },
-  topActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
-  },
-  topAction: {
-    flex: 1,
-    minHeight: 48,
-    borderRadius: 16,
+  summaryAction: {
+    minHeight: 38,
+    borderRadius: 10,
+    paddingHorizontal: 12,
     backgroundColor: '#2563EB',
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
-  topActionGreen: {
+  summaryActionGreen: {
     backgroundColor: '#0F766E',
   },
-  topActionText: {
+  summaryActionText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '900',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  storageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E5EC',
+    paddingTop: 8,
+  },
+  storageValue: {
+    flex: 1,
+    color: '#475569',
+    fontSize: 12,
+  },
+  cleanBtn: {
+    minHeight: 32,
+    paddingHorizontal: 6,
+    justifyContent: 'center',
+  },
+  cleanBtnText: {
+    color: '#E11D48',
+    fontSize: 12,
+    fontWeight: '700',
   },
   loadingState: {
     paddingVertical: 60,

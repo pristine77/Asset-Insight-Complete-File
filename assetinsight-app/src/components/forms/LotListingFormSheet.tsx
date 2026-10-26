@@ -1495,10 +1495,12 @@ const LotListingFormSheet = ({
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}>
-          <OfflineCapturePanel mode={captureMode} onChange={changeCaptureMode} lots={lots} savedAt={localSavedAt}
-            manualSubmissionRequired={manualSubmissionRequired} reviewingSavedDraft={reviewingSavedDraft}
-            error={localSaveError} disabled={submitting || savingDraftPreview} paused={uploadPaused}
-            onSave={() => { void handleSaveDraftPreview(); }} />
+          <View style={styles.capturePanelInset}>
+            <OfflineCapturePanel mode={captureMode} onChange={changeCaptureMode} lots={lots} savedAt={localSavedAt}
+              manualSubmissionRequired={manualSubmissionRequired} reviewingSavedDraft={reviewingSavedDraft}
+              error={localSaveError} disabled={submitting || savingDraftPreview} paused={uploadPaused}
+              onSave={() => { void handleSaveDraftPreview(); }} />
+          </View>
           
           {isAuctionManagementMode && auctionManagementTask ? (
             <View style={styles.auctionTaskBanner}>
@@ -1604,7 +1606,7 @@ const LotListingFormSheet = ({
                     <Text style={styles.bankToggleHelp}>Include all lot photos in the CR.</Text>
                   </View>
                   <View style={[styles.bankCheckbox, bankPhotosEnabled && styles.bankCheckboxActive]}>
-                    {bankPhotosEnabled && <Feather name="check" size={14} color="#fff" />}
+                    <View style={styles.switchKnob} />
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1621,7 +1623,7 @@ const LotListingFormSheet = ({
                     </Text>
                   </View>
                   <View style={[styles.bankCheckbox, watermarkImages && styles.bankCheckboxActive]}>
-                    {watermarkImages && <Feather name="check" size={14} color="#fff" />}
+                    <View style={styles.switchKnob} />
                   </View>
                 </TouchableOpacity>
               </View>
@@ -2069,30 +2071,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 4,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    backgroundColor: '#F9FAFB',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
   },
   bankToggleHelp: {
     fontSize: 11,
     color: '#6B7280',
     lineHeight: 15,
   },
+  // Bank and watermark are switches; the track and knob show it.
   bankCheckbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: '#C4B5FD',
-    alignItems: 'center',
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    padding: 3,
     justifyContent: 'center',
-    backgroundColor: '#fff',
+    alignItems: 'flex-start',
+    backgroundColor: '#CDD4DE',
   },
   bankCheckboxActive: {
+    alignItems: 'flex-end',
     backgroundColor: '#8B5CF6',
-    borderColor: '#8B5CF6',
+  },
+  switchKnob: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+  },
+  capturePanelInset: {
+    marginHorizontal: 12,
+    marginTop: 4,
   },
   inputSmall: {
     backgroundColor: '#F9FAFB',

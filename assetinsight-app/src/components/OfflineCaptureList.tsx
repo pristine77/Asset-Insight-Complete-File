@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, AppState, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useAppTheme } from '../context/ThemeContext';
 import OfflineCaptureStore, { OfflineDraftSummary } from '../services/offlineCaptureStore';
 import AutoSaveService, { OfflineReportDraft } from '../services/autoSaveService';
@@ -88,26 +89,34 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
   const visible = items.slice(page * 20, (page + 1) * 20);
   return <View style={styles.section}>
     <Text style={[styles.title, { color: colors.text }]}>Offline captures · {items.length}</Text>
-    <Text style={{ color: colors.textSecondary }}>Photos remain on this device. On supported Android builds, cloud backup runs separately; check Photo cloud backup for verified progress and Pause/Resume. Open a draft to review and submit the report yourself.</Text>
+    <Text style={[styles.small, { color: colors.textSecondary }]}>Photos remain on this device. On supported Android builds, cloud backup runs separately; check Photo cloud backup for verified progress and Pause/Resume. Open a draft to review and submit the report yourself.</Text>
     {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
     {visible.map((item) => {
       // The background upload line knows more than the stored state: a draft
       // it is sending is stored as 'ready' but is not waiting for anyone.
       const background = backgroundUploadManager.statusFor(item.id);
       const busy = backgroundUploadManager.isBusy(item.id);
+      const asset = item.type === 'asset';
       return <View key={item.id} style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-      <Text style={[styles.heading, { color: colors.text }]}>{item.contractNo || 'Contract not entered'} · {item.type === 'asset' ? 'Asset' : 'Lot listing'}</Text>
-      <Text style={{ color: colors.text }}>Saved on this device · {new Date(item.updatedAt).toLocaleString()}</Text>
-      <Text style={{ color: colors.textSecondary }}>{item.counts.lots} lots · {item.counts.images} photos · {item.counts.extraImages} report-only{item.counts.missingImages ? ` · ${item.counts.missingImages} missing` : ''}</Text>
-      {background ? <Text accessibilityLiveRegion="polite" style={{ color: background.status === 'attention' ? colors.warning : colors.info }}>Background upload: {describeBackgroundUpload(background)}</Text>
-        : needsExplicitUploadResume(item.submissionState) ? <Text style={{ color: colors.warning }}>Report submission needs your confirmation — open the draft, then tap Resume upload. Cloud backup does not submit it.</Text> : null}
-      {cameraWaiting[item.id] ? <Text style={{ color: colors.warning }}>An interrupted camera session saved {cameraWaiting[item.id]} photo{cameraWaiting[item.id] === 1 ? '' : 's'} for this capture. Tap Open and submit, then Recover photos.</Text> : null}
-      {item.inventoryError ? <Text accessibilityRole="alert" style={{ color: colors.warning }}>{item.inventoryError}</Text> : null}
-      <View style={styles.actions}>
-        <TouchableOpacity accessibilityRole="button" accessibilityHint="Review saved data first. The report is submitted only after you tap Submit; cloud backup is separate." onPress={() => onOpen(item.id, item.type)} style={styles.button}><Text style={{ color: colors.accent }}>Open and submit</Text></TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" accessibilityState={{ expanded: expanded === item.id }} onPress={() => setExpanded(expanded === item.id ? undefined : item.id)} style={styles.button}><Text style={{ color: colors.text }}>Lot counts</Text></TouchableOpacity>
+      <View style={styles.cardTop}>
+        <View style={[styles.typeIcon, { backgroundColor: asset ? '#FFE4E6' : '#F3E8FF' }]}>
+          <Feather name={asset ? 'package' : 'list'} size={16} color={asset ? '#E11D48' : '#7C3AED'} />
+        </View>
+        <View style={styles.cardText}>
+          <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.heading, { color: colors.text }]}>{item.contractNo || 'Contract not entered'} · {asset ? 'Asset' : 'Lot listing'}</Text>
+          <Text style={[styles.small, { color: colors.textSecondary }]}>{item.counts.lots} lots · {item.counts.images} photos · {item.counts.extraImages} report-only{item.counts.missingImages ? ` · ${item.counts.missingImages} missing` : ''}</Text>
+          <Text style={[styles.small, { color: colors.textMuted }]}>Saved on this device · {new Date(item.updatedAt).toLocaleString()}</Text>
+        </View>
+      </View>
+      {background ? <Text accessibilityLiveRegion="polite" style={[styles.small, { color: background.status === 'attention' ? colors.warning : colors.info }]}>Background upload: {describeBackgroundUpload(background)}</Text>
+        : needsExplicitUploadResume(item.submissionState) ? <Text style={[styles.small, { color: colors.warning }]}>Report submission needs your confirmation — open the draft, then tap Resume upload. Cloud backup does not submit it.</Text> : null}
+      {cameraWaiting[item.id] ? <Text style={[styles.small, { color: colors.warning }]}>An interrupted camera session saved {cameraWaiting[item.id]} photo{cameraWaiting[item.id] === 1 ? '' : 's'} for this capture. Tap Open and submit, then Recover photos.</Text> : null}
+      {item.inventoryError ? <Text accessibilityRole="alert" style={[styles.small, { color: colors.warning }]}>{item.inventoryError}</Text> : null}
+      <View style={styles.buttonRow}>
+        <TouchableOpacity accessibilityRole="button" accessibilityHint="Review saved data first. The report is submitted only after you tap Submit; cloud backup is separate." onPress={() => onOpen(item.id, item.type)} style={[styles.button, styles.primary, { backgroundColor: colors.accent }]}><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.buttonText, { color: colors.accentText }]}>Open and submit</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityState={{ expanded: expanded === item.id }} onPress={() => setExpanded(expanded === item.id ? undefined : item.id)} style={[styles.button, styles.lotCounts, { borderColor: colors.border }]}><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.buttonText, { color: colors.text }]}>Lot counts</Text></TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled: busy }} accessibilityHint={busy ? 'Uploading in the background. Pause it from the upload bar first.' : undefined}
-          disabled={busy} onPress={() => remove(item)} style={[styles.button, busy && styles.disabled]}><Text style={{ color: colors.danger }}>Discard</Text></TouchableOpacity>
+          disabled={busy} onPress={() => remove(item)} style={[styles.button, styles.discard, { borderColor: colors.dangerSoft }, busy && styles.disabled]}><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.buttonText, { color: colors.danger }]}>Discard</Text></TouchableOpacity>
       </View>
       {expanded === item.id ? <LotPhotoCounts lots={item.counts.perLot} /> : null}
     </View>;
@@ -137,7 +146,13 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
   </View>;
 }
 
-const styles = StyleSheet.create({ section: { gap: 10, marginVertical: 16 }, title: { fontSize: 20, fontWeight: '700' },
-  card: { borderWidth: 1, borderRadius: 8, padding: 12, gap: 8 }, heading: { fontSize: 16, fontWeight: '600' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }, button: { minHeight: 44, padding: 10, justifyContent: 'center' },
+const styles = StyleSheet.create({ section: { gap: 8, marginVertical: 12 }, title: { fontSize: 17, fontWeight: '700' },
+  small: { fontSize: 12, lineHeight: 17 },
+  card: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 8 }, heading: { fontSize: 15, fontWeight: '600' },
+  cardTop: { flexDirection: 'row', gap: 10 }, cardText: { flex: 1, gap: 2 },
+  typeIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  buttonRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  button: { minHeight: 40, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: 'transparent', justifyContent: 'center' },
+  primary: { flex: 3, alignItems: 'center' }, lotCounts: { flex: 2, alignItems: 'center' }, discard: { flex: 1.4, alignItems: 'center' }, buttonText: { fontSize: 13, fontWeight: '600' },
   disabled: { opacity: 0.4 } });

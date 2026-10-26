@@ -500,7 +500,7 @@ const LotManager = ({
                       size={20}
                       color={isSelected ? info.color : '#6B7280'}
                     />
-                    <Text style={[styles.modeBtnLabel, isSelected && { color: info.color }]}>
+                    <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.modeBtnLabel, isSelected && { color: info.color }]}>
                       {info.label}
                     </Text>
                     <Text style={styles.modeBtnDesc}>{info.desc}</Text>
@@ -530,8 +530,8 @@ const LotManager = ({
               <TouchableOpacity
                 style={[styles.actionBtn, styles.galleryBtn]}
                 onPress={() => pickImages(idx)}>
-                <Feather name="image" size={20} color="#fff" />
-                <Text style={styles.actionBtnText}>Gallery</Text>
+                <Feather name="image" size={20} color="#7C3AED" />
+                <Text style={[styles.actionBtnText, styles.galleryBtnText]}>Gallery</Text>
               </TouchableOpacity>
             </View>
 
@@ -630,7 +630,7 @@ const LotManager = ({
             if (newIdx < 0) return;
             setExpandedLot(newIdx);
           }}>
-          <Feather name="plus" size={20} color="#fff" />
+          <Feather name="plus" size={16} color="#fff" />
           <Text style={styles.addLotBtnText}>Add Lot</Text>
         </TouchableOpacity> : null}
       </View>
@@ -841,8 +841,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#F43F5E',
     margin: 12,
     marginBottom: 0,
-    padding: 14,
-    borderRadius: 18,
+    padding: 12,
+    borderRadius: 12,
     alignItems: 'center',
     shadowColor: '#F43F5E',
     shadowOffset: { width: 0, height: 8 },
@@ -865,19 +865,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '500',
   },
+  // A plain section title on the page, not a full-width bar (2026-10-26).
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 4,
   },
   headerTitle: {
     fontSize: 17,
@@ -889,14 +884,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#2563EB',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    shadowColor: '#2563EB',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
   },
   addLotBtnText: {
     color: '#fff',
@@ -908,14 +898,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   lotsListContent: {
-    padding: 16,
+    padding: 12,
     paddingBottom: 100,
   },
   lotCard: {
     backgroundColor: '#fff',
     borderRadius: 16,
     marginBottom: 10,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: 'rgba(0, 0, 0, 0.04)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
@@ -999,19 +989,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
+  // Flat tiles: on Android a shadow under the selected tile's see-through tint
+  // drew a grey box with an unfilled inner rectangle.
   modeBtn: {
     flex: 1,
     alignItems: 'center',
     padding: 10,
     backgroundColor: '#F9FAFB',
     borderRadius: 12,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
   },
   modeBtnLabel: {
     fontSize: 12,
@@ -1066,9 +1053,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#2563EB',
     shadowColor: '#2563EB',
   },
+  // Camera is the main action; Gallery is outlined beside it.
   galleryBtn: {
-    backgroundColor: '#8B5CF6',
-    shadowColor: '#8B5CF6',
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#8B5CF6',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  galleryBtnText: {
+    color: '#7C3AED',
   },
   actionBtnText: {
     color: '#fff',
