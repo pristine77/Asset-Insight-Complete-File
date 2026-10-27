@@ -1290,7 +1290,7 @@ export async function runAssetReportJob({
     );
     console.log("[AssetReportJob] valuationMethods:", valuationMethods);
 
-    if (includeValuationTable && valuationMethods.length > 0) {
+    if (valuationMethods.length > 0 && (includeValuationTable || valuationMethods.some(method => method !== "FML"))) {
       try {
         await withStep(
           "calculate_valuations",

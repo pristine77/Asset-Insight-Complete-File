@@ -363,6 +363,15 @@ describe("AssetForm manual save and submission workflow", () => {
     }
   });
 
+  it("keeps the selected FLV in the durable submission when the optional comparison table is off", async () => {
+    render(<AssetForm continuationDetails={{ selectedValuationMethods: ["FLV"], includeValuationTable: false }} />);
+    await waitForResolvedAssetLocation(); fillRequiredReportFields(); addTestMedia();
+    fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    const request = mocks.enqueue.mock.calls[0][0] as BackgroundUploadRequest;
+    expect(request.details).toMatchObject({ include_valuation_table: false, valuation_methods: ["FLV"] });
+  });
+
   it("closes only after durable handoff and protects the next report from late upload cleanup", async () => {
     const persistence = deferred<string>();
     const upload = deferred<Record<string, unknown>>();

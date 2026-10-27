@@ -39,6 +39,8 @@ import { getPreviewLotPhotoEntries } from "@/lib/previewLotPhotos";
 import {
   buildLotValuationLines,
   formatLotValuationValue,
+  parseLotEstimatedValue,
+  METHOD_NAMES,
   type LotValuationLine,
 } from "@/components/reports/lotValuationMethods";
 import { ReportDraftService } from "@/services/reportDrafts";
@@ -625,6 +627,12 @@ export default function PreviewModal({
       return;
     }
 
+    if (buildLotValuationLines(1, previewData.valuation_methods, previewData.valuation_data?.methods,
+      previewData.include_valuation_table === true).some(line => line.percentage === null || line.percentage < 0)) {
+      toast.error("Enter a percentage for each selected valuation method before saving.");
+      return;
+    }
+
     const mutation = beginMutation("submit");
     if (!mutation) return;
     const mutationContext = previewContextRef.current;
@@ -698,6 +706,27 @@ export default function PreviewModal({
 
   const updateField = (field: string, value: any) => {
     setPreviewData((prev: any) => ({ ...prev, [field]: value }));
+    setHasChanges(true);
+  };
+
+  const updateSelectedValuation = (method: string, selected: boolean, percentage?: string) => {
+    if (isMutationLocked()) return;
+    setPreviewData((previous: any) => {
+      const currentMethods = Array.isArray(previous.valuation_methods) ? previous.valuation_methods : ["FML"];
+      const methods = percentage !== undefined ? currentMethods : selected
+        ? Array.from(new Set([...currentMethods, method])) : currentMethods.filter((value: string) => value !== method);
+      if (!selected && percentage === undefined) return { ...previous, valuation_methods: methods };
+      const existing = previous.valuation_data || {};
+      const baseFMV = parseLotEstimatedValue(existing.baseFMV) ?? (previous.lots || []).reduce(
+        (sum: number, lot: any) => sum + (parseLotEstimatedValue(lot.estimated_value) ?? 0), 0);
+      const records = Array.isArray(existing.methods) ? [...existing.methods] : [];
+      const index = records.findIndex((record: any) => record.method === method);
+      const record = index >= 0 ? { ...records[index] } : { method, fullName: METHOD_NAMES[method], percentage: method === "FML" ? 100 : null };
+      if (percentage !== undefined) record.percentage = percentage.trim() === "" ? null : Number(percentage);
+      record.value = buildLotValuationLines(baseFMV, [method], [record])[0]?.value ?? null;
+      if (index >= 0) records[index] = record; else if (selected) records.push(record);
+      return { ...previous, valuation_methods: methods, valuation_data: { ...existing, baseFMV, methods: records } };
+    });
     setHasChanges(true);
   };
 
@@ -2030,6 +2059,27 @@ export default function PreviewModal({
             />
           )}
 
+          <fieldset className="mt-5 rounded-lg border border-[var(--app-border)] p-3" disabled={workflowLocked || submitting}>
+            <legend className="px-1 text-sm font-semibold">Valuation methods</legend>
+            <p className="mb-3 text-xs text-[var(--app-text-muted)]">Choose the values to show. The comparison table is optional. Confirm a percentage for liquidation or trade values; saved percentages are retained.</p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {Object.entries(METHOD_NAMES).map(([method, name]) => {
+                const selected = Array.isArray(previewData?.valuation_methods) ? previewData.valuation_methods.includes(method) : method === "FML";
+                const detail = buildLotValuationLines(1, [method], previewData?.valuation_data?.methods)[0];
+                return <div key={method} className="min-w-0">
+                  <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={selected}
+                    onChange={event => updateSelectedValuation(method, event.target.checked)} />{name}</label>
+                  {selected && method !== "FML" ? <label className="mt-2 flex items-center gap-2 text-xs">{method} percentage
+                    <input type="number" min="0" step="any" aria-label={`${method} percentage`} value={detail?.percentage ?? ""}
+                      onChange={event => updateSelectedValuation(method, true, event.target.value)}
+                      className="w-20 rounded border border-[var(--app-border)] px-2 py-1" />%
+                  </label> : null}
+                </div>;
+              })}
+            </div>
+            {!previewData?.valuation_methods?.length && !previewData?.include_valuation_table ? <p className="mt-2 text-xs text-[var(--app-text-muted)]">Fair Market Value is used when no method is selected.</p> : null}
+          </fieldset>
+
           {/* Assets/Lots */}
           <div className="mt-6 space-y-4 max-w-none">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -2064,7 +2114,8 @@ export default function PreviewModal({
                           const valuationLines = buildLotValuationLines(
                             lot.estimated_value,
                             previewData?.valuation_methods,
-                            previewData?.valuation_data?.methods
+                            previewData?.valuation_data?.methods,
+                            previewData?.include_valuation_table === true
                           );
                           return (
                           <div
@@ -2302,7 +2353,8 @@ export default function PreviewModal({
                             const valuationLines = buildLotValuationLines(
                               lot.estimated_value,
                               previewData?.valuation_methods,
-                              previewData?.valuation_data?.methods
+                              previewData?.valuation_data?.methods,
+                              previewData?.include_valuation_table === true
                             );
                             const lotUploadKey = getLotUploadKey(lot, idx);
                             const uploadInputId = `asset-preview-upload-${idx}-desktop`;

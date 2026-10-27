@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   publicUrl: vi.fn(),
   pdf: vi.fn(),
   contractLots: vi.fn(),
+  comparison: vi.fn(),
 }));
 
 vi.mock("dotenv", () => ({ config: () => ({ parsed: {} }), default: { config: () => ({ parsed: {} }) } }));
@@ -22,6 +23,7 @@ vi.mock("../src/service/auctioneer2Client.js", async (original) => ({
   getAuctioneer2ConfigStatus: () => ({ baseUrl: "https://auctioneer.example/api/external" }),
 }));
 vi.mock("../src/service/assetOpenAIService.js", () => ({ analyzeAssetImages: mocks.analyze }));
+vi.mock("../src/service/assetValuationService.js", () => ({ generateComparisonTableWithAI: mocks.comparison }));
 vi.mock("../src/service/bundleLotAnalysisPolicy.js", async (original) => ({
   ...await original<typeof import("../src/service/bundleLotAnalysisPolicy.js")>(),
   detectBundleLotNumbersFromPhotos: mocks.detect,
@@ -71,6 +73,8 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.comparison.mockImplementation(async (base: number, methods: string[]) => ({ baseFMV: base,
+    methods: methods.map(method => ({ method, percentage: method === "FML" ? 100 : 52, value: base * (method === "FML" ? 1 : 0.52) })) }));
   mocks.publicUrl.mockImplementation((key: string) => `https://assetinsight.test/${key}`);
   await mongoose.connection.db!.dropDatabase();
   mocks.contractLots.mockResolvedValue([{ lotNumber: "12" }]);
@@ -137,6 +141,27 @@ async function importedInput(sourceNumbers?: string[]) {
 }
 
 describe("Asset Bundle scan orchestration", () => {
+  it.each(["modern", "legacy"])("%s keeps FMV-only table-off processing free of comparison analysis", async (mode) => {
+    const jobInput = input("single_lot");
+    Object.assign(jobInput.details, { include_valuation_table: false, valuation_methods: ["FML"] });
+    await (mode === "modern" ? runAssetPreviewJob : runAssetReportJob)(jobInput);
+    expect(mocks.comparison).not.toHaveBeenCalled();
+    const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
+    expect(report.valuation_methods).toEqual(["FML"]);
+  });
+  it.each(["modern", "legacy"])("%s calculates selected FLV with the comparison table off and keeps its saved percentage", async (mode) => {
+    const jobInput = input("single_lot");
+    Object.assign(jobInput.details, { include_valuation_table: false, valuation_methods: ["FLV"] });
+    const before = structuredClone(jobInput.details);
+    await (mode === "modern" ? runAssetPreviewJob : runAssetReportJob)(jobInput);
+    const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
+    expect(report.valuation_methods).toEqual(["FLV"]);
+    expect(report.include_valuation_table).toBe(false);
+    expect(report.valuation_data.methods).toEqual([{ method: "FLV", percentage: 52, value: 13000 }]);
+    expect(mocks.comparison).toHaveBeenCalledTimes(1);
+    expect(jobInput.details).toEqual(before);
+    if (mode === "modern") expect(report.preview_data.valuation_data).toEqual(report.valuation_data);
+  });
   it.each([
     ["modern", false], ["legacy", false],
     ["modern", true], ["legacy", true],

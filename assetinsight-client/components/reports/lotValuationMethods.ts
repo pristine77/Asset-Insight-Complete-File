@@ -11,7 +11,7 @@ export type LotValuationLine = {
   value: number | null;
 };
 
-const METHOD_NAMES: Record<string, string> = {
+export const METHOD_NAMES: Record<string, string> = {
   FML: "Fair Market Value",
   TKV: "Trade Value",
   OLV: "Orderly Liquidation Value",
@@ -47,7 +47,8 @@ export function parseLotEstimatedValue(value: unknown) {
 export function buildLotValuationLines(
   estimatedValue: unknown,
   selectedMethods: unknown,
-  methodDetails: unknown
+  methodDetails: unknown,
+  includeComparisonTable?: boolean
 ): LotValuationLine[] {
   const details = Array.isArray(methodDetails)
     ? (methodDetails as LotValuationMethodDetail[])
@@ -60,8 +61,8 @@ export function buildLotValuationLines(
   const requestedMethods = Array.isArray(selectedMethods)
     ? selectedMethods.map(normalizedMethod)
     : [];
-  const orderedMethods = requestedMethods.length
-    ? requestedMethods
+  const orderedMethods = Array.isArray(selectedMethods)
+    ? (requestedMethods.length === 0 && includeComparisonTable === false ? ["FML"] : requestedMethods)
     : details.map((detail) => normalizedMethod(detail?.method));
   const baseValue = parseLotEstimatedValue(estimatedValue);
 

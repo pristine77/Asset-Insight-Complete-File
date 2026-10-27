@@ -1774,9 +1774,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       language,
       currency,
       include_valuation_table: includeValuationTable,
-      valuation_methods: includeValuationTable
-        ? selectedValuationMethods
-        : [],
+      valuation_methods: selectedValuationMethods,
       include_damage_analysis: includeDamageAnalysis,
       bank_photos_enabled: bankPhotosEnabled,
       watermark_images: watermarkImages,
@@ -1948,9 +1946,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
         language,
         currency,
         include_valuation_table: includeValuationTable,
-        valuation_methods: includeValuationTable
-          ? selectedValuationMethods
-          : [],
+        valuation_methods: selectedValuationMethods,
         include_damage_analysis: includeDamageAnalysis,
         bank_photos_enabled: bankPhotosEnabled,
         watermark_images: watermarkImages,
@@ -2652,9 +2648,9 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
             <FormSection
               id="asset-comparison"
               sectionNumber={3}
-              title="Quick Comparison Table"
-              description="Optionally add a comparison of supported valuation methods to the report."
-              summary={includeValuationTable ? `${selectedValuationMethods.length} method${selectedValuationMethods.length === 1 ? "" : "s"} selected` : "Not included"}
+              title="Valuation methods"
+              description="Choose the values to show. The comparison table is optional."
+              summary={`${selectedValuationMethods.length} method${selectedValuationMethods.length === 1 ? "" : "s"} selected`}
               errorSummary={errors.valuationMethods}
               status={errors.valuationMethods ? "error" : includeValuationTable ? "complete" : "default"}
               open={openSections.has("comparison")}
@@ -2673,7 +2669,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
                     description="Show selected valuation methods with report-ready explanations."
                   />
                 </div>
-                {includeValuationTable ? (
+                {(
                   <div
                     id="asset-valuationMethods"
                     tabIndex={-1}
@@ -2711,7 +2707,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
                       </p>
                     ) : null}
                   </div>
-                ) : null}
+                )}
               </div>
             </FormSection>
 

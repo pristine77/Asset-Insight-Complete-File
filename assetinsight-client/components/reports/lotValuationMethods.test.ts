@@ -6,6 +6,13 @@ import {
 } from "./lotValuationMethods";
 
 describe("lot valuation method display", () => {
+  it("keeps an explicit empty choice and never restores stale calculated methods", () => {
+    expect(buildLotValuationLines(1200, [], [{ method: "FLV", percentage: 52 }], true)).toEqual([]);
+    expect(buildLotValuationLines(1200, [], [{ method: "FLV", percentage: 52 }], false)).toEqual([
+      { method: "FML", fullName: "Fair Market Value", percentage: 100, value: 1200 },
+    ]);
+    expect(buildLotValuationLines(1200, ["FLV"], [{ method: "FLV", percentage: 0 }], false)[0].value).toBe(0);
+  });
   it("projects every selected method from a lot's base estimate in saved order", () => {
     const lines = buildLotValuationLines(
       "US$42,000",

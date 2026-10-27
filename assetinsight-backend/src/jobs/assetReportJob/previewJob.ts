@@ -1,5 +1,6 @@
 import { resolvePhotoWatermark } from "../../utils/photoWatermarkPolicy.js";
 import { normalizeAssetReportValuationMethods } from "../../utils/assetValuationSelection.js";
+import type { ValuationMethod } from "../../service/assetValuationService.js";
 import AssetReport from "../../models/asset.model.js";
 import { createHash } from "node:crypto";
 import {
@@ -1305,9 +1306,10 @@ export async function runAssetPreviewJob(
     }
 
     let valuationData = null;
+    const selectedValuationMethods = normalizeAssetReportValuationMethods(details) as ValuationMethod[];
     if (
-      details.include_valuation_table &&
-      details.valuation_methods?.length > 0
+      selectedValuationMethods.length > 0 &&
+      (details.include_valuation_table === true || selectedValuationMethods.some(method => method !== "FML"))
     ) {
       const { generateComparisonTableWithAI } = await import(
         "../../service/assetValuationService.js"
@@ -1319,7 +1321,7 @@ export async function runAssetPreviewJob(
       await assertAttemptOwned();
       valuationData = await generateComparisonTableWithAI(
         totalFMV,
-        details.valuation_methods,
+        selectedValuationMethods,
         (lots?.[0]?.title as any) || "Asset",
         (lots?.[0]?.description as any) || "",
         (lots?.[0]?.condition as any) || "Good",

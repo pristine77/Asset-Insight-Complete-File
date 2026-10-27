@@ -141,6 +141,29 @@ const saveChangesButton = () => {
 };
 
 describe("PreviewModal valuation methods", () => {
+  it("recovers an empty 49-lot selection with a confirmed FLV percentage and preserves all lots on Save", async () => {
+    const response: any = makePreviewResponse();
+    Object.assign(response.data.preview_data, { include_valuation_table: false, valuation_methods: [], valuation_data: null,
+      currency: "CAD", lots: Array.from({ length: 49 }, (_, i) => ({ lot_id: `legacy-${i}`, lot_number: String(i + 1),
+        title: `Reviewed asset ${i + 1}`, estimated_value: "CAD 1200", image_urls: [] })) });
+    const original = structuredClone(response.data.preview_data.lots);
+    render(<PreviewModal isOpen reportId="legacy-flv-49" onClose={vi.fn()} loadPreviewDataOverride={vi.fn().mockResolvedValue(response)} />);
+    await screen.findByDisplayValue("Test Client");
+    fireEvent.click(within(screen.getByRole("group", { name: "Valuation methods" })).getByRole("checkbox", { name: "Forced Liquidation Value" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save preview" }));
+    expect(mocks.submitForApproval).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("percentage"));
+    fireEvent.change(screen.getByLabelText("FLV percentage"), { target: { value: "52" } });
+    expect(within(screen.getByLabelText("Valuation method values for lot 1")).getByText("$624")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Selected valuation methods for lot 1")).queryByText("FML")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save preview" }));
+    await waitFor(() => expect(mocks.submitForApproval).toHaveBeenCalledTimes(1));
+    const saved = mocks.submitForApproval.mock.calls[0][1];
+    expect(saved.valuation_methods).toEqual(["FLV"]);
+    expect(saved.include_valuation_table).toBe(false);
+    expect(saved.valuation_data.methods.find((m: any) => m.method === "FLV").percentage).toBe(52);
+    expect(saved.lots).toEqual(original);
+  }, 20000);
 
   it('submits edited, cleared and deleted specs with authoritative overrides and unchanged lot/media identity', async () => {
     const response: any = makePreviewResponse();
