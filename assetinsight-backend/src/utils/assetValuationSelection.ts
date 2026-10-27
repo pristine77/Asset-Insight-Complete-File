@@ -13,6 +13,16 @@ export function valuationRecordCode(record: any): AssetValuationCode | null {
   return resolveAssetValuationCode(record?.method || record?.code || record?.name || record?.fullName);
 }
 
+/** Persist the default independently of the optional comparison table.
+ * Preserve an explicit empty selection when the method picker was available.
+ * Never mutate the immutable submission details or share its methods array.
+ */
+export function normalizeAssetReportValuationMethods(details: any): string[] {
+  const explicit = Array.isArray(details?.valuation_methods);
+  const methods = explicit ? [...details.valuation_methods] : [];
+  return methods.length > 0 || (explicit && details?.include_valuation_table === true) ? methods : ["FML"];
+}
+
 /** Saved selection is authoritative, including an empty selection made with the
  * valuation table on; an empty selection saved with it off means Fair Market Value.
  * Older method records can supply a selection only when the field is absent.

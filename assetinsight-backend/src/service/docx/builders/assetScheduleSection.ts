@@ -17,6 +17,7 @@ import {
 import sharp from "sharp";
 import { buildScheduleRows } from "../../assetSchedulePdfService.js";
 import { resolveAssetValuationCodes } from "../../../utils/assetValuationSelection.js";
+import { assetScheduleAmountWidth } from "../../../utils/assetScheduleAmountWidth.js";
 import { fetchImageBuffer } from "./utils.js";
 
 /**
@@ -218,13 +219,29 @@ export async function buildAssetScheduleSection(
 ): Promise<ScheduleBlock[]> {
   const scheduleRows = buildScheduleRows(reportData);
   const valuationCodes = resolveAssetValuationCodes(reportData);
-  const valuationWidth = Math.round(contentWidthTw * 0.06);
+  const amountTexts = scheduleRows.flatMap((row) => row.valuations.map(({ value }) => value));
+  const measureAmounts = (size: number) => amountTexts.reduce((widest, value) => Math.max(widest, assetScheduleAmountWidth(value, size / 2)), 0) * 20 + 110;
+  // Leave room for titles and pictures even when all four methods are selected.
+  const minimumDescriptionWidth = Math.round(contentWidthTw * 0.12);
+  const minimumPictureWidth = Math.round(contentWidthTw * 0.08);
+  const fixedWidth = Math.round(contentWidthTw * 0.06) + Math.round(contentWidthTw * 0.04)
+    + Math.round(contentWidthTw * 0.055) + Math.round(contentWidthTw * 0.12);
+  const maximumValuationWidth = valuationCodes.length > 0
+    ? Math.floor((contentWidthTw - fixedWidth - minimumDescriptionWidth - minimumPictureWidth) / valuationCodes.length)
+    : contentWidthTw;
+  let valuationFontSize = SCHEDULE_BODY_FONT_SIZE;
+  while (valuationFontSize > 16 && measureAmounts(valuationFontSize) > maximumValuationWidth) valuationFontSize--;
+  const valuationWidth = Math.min(maximumValuationWidth,
+    Math.max(Math.round(contentWidthTw * 0.09), Math.ceil(measureAmounts(valuationFontSize))));
   // Percent-like shares are resolved to DXA once. The picture column absorbs
   // the remainder, guaranteeing the declared column widths equal table width.
   const widths = {
     asset: Math.round(contentWidthTw * 0.06),
     year: Math.round(contentWidthTw * 0.04),
-    description: Math.round(contentWidthTw * 0.465) - valuationCodes.length * valuationWidth,
+    description: Math.max(minimumDescriptionWidth, Math.min(
+      Math.max(Math.round(contentWidthTw * 0.20), Math.round(contentWidthTw * 0.465) - valuationCodes.length * valuationWidth),
+      contentWidthTw - fixedWidth - valuationCodes.length * valuationWidth - minimumPictureWidth,
+    )),
     usage: Math.round(contentWidthTw * 0.055),
     // VINs commonly need a full line at 8 pt; borrow a small amount of width
     // from the picture column rather than splitting the final characters.
@@ -289,7 +306,7 @@ export async function buildAssetScheduleSection(
             size: SCHEDULE_SERIAL_FONT_SIZE,
           })], widths.serial, { strongBottom: true }),
           ...row.valuations.map(({ value }) => makeBodyCell(
-            [bodyText(value, { alignment: AlignmentType.CENTER })], valuationWidth, { strongBottom: true })),
+            [bodyText(value, { alignment: AlignmentType.CENTER, size: valuationFontSize })], valuationWidth, { strongBottom: true })),
           makeBodyCell([pictureGrid], pictureWidth, { strongBottom: true }),
         ],
       })

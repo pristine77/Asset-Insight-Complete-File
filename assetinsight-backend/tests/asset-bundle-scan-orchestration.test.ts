@@ -137,6 +137,18 @@ async function importedInput(sourceNumbers?: string[]) {
 }
 
 describe("Asset Bundle scan orchestration", () => {
+  it.each([
+    ["modern", false], ["legacy", false],
+    ["modern", true], ["legacy", true],
+  ] as const)("FMV update review: %s persists the correct empty-selection default with table=%s", async (mode, table) => {
+    const jobInput = input("single_lot");
+    Object.assign(jobInput.details, { include_valuation_table: table, valuation_methods: [] });
+    await (mode === "modern" ? runAssetPreviewJob : runAssetReportJob)(jobInput);
+    const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
+    expect(report.valuation_methods).toEqual(table ? [] : ["FML"]);
+    if (mode === "modern") expect(report.preview_data.valuation_methods).toEqual(table ? [] : ["FML"]);
+  });
+
   it.each(["modern", "legacy"])("%s ignores malformed reviewed numbers without suppressing sign detection", async (mode) => {
     const jobInput = input("mixed");
     (jobInput.details as any).smart_upload_grouping_method = "lot_number";

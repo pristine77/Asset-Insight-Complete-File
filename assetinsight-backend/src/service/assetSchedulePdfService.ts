@@ -16,6 +16,7 @@ import { toTitleCaseWords } from "./docx/builders/utils.js";
 import { extractHourMeterReading } from "../utils/hourMeterReading.js";
 import { resolveCrLotDescription } from "../utils/crLotDescription.js";
 import { resolveAssetValuationCodes, valuationRecordCode, type AssetValuationCode } from "../utils/assetValuationSelection.js";
+import { assetScheduleAmountWidth } from "../utils/assetScheduleAmountWidth.js";
 import {
   collectEffectiveAuctioneerManualSpecOverrides,
   collectAuctioneerSpecRecord,
@@ -396,11 +397,33 @@ export async function generateAssetSchedulePdfFromReport(reportData: any): Promi
     const currencyCode = String(sanitizedData?.currency || "CAD").toUpperCase();
     const scheduleRows = buildScheduleRows(sanitizedData);
 
+    const valuationCount = resolveAssetValuationCodes(sanitizedData).length;
+    // Letter paper minus the existing 6 mm side margins, in points.
+    const tableWidthPt = 612 - 12 * 72 / 25.4;
+    const amountTexts = scheduleRows.flatMap((row) => row.valuations.map(({ value }) => value));
+    const amountWidth = (size: number) => amountTexts.reduce((widest, value) => Math.max(widest, assetScheduleAmountWidth(value, size)), 0) + 9.5;
+    const maximumValuePercent = valuationCount > 0 ? 68 / valuationCount : 68;
+    let valuationFontSize = 10;
+    while (valuationFontSize > 8 && amountWidth(valuationFontSize) / tableWidthPt * 100 > maximumValuePercent) valuationFontSize -= 0.5;
+    const valuationWidth = Math.min(maximumValuePercent, Math.max(10,
+      Math.ceil(amountWidth(valuationFontSize) / tableWidthPt * 1000) / 10));
+    let serialWidth = 16;
+    let imageWidth = 15;
+    let descriptionWidth = 100 - serialWidth - imageWidth - valuationCount * valuationWidth;
+    if (descriptionWidth < 20) imageWidth = Math.max(8, imageWidth - (20 - descriptionWidth));
+    descriptionWidth = 100 - serialWidth - imageWidth - valuationCount * valuationWidth;
+    if (descriptionWidth < 20) serialWidth = Math.max(12, serialWidth - (20 - descriptionWidth));
+    descriptionWidth = 100 - serialWidth - imageWidth - valuationCount * valuationWidth;
+
     const finalHtml = template({
       logo_url: logoUrl,
       currency_code: currencyCode,
       report_title: "",
-      description_width: 69 - resolveAssetValuationCodes(sanitizedData).length * 8,
+      description_width: descriptionWidth,
+      serial_width: serialWidth,
+      image_width: imageWidth,
+      valuation_width: valuationWidth,
+      valuation_font_size: valuationFontSize,
       schedule_rows: scheduleRows,
     });
 

@@ -1,4 +1,5 @@
 import { resolvePhotoWatermark } from "../../utils/photoWatermarkPolicy.js";
+import { normalizeAssetReportValuationMethods } from "../../utils/assetValuationSelection.js";
 import AssetReport from "../../models/asset.model.js";
 import { createHash } from "node:crypto";
 import {
@@ -315,6 +316,7 @@ async function savePreviewReport(params: {
 }): Promise<any> {
   const { reportId, user, details, uploadedImageUrls, analysis, valuationData } =
     params;
+  const valuationMethods = normalizeAssetReportValuationMethods(details);
   const reportLocation = resolveAuctionLocation(
     details?.location || details?.inspection_location
   );
@@ -385,7 +387,7 @@ async function savePreviewReport(params: {
       currency: details.currency || "CAD",
       language: details.language || "en",
       include_valuation_table: details.include_valuation_table,
-      valuation_methods: details.valuation_methods,
+      valuation_methods: valuationMethods,
       valuation_data: valuationData,
       prepared_for: details.prepared_for,
       factors_age_condition: details.factors_age_condition,
@@ -424,7 +426,7 @@ async function savePreviewReport(params: {
     currency: details.currency || "CAD",
     language: details.language || "en",
     include_valuation_table: details.include_valuation_table,
-    valuation_methods: details.valuation_methods,
+    valuation_methods: valuationMethods,
     valuation_data: valuationData,
     analysis,
   });

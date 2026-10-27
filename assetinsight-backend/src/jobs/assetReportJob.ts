@@ -12,6 +12,7 @@ import {
 import AssetReport from "../models/asset.model.js";
 import PdfReport from "../models/pdfReport.model.js";
 import { analyzeAssetImages } from "../service/assetOpenAIService.js";
+import { normalizeAssetReportValuationMethods } from "../utils/assetValuationSelection.js";
 import {
   registerFocusBoxes,
   clearFocusBoxes,
@@ -1281,9 +1282,7 @@ export async function runAssetReportJob({
     // Process valuation comparison table if requested (multiple methods)
     let valuationData: any = undefined;
     const includeValuationTable = details?.include_valuation_table === true;
-    const valuationMethods = Array.isArray(details?.valuation_methods)
-      ? details.valuation_methods
-      : [];
+    const valuationMethods = normalizeAssetReportValuationMethods(details);
 
     console.log(
       "[AssetReportJob] includeValuationTable:",
@@ -1385,7 +1384,7 @@ export async function runAssetReportJob({
       include_valuation_table: includeValuationTable,
       // The methods choose which values the report prints; the table only adds the
       // comparison. Keep them when the table is off, defaulting to Fair Market Value.
-      valuation_methods: valuationMethods.length > 0 ? valuationMethods : ["FML"],
+      valuation_methods: valuationMethods,
       valuation_data: valuationData,
       prepared_for: details?.prepared_for,
       factors_age_condition: details?.factors_age_condition,

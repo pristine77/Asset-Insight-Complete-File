@@ -103,6 +103,41 @@ afterAll(async () => {
 });
 
 describe.sequential("Asset preview file generation", () => {
+  it("FMV update review: regenerates table-off FMV and honours later explicit choices without changing lots", async () => {
+    const { buildScheduleRows } = await vi.importActual<typeof import("../src/service/assetSchedulePdfService.js")>("../src/service/assetSchedulePdfService.js");
+    const reportLot = { lot_id: "fmv-review-1", lot_number: "1", title: "Reviewed short title",
+      description: "Retained long narrative", estimated_value: "CAD 160", image_urls: [], image_indexes: [], condition_report_specs_reviewed: true };
+    const report = await AssetReport.create({ user: new mongoose.Types.ObjectId(), grouping_mode: "single_lot",
+      lots: [reportLot], imageUrls: [], status: "preview", is_merged_report: true, include_valuation_table: false,
+      valuation_methods: [], valuation_data: { methods: [{ method: "OLV", percentage: 77 }] },
+      preview_data: { lots: [reportLot], valuation_methods: [], include_valuation_table: false } });
+    const sourceBefore: any = await AssetReport.findById(report._id).lean();
+    const rounds = [{ table: false, methods: [], expected: ["FMV"], amount: "$160.00" },
+      { table: true, methods: ["OLV"], expected: ["OLV"], amount: "$123.20" },
+      { table: true, methods: [], expected: [], amount: undefined }];
+    for (const [index, round] of rounds.entries()) {
+      const token = `fmv-review-${index}`;
+      await AssetReport.updateOne({ _id: report._id }, { $set: {
+        "preview_data.valuation_methods": round.methods, "preview_data.include_valuation_table": round.table,
+        files_generating: true, files_regenerating: index > 0, job_id: token, job_status: "queued", generation_target_status: "preview",
+      } });
+      await runPreviewFilesJob(String(report._id), { jobId: token, targetStatus: "preview" });
+      for (const generator of [generationMocks.docx, generationMocks.schedulePdf]) {
+        const data = generator.mock.calls.at(-1)?.[0];
+        const row = buildScheduleRows(data)[0];
+        expect(row.description).toBe(reportLot.title);
+        expect(row.valuations.map((value) => value.code)).toEqual(round.expected);
+        expect(row.valuations[0]?.value).toBe(round.amount);
+      }
+      const stored: any = await AssetReport.findById(report._id).lean();
+      expect(stored.job_status).toBe("done");
+      expect(stored.status).toBe("preview");
+      expect(stored.lots).toEqual(sourceBefore.lots);
+      expect(stored.imageUrls).toEqual(sourceBefore.imageUrls);
+      expect(stored.preview_data.lots).toEqual(sourceBefore.preview_data.lots);
+    }
+  });
+
   it("carries exact Title and selected methods into real Schedule A rows across two generations", async () => {
     const { buildScheduleRows } = await vi.importActual<typeof import("../src/service/assetSchedulePdfService.js")>("../src/service/assetSchedulePdfService.js");
     const reportLot = { lot_id: "stools-1", lot_number: "1", title: "(8) Chrome Bar Stools",

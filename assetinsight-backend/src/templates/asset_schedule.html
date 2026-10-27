@@ -107,7 +107,14 @@
       }
 
       .col-value {
-        width: 8%;
+        width: 10%;
+      }
+
+      .schedule-table tbody td.value-cell {
+        white-space: nowrap;
+        overflow-wrap: normal;
+        word-break: normal;
+        hyphens: none;
       }
 
       .col-image {
@@ -204,15 +211,15 @@
         <table class="schedule-table">
           <thead>
             <tr>
-              <th class="col-serial">SN/VIN</th>
+              <th class="col-serial" style="width: {{../serial_width}}%">SN/VIN</th>
               <th class="col-description" style="width: {{../description_width}}%">Description</th>
               {{#each valuations}}
-              <th class="col-value">
+              <th class="col-value" style="width: {{../../valuation_width}}%">
                 <span class="value-heading">{{code}}</span>
                 <span class="value-currency">({{../../currency_code}})</span>
               </th>
               {{/each}}
-              <th class="col-image">Image</th>
+              <th class="col-image" style="width: {{../image_width}}%">Image</th>
             </tr>
           </thead>
           <tbody>
@@ -220,7 +227,7 @@
               <td class="serial-cell">{{serial_or_vin}}</td>
               <td class="description-cell">{{description}}</td>
               {{#each valuations}}
-              <td class="value-cell">{{value}}</td>
+              <td class="value-cell" style="font-size: {{../../valuation_font_size}}pt">{{value}}</td>
               {{/each}}
               <td>
                 <div class="image-wrap">
