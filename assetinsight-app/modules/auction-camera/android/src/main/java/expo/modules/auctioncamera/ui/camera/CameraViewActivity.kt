@@ -87,6 +87,8 @@ class CameraViewActivity : BaseActivity() {
 
     companion object {
         private const val KEY_BOX_MODE_ACTIVE = "key_box_mode_active"
+        private const val MAX_QUEUED_TAPS = 5
+        private const val BURST_TAP_MIN_GAP_MS = 150L
     }
 
     private var selectedImageFormat = ImageFormatStore.Format.JPEG
@@ -153,6 +155,7 @@ class CameraViewActivity : BaseActivity() {
         shutterDeadline?.let { binding.root.removeCallbacks(it) }
         captureInFlight.set(false)
         clearPreviewFreeze()
+        binding.root.post { drainQueuedTaps() }
     }
     private var pulseAnimator: android.animation.ObjectAnimator? = null
 
@@ -175,6 +178,15 @@ class CameraViewActivity : BaseActivity() {
     private var isDualRecording = false
     private var flashPopup: PopupWindow? = null
     private val captureInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    /**
+     * Taps made while the shutter is busy (2026-10-26). They were silently lost, so a
+     * quick series of taps saved one photo. Each now waits and is taken in order as soon
+     * as the shutter frees, in the lot it was made in; a second touch within
+     * BURST_TAP_MIN_GAP_MS is a bounce or double tap and is not a new shot.
+     */
+    private data class QueuedTap(val mode: CaptureMode, val isExtra: Boolean, val lotNumber: Int)
+    private val queuedTaps = ArrayDeque<QueuedTap>()
+    private var lastUserTapAtMs = 0L
     private var isBoxModeActive = false
     private var selectedWbIndex = 0
     private var previousLotNumber = 1
@@ -502,6 +514,7 @@ class CameraViewActivity : BaseActivity() {
 
     override fun onPause() {
         super.onPause()
+        queuedTaps.clear()
         if (::binding.isInitialized) binding.root.removeCallbacks(recoveryTick)
         stopThumbnailPulse()
         if (::binding.isInitialized) viewModel.persistSessionForBackground()
@@ -861,6 +874,7 @@ class CameraViewActivity : BaseActivity() {
                 if (processingCount == 0) stopThumbnailPulse()
                 if (error != null) toast(error)
                 engine.resumePendingPhotos()
+                binding.root.post { drainQueuedTaps() }
             }
         }
         engine.onQueuedCaptureError = { ticket, message ->
@@ -1763,9 +1777,14 @@ class CameraViewActivity : BaseActivity() {
         }
     }
 
-    private fun onCaptureModeButtonTapped(mode: CaptureMode, btn: View, isExtra: Boolean = false) {
+    private fun onCaptureModeButtonTapped(mode: CaptureMode, btn: View, isExtra: Boolean = false, fromQueue: Boolean = false) {
         binding.cameraHeader.collapseExposure()
-        if (captureInFlight.get()) return
+        if (captureInFlight.get() || PhotoWorkQueue.activeCount() >= 3) {
+            // Only a tap in the mode being shot can wait; changing mode still needs the shutter free.
+            if (!fromQueue && (isExtra || viewModel.captureMode.value == mode)) queueTap(mode, isExtra, btn)
+            return
+        }
+        if (!fromQueue) lastUserTapAtMs = SystemClock.elapsedRealtime()
         if ((processingCount > 0 || (::engine.isInitialized && engine.hasPendingPhotos())) && !isExtra && viewModel.captureMode.value != mode) {
             toast("Finish saving these shots before changing capture mode."); return
         }
@@ -1812,6 +1831,30 @@ class CameraViewActivity : BaseActivity() {
 
         if (!isExtra) viewModel.setCaptureMode(mode)
         fireCapture(mode, isExtra)
+    }
+
+    private fun queueTap(mode: CaptureMode, isExtra: Boolean, btn: View) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastUserTapAtMs < BURST_TAP_MIN_GAP_MS) return
+        if (queuedTaps.size >= MAX_QUEUED_TAPS) { toast("Photos are still being taken. Tap again in a moment."); return }
+        lastUserTapAtMs = now
+        queuedTaps.addLast(QueuedTap(mode, isExtra, viewModel.currentLotNumber.value ?: 1))
+        animateModeButtonTap(btn)
+        HapticCaptureHelper.hapticPulse(this)
+    }
+
+    private fun drainQueuedTaps() {
+        if (!::binding.isInitialized || isFinishing || isDestroyed) return
+        if (captureInFlight.get() || PhotoWorkQueue.activeCount() >= 3) return
+        val next = queuedTaps.removeFirstOrNull() ?: return
+        // Never move a waiting tap into another lot.
+        if (next.lotNumber != (viewModel.currentLotNumber.value ?: 1)) { queuedTaps.clear(); return }
+        val button = if (next.isExtra) binding.textViewBundleExtra ?: binding.textViewBundle else when (next.mode) {
+            CaptureMode.BUNDLE -> binding.textViewBundle
+            CaptureMode.ITEM -> binding.textViewItem
+            CaptureMode.PHOTO -> binding.textViewPhoto
+        }
+        onCaptureModeButtonTapped(next.mode, button, next.isExtra, fromQueue = true)
     }
 
     private fun fireCapture(mode: CaptureMode, isExtra: Boolean = false) {
