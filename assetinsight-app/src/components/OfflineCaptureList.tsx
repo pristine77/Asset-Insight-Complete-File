@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAppTheme } from '../context/ThemeContext';
@@ -10,29 +10,55 @@ import { loadNativeAuctionCamera } from './camera/nativeAuctionCameraModule';
 import LotPhotoCounts from './LotPhotoCounts';
 import { useBackgroundUploads } from './useBackgroundUploads';
 
+type InterruptedMedia = { photos: number; videos: number; pending: number };
+
+/** A stalled native read must not hold the scan, or the next one, forever. */
+const JOURNAL_READ_TIMEOUT_MS = 3000;
+function withinTimeout<T>(promise: Promise<T>): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), JOURNAL_READ_TIMEOUT_MS); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /**
- * Photos held by an interrupted camera session, per draft. If Android closes the
- * app during a phone call, the form is gone when the person returns; the photos
- * wait in the camera journal and are offered only when that exact draft is opened.
- * A count here says which capture to open (2026-10-26).
+ * Media held by an interrupted camera session, per draft. If Android closes the
+ * app during a phone call, the form is gone when the person returns; the media
+ * waits in the camera journal and is offered only when that exact draft is opened.
+ * A count here says which capture to open (2026-10-26). Journals the camera screen
+ * would ignore (another owner or draft, no revision) are ignored here too.
  */
-async function interruptedCameraPhotos(ownerId: string, ids: string[]): Promise<Record<string, number>> {
+async function interruptedCameraMedia(ownerId: string, ids: string[]): Promise<Record<string, InterruptedMedia>> {
   if (Platform.OS !== 'android' || !ids.length) return {};
-  const native = await loadNativeAuctionCamera().catch(() => undefined);
+  const native = await withinTimeout(loadNativeAuctionCamera()).catch(() => undefined);
   if (!native?.getPendingCapture) return {};
-  const counts: Record<string, number> = {};
+  const found: Record<string, InterruptedMedia> = {};
   for (const id of ids) {
     try {
-      const raw = await native.getPendingCapture(ownerId, id);
+      const raw = await withinTimeout(native.getPendingCapture(ownerId, id));
       if (!raw) continue;
       const journal = JSON.parse(raw);
-      const photos = (Array.isArray(journal.lots) ? journal.lots : []).reduce((sum: number, lot: any) =>
-        sum + (Array.isArray(lot?.files) ? lot.files.length : 0) + (Array.isArray(lot?.extraFiles) ? lot.extraFiles.length : 0), 0)
-        + (Number.isInteger(journal.pendingPhotoCount) ? journal.pendingPhotoCount : 0);
-      if (photos > 0) counts[id] = photos;
+      if (journal.ownerId !== ownerId || journal.draftId !== id || !Number.isInteger(journal.revision)) continue;
+      const lots: any[] = Array.isArray(journal.lots) ? journal.lots : [];
+      const media = {
+        photos: lots.reduce((sum, lot) => sum + (Array.isArray(lot?.files) ? lot.files.length : 0) + (Array.isArray(lot?.extraFiles) ? lot.extraFiles.length : 0), 0),
+        videos: lots.filter((lot) => lot?.videoFile != null).length,
+        pending: Number.isInteger(journal.pendingPhotoCount) && journal.pendingPhotoCount > 0 ? journal.pendingPhotoCount : 0,
+      };
+      if (media.photos || media.videos || media.pending) found[id] = media;
     } catch { /* An unreadable journal stays on the device for support recovery. */ }
   }
-  return counts;
+  return found;
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/** Name the step the camera screen offers: unfinished photos have no Recover button yet. */
+function interruptedCameraHint(media: InterruptedMedia): string {
+  if (media.pending) {
+    return `An interrupted camera session has ${plural(media.pending, 'photo')} still processing for this capture. Tap Open and submit, then open the camera to finish saving ${media.pending === 1 ? 'it' : 'them'}.`;
+  }
+  const saved = [media.photos ? plural(media.photos, 'photo') : '', media.videos ? plural(media.videos, 'video') : ''].filter(Boolean).join(' and ');
+  return `An interrupted camera session saved ${saved} for this capture. Tap Open and submit, then ${media.videos ? 'Recover media' : 'Recover photos'}.`;
 }
 
 export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, type: 'asset' | 'lotListing') => void }) {
@@ -44,7 +70,8 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
   const [page, setPage] = useState(0);
   const [legacyLimit, setLegacyLimit] = useState(20);
   const [expanded, setExpanded] = useState<string>();
-  const [cameraWaiting, setCameraWaiting] = useState<Record<string, number>>({});
+  const [cameraWaiting, setCameraWaiting] = useState<Record<string, InterruptedMedia>>({});
+  const scanning = useRef(false);
   // Re-renders with every background upload change; statusFor() reads it.
   useBackgroundUploads();
   const refresh = useCallback(async () => {
@@ -53,11 +80,16 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
       const [summaries, old, jobs] = await Promise.all([OfflineCaptureStore.listSummaries(), OfflineCaptureStore.listLegacyDrafts(), OfflineCaptureStore.listLegacyJobs()]);
       if (owner !== OfflineCaptureStore.getOwnerId()) return;
       const captures = summaries.filter((item) => item.captureMode === 'offline' || item.manualSubmissionRequired);
-      const waiting = owner ? await interruptedCameraPhotos(owner, captures.map((item) => item.id)) : {};
-      if (owner !== OfflineCaptureStore.getOwnerId()) return;
       setItems(captures); setPage((current) => Math.min(current, Math.max(0, Math.ceil(captures.length / 20) - 1)));
-      setCameraWaiting(waiting);
       setLegacy(old); setLegacyJobs(jobs); setError('');
+      // The journal scan only adds a hint. It runs after the list is shown, one at
+      // a time, so a stalled native read can never hide Open and submit (2026-10-26).
+      if (!owner) { setCameraWaiting({}); return; }
+      if (scanning.current) return;
+      scanning.current = true;
+      void interruptedCameraMedia(owner, captures.map((item) => item.id))
+        .then((waiting) => { if (owner === OfflineCaptureStore.getOwnerId()) setCameraWaiting(waiting); })
+        .finally(() => { scanning.current = false; });
     } catch { setError('Could not read saved captures. Your local files have not been deleted.'); }
   }, []);
   useEffect(() => {
@@ -110,7 +142,7 @@ export default function OfflineCaptureList({ onOpen }: { onOpen: (id: string, ty
       </View>
       {background ? <Text accessibilityLiveRegion="polite" style={[styles.small, { color: background.status === 'attention' ? colors.warning : colors.info }]}>Background upload: {describeBackgroundUpload(background)}</Text>
         : needsExplicitUploadResume(item.submissionState) ? <Text style={[styles.small, { color: colors.warning }]}>Report submission needs your confirmation — open the draft, then tap Resume upload. Cloud backup does not submit it.</Text> : null}
-      {cameraWaiting[item.id] ? <Text style={[styles.small, { color: colors.warning }]}>An interrupted camera session saved {cameraWaiting[item.id]} photo{cameraWaiting[item.id] === 1 ? '' : 's'} for this capture. Tap Open and submit, then Recover photos.</Text> : null}
+      {cameraWaiting[item.id] ? <Text style={[styles.small, { color: colors.warning }]}>{interruptedCameraHint(cameraWaiting[item.id])}</Text> : null}
       {item.inventoryError ? <Text accessibilityRole="alert" style={[styles.small, { color: colors.warning }]}>{item.inventoryError}</Text> : null}
       <View style={styles.buttonRow}>
         <TouchableOpacity accessibilityRole="button" accessibilityHint="Review saved data first. The report is submitted only after you tap Submit; cloud backup is separate." onPress={() => onOpen(item.id, item.type)} style={[styles.button, styles.primary, { backgroundColor: colors.accent }]}><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.buttonText, { color: colors.accentText }]}>Open and submit</Text></TouchableOpacity>

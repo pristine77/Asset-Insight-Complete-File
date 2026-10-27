@@ -61,15 +61,66 @@ describe('camera photos left by an interrupted session', () => {
       updatedAt: '2026-10-26T09:00:00.000Z', counts: { lots: 0, images: 0, extraImages: 0, missingImages: 0, perLot: [] },
     })) as any);
     const getPendingCapture = jest.fn(async (_owner: string, draftId: string) => draftId === 'draft-b' ? JSON.stringify({
-      ownerId: 'owner', draftId, sessionId: draftId, revision: 40, pendingPhotoCount: 1,
+      ownerId: 'owner', draftId, sessionId: draftId, revision: 40, pendingPhotoCount: 0,
       lots: [{ id: 'lot-1', files: [{ uri: 'file:///1.jpg' }, { uri: 'file:///2.jpg' }], extraFiles: [{ uri: 'file:///3.jpg' }] }, { id: 'lot-2', files: [{ uri: 'file:///4.jpg' }] }],
     }) : null);
     jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera: jest.fn(), getPendingCapture });
     await render(<OfflineCaptureList onOpen={jest.fn()} />);
-    await waitFor(() => expect(screen.getByText('An interrupted camera session saved 5 photos for this capture. Tap Open and submit, then Recover photos.')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('An interrupted camera session saved 4 photos for this capture. Tap Open and submit, then Recover photos.')).toBeTruthy());
     expect(screen.getAllByText(/interrupted camera session/)).toHaveLength(1);
     expect(getPendingCapture).toHaveBeenCalledWith('owner', 'draft-a');
     expect(getPendingCapture).toHaveBeenCalledWith('owner', 'draft-b');
+  });
+
+  const oneCapture = () => jest.mocked(OfflineCaptureStore.listSummaries).mockResolvedValue([{
+    id: 'draft-a', type: 'lotListing', captureMode: 'offline', submissionState: 'local',
+    updatedAt: '2026-10-26T09:00:00.000Z', counts: { lots: 1, images: 3, extraImages: 0, missingImages: 0, perLot: [] },
+  }] as any);
+  const journal = (extra: Record<string, unknown>) => JSON.stringify({ ownerId: 'owner', draftId: 'draft-a', sessionId: 's1', revision: 3, ...extra });
+
+  it('shows the saved captures while a stalled journal scan never finishes', async () => {
+    oneCapture();
+    const getPendingCapture = jest.fn(() => new Promise<string | null>(() => undefined));
+    jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera: jest.fn(), getPendingCapture });
+    await render(<OfflineCaptureList onOpen={jest.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open and submit' })).toBeTruthy());
+    expect(getPendingCapture).toHaveBeenCalledWith('owner', 'draft-a');
+    expect(screen.queryByText(/interrupted camera session/)).toBeNull();
+  });
+
+  it('sends unfinished photos back to the camera, which is the only place they can finish', async () => {
+    oneCapture();
+    const getPendingCapture = jest.fn(async () => journal({ pendingPhotoCount: 2, lots: [{ id: 'lot-1', files: [{ uri: 'file:///1.jpg' }] }] }));
+    jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera: jest.fn(), getPendingCapture });
+    await render(<OfflineCaptureList onOpen={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('An interrupted camera session has 2 photos still processing for this capture. Tap Open and submit, then open the camera to finish saving them.')).toBeTruthy());
+    expect(screen.queryByText(/Recover photos/)).toBeNull();
+  });
+
+  it('uses the singular for one unfinished photo', async () => {
+    oneCapture();
+    const getPendingCapture = jest.fn(async () => journal({ pendingPhotoCount: 1, lots: [{ id: 'lot-1', files: [] }] }));
+    jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera: jest.fn(), getPendingCapture });
+    await render(<OfflineCaptureList onOpen={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('An interrupted camera session has 1 photo still processing for this capture. Tap Open and submit, then open the camera to finish saving it.')).toBeTruthy());
+  });
+
+  it('names Recover media when the session also holds a video', async () => {
+    oneCapture();
+    const getPendingCapture = jest.fn(async () => journal({ lots: [{ id: 'lot-1', files: [{ uri: 'file:///1.jpg' }, { uri: 'file:///2.jpg' }], videoFile: { uri: 'file:///walk.mp4' } }] }));
+    jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera: jest.fn(), getPendingCapture });
+    await render(<OfflineCaptureList onOpen={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('An interrupted camera session saved 2 photos and 1 video for this capture. Tap Open and submit, then Recover media.')).toBeTruthy());
+  });
+
+  it('ignores a journal the camera screen would not offer', async () => {
+    oneCapture();
+    const getPendingCapture = jest.fn(async () => journal({ draftId: 'draft-other', lots: [{ id: 'lot-1', files: [{ uri: 'file:///1.jpg' }] }] }));
+    jest.mocked(loadNativeAuctionCamera).mockResolvedValue({ openAuctionCamera: jest.fn(), getPendingCapture });
+    await render(<OfflineCaptureList onOpen={jest.fn()} />);
+    await waitFor(() => expect(getPendingCapture).toHaveBeenCalled());
+    await act(async () => undefined);
+    expect(screen.queryByText(/interrupted camera session/)).toBeNull();
   });
 
   it('still lists captures on a build without journal access', async () => {
