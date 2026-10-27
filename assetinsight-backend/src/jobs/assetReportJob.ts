@@ -1383,7 +1383,9 @@ export async function runAssetReportJob({
       language: selectedLanguage,
       currency: selectedCurrency,
       include_valuation_table: includeValuationTable,
-      valuation_methods: includeValuationTable ? valuationMethods : [],
+      // The methods choose which values the report prints; the table only adds the
+      // comparison. Keep them when the table is off, defaulting to Fair Market Value.
+      valuation_methods: valuationMethods.length > 0 ? valuationMethods : ["FML"],
       valuation_data: valuationData,
       prepared_for: details?.prepared_for,
       factors_age_condition: details?.factors_age_condition,

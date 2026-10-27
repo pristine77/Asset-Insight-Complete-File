@@ -42,13 +42,25 @@ describe("Asset Schedule A saved output authority", () => {
     [["TKV"], ["TKV"]], [["TKV", "FML", "OLV", "FLV"], ["TKV", "FMV", "OLV", "FLV"]],
     [[], []], [["bad-method"], []],
   ])("renders only selected columns %j, even with stale method data", async (selected, expected) => {
-    const report = { lots: [lot], valuation_methods: selected, valuation_data: { methods: [
+    // Chosen with the valuation table on, where the picker is visible.
+    const report = { lots: [lot], include_valuation_table: true, valuation_methods: selected, valuation_data: { methods: [
       { method: "FML", percentage: 100 }, { method: "OLV", percentage: 77 },
       { method: "FLV", percentage: 52 }, { method: "TKV", percentage: 70 },
     ] } };
     expect(headers(await xmlFor(report))).toEqual([
       "Schedule A", "Asset #", "Year", "Description", "Usage", "Serial Number", ...expected, "Pictures",
     ]);
+  });
+
+  // Contract 94770 (2026-10-27): the app and website hide the method picker unless the
+  // valuation table is on, and the report was saved with no methods, so its Appraisal
+  // report printed no dollar values. That empty list means Fair Market Value.
+  it("shows Fair Market Value for methods saved empty with the valuation table off", async () => {
+    const report = { lots: [lot], include_valuation_table: false, valuation_methods: [] };
+    expect(resolveAssetValuationCodes(report)).toEqual(["FMV"]);
+    expect(resolveAssetValuationCodes({ ...report, include_valuation_table: undefined })).toEqual(["FMV"]);
+    expect(headers(await xmlFor(report))).toEqual(["Schedule A", "Asset #", "Year", "Description", "Usage", "Serial Number", "FMV", "Pictures"]);
+    expect(buildScheduleRows(report)[0].valuations.map((v) => v.value)).toEqual(["$160.00"]);
   });
 
   it("uses each child's own Title and retains untitled legacy descriptions", () => {
@@ -104,7 +116,7 @@ describe("Asset Schedule A saved output authority", () => {
   it("does not restore stale methods in the certificate, and keeps legacy selection compatibility", () => {
     const valuation_data = { methods: [{ method: "FLV", value: 80 }, { method: "OLV", value: 120 }] };
     expect(resolveSelectedAssetValuationMethods({ valuation_methods: [" fml ", "FMV", "bad"], valuation_data }).map((m) => m.code)).toEqual(["FMV"]);
-    expect(resolveSelectedAssetValuationMethods({ valuation_methods: [], valuation_data })).toEqual([]);
+    expect(resolveSelectedAssetValuationMethods({ valuation_methods: [], include_valuation_table: true, valuation_data })).toEqual([]);
     expect(resolveAssetValuationCodes({ valuation_data })).toEqual(["FLV", "OLV"]);
     expect(resolveAssetValuationCodes({})).toEqual([]);
     expect(resolveSelectedAssetValuationMethods({}).map((m) => m.code)).toEqual(["FLV", "OLV"]);

@@ -44,12 +44,12 @@ describe("Asset selected methods in appraisal sections", () => {
 
   it("does not generate comparison content for an explicit empty selection", async () => {
     ai.create.mockClear();
-    expect(await buildValuationTable({ valuation_methods: [], valuation_data: { baseFMV: 160, methods } })).toEqual([]);
+    expect(await buildValuationTable({ include_valuation_table: true, valuation_methods: [], valuation_data: { baseFMV: 160, methods } })).toEqual([]);
     expect(ai.create).not.toHaveBeenCalled();
   });
 
   it("renders an honest empty selection instead of default liquidation claims", async () => {
-    const report = { client_name: "Fixture Client", valuation_methods: [], include_valuation_summary_in_transmittal: true,
+    const report = { client_name: "Fixture Client", include_valuation_table: true, valuation_methods: [], include_valuation_summary_in_transmittal: true,
       valuation_data: { baseFMV: 160, methods } };
     const xml = await textOf([
       ...buildTransmittalLetter(report, "October 17, 2026"),
@@ -65,6 +65,7 @@ describe("Asset selected methods in appraisal sections", () => {
   it("keeps the certificate clean when the user selected no valuation methods", async () => {
     const xml = await textOf(await buildCertificateOfAppraisal({
       client_name: "Fixture Client",
+      include_valuation_table: true,
       valuation_methods: [],
       valuation_data: { baseFMV: 160, methods },
     }, 9360, "October 17, 2026"));
@@ -74,5 +75,18 @@ describe("Asset selected methods in appraisal sections", () => {
     expect(xml).not.toContain("Fair Market Value");
     expect(xml).not.toContain("Forced Liquidation Value");
     expect(xml).not.toContain("Orderly Liquidation Value");
+  });
+  // Contract 94770 (2026-10-27): saved with the valuation table off, so with no methods;
+  // its Appraisal report printed no dollar values for the client.
+  it("prints Fair Market Value when the methods were saved empty with the table off", async () => {
+    const report = { client_name: "Fixture Client", include_valuation_table: false, valuation_methods: [], currency: "CAD",
+      lots: [{ estimated_value: "CA$18,000" }, { estimated_value: "CA$15,000" }], total_appraised_value: 33000 };
+    const xml = await textOf([
+      ...buildTransmittalLetter(report, "October 27, 2026"),
+      ...await buildCertificateOfAppraisal(report, 9360, "October 27, 2026"),
+    ]);
+    expect(xml).toContain("premise of Fair Market Value");
+    expect(xml).toContain("Total Fair Market Value: $33,000.00");
+    expect(xml).not.toContain("No valuation methods");
   });
 });
