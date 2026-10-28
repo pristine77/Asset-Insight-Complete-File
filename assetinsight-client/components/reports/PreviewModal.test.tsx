@@ -140,6 +140,34 @@ const saveChangesButton = () => {
   return button;
 };
 
+/*
+ * The bulk-selection and pager tests render 100–205 lots. On a Windows laptop
+ * they took 21–27 s each, before and after the valuation-method change of
+ * 2026-10-27 alike (measured 2026-10-28), so 20 s failed them on machine speed.
+ */
+const HEAVY_LOT_TEST_MS = 60_000;
+
+/*
+ * A label query over the whole modal is as costly as a role query: right after a
+ * re-render, one getByLabelText over 49 lots took about 63 s on 2026-10-28. The
+ * valuation-method controls and each lot's value list are found in their own box.
+ */
+const valuationMethods = () => {
+  const fieldset = screen.getByText("Valuation methods", { selector: "legend" }).closest("fieldset");
+  if (!fieldset) throw new Error('"Valuation methods" is not inside a fieldset');
+  return within(fieldset as HTMLElement);
+};
+const lotValuationValues = (lot: number) => {
+  const list = document.querySelector(`[aria-label="Valuation method values for lot ${lot}"]`);
+  if (!list) throw new Error(`No valuation values for lot ${lot}`);
+  return within(list as HTMLElement);
+};
+const lotSelectedMethods = (lot: number) => {
+  const list = document.querySelector(`[aria-label="Selected valuation methods for lot ${lot}"]`);
+  if (!list) throw new Error(`No selected methods for lot ${lot}`);
+  return within(list as HTMLElement);
+};
+
 describe("PreviewModal valuation methods", () => {
   it("recovers an empty 49-lot selection with a confirmed FLV percentage and preserves all lots on Save", async () => {
     const response: any = makePreviewResponse();
@@ -149,21 +177,21 @@ describe("PreviewModal valuation methods", () => {
     const original = structuredClone(response.data.preview_data.lots);
     render(<PreviewModal isOpen reportId="legacy-flv-49" onClose={vi.fn()} loadPreviewDataOverride={vi.fn().mockResolvedValue(response)} />);
     await screen.findByDisplayValue("Test Client");
-    fireEvent.click(within(screen.getByRole("group", { name: "Valuation methods" })).getByRole("checkbox", { name: "Forced Liquidation Value" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save preview" }));
+    fireEvent.click(valuationMethods().getByRole("checkbox", { name: "Forced Liquidation Value" }));
+    fireEvent.click(saveChangesButton());
     expect(mocks.submitForApproval).not.toHaveBeenCalled();
     expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("percentage"));
-    fireEvent.change(screen.getByLabelText("FLV percentage"), { target: { value: "52" } });
-    expect(within(screen.getByLabelText("Valuation method values for lot 1")).getByText("$624")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Selected valuation methods for lot 1")).queryByText("FML")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save preview" }));
+    fireEvent.change(valuationMethods().getByLabelText("FLV percentage"), { target: { value: "52" } });
+    expect(lotValuationValues(1).getByText("$624")).toBeInTheDocument();
+    expect(lotSelectedMethods(1).queryByText("FML")).not.toBeInTheDocument();
+    fireEvent.click(saveChangesButton());
     await waitFor(() => expect(mocks.submitForApproval).toHaveBeenCalledTimes(1));
     const saved = mocks.submitForApproval.mock.calls[0][1];
     expect(saved.valuation_methods).toEqual(["FLV"]);
     expect(saved.include_valuation_table).toBe(false);
     expect(saved.valuation_data.methods.find((m: any) => m.method === "FLV").percentage).toBe(52);
     expect(saved.lots).toEqual(original);
-  }, 20000);
+  }, HEAVY_LOT_TEST_MS);
 
   it('submits edited, cleared and deleted specs with authoritative overrides and unchanged lot/media identity', async () => {
     const response: any = makePreviewResponse();
@@ -463,7 +491,7 @@ describe("PreviewModal valuation methods", () => {
     expect(lotRow(9).getByRole("combobox", { name: "Completeness for lot 9, row 9" })).toHaveValue("Missing Parts");
     expect(lotRow(8).getByRole("combobox", { name: "Legal for lot 8, row 8" })).toHaveValue("No Title");
     expect(screen.getByRole("checkbox", { name: "Select lot 8, row 8" })).not.toBeChecked();
-  }, 20_000);
+  }, HEAVY_LOT_TEST_MS);
 
   it("pages large reports, preserves focus, and selects every off-page lot", async () => {
     const response = makePreviewResponse();
@@ -543,7 +571,7 @@ describe("PreviewModal valuation methods", () => {
     expect(await screen.findByDisplayValue("Asset 21")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Focused asset")).toBeNull();
     // The same budget as the other heavy bulk-selection tests: 205 lots.
-  }, 20_000);
+  }, HEAVY_LOT_TEST_MS);
 
   it.each(["desktop", "mobile"])("navigates the bottom pager and saves all 142 lots and 1824 photo references on %s", async (layout) => {
     if (layout === "mobile") {
@@ -604,7 +632,7 @@ describe("PreviewModal valuation methods", () => {
     expect(saved.lots.flatMap((lot: any) => lot.image_urls)).toEqual(photos);
     expect(saved.lots.flatMap((lot: any) => lot.image_indices)).toEqual(Array.from({ length: 1824 }, (_, i) => i));
     expect(mocks.submitForApproval).not.toHaveBeenCalled();
-  }, 20_000);
+  }, HEAVY_LOT_TEST_MS);
 
   it("preserves selected lots across pages, applies page/all groups, and clears without changing values", async () => {
     const response = makePreviewResponse();
@@ -638,7 +666,7 @@ describe("PreviewModal valuation methods", () => {
       expect(lot.condition_report_selections.condition || "").toBe(index === 3 || (index >= 20 && index < 40) ? "Unverified Running Condition" : "");
       expect(lot.condition_report_selections.legal).toBeUndefined();
     });
-  }, 20_000);
+  }, HEAVY_LOT_TEST_MS);
 
   it.each([0, 1])("handles %i lots without bulk controls and keeps single-lot overrides available", async (count) => {
     const response = makePreviewResponse();
@@ -663,15 +691,15 @@ describe("PreviewModal valuation methods", () => {
     await screen.findByRole("heading", { name: "Assets / Lots" });
     fireEvent.click(screen.getByRole("checkbox", { name: "Select lot 2, row 2" }));
     fireEvent.click(screen.getByRole("button", { name: "Add Lot" }));
-    expect(screen.getByRole("button", { name: "Clear selection" })).toBeDisabled();
+    expect(lotSelection().getByRole("button", { name: "Clear selection" })).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select lot 2, row 2" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete lot 1" }));
-    expect(screen.getByRole("button", { name: "Clear selection" })).toBeDisabled();
+    expect(lotSelection().getByRole("button", { name: "Clear selection" })).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select lot 2, row 1" }));
     view.rerender(<PreviewModal isOpen={false} reportId="structure-selection" onClose={vi.fn()} loadPreviewDataOverride={load} />);
     view.rerender(<PreviewModal isOpen reportId="structure-selection" onClose={vi.fn()} loadPreviewDataOverride={load} />);
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Clear selection" })).toBeDisabled());
+    await waitFor(() => expect(lotSelection().getByRole("button", { name: "Clear selection" })).toBeDisabled());
   });
 
   it("saves the selected appraiser cover images in the chosen order", async () => {

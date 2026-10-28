@@ -34,6 +34,10 @@ export default defineConfig({
     // jsdom's isolated localStorage/sessionStorage authoritative in tests.
     pool: "vmThreads",
     setupFiles: ["./tests/setup.ts"],
+    // Rendering whole screens in jsdom while ~125 files run in parallel took
+    // Salvage, Preview and Proposal Valuation tests past 5 s, then 15 s, on a
+    // Windows laptop; each passed well inside that run alone (2026-10-28).
+    testTimeout: 30_000,
     restoreMocks: true,
     css: false,
     exclude: [
