@@ -207,7 +207,9 @@ describe("ProposalValuationDialog", () => {
     const mobileTotals = screen.getByRole("region", { name: "All-lot valuation totals" });
     expect(within(mobileTotals).getByRole("heading", { name: "Totals · All 26 lots" })).toBeInTheDocument();
     expect(within(mobileTotals).getByText("US$9,500.00")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Proposal valuation lots table" })).toHaveAttribute("tabindex", "0");
+    // The sheet is one tab stop: only its selected cell is in the tab order.
+    const sheetCells = within(screen.getByRole("grid", { name: "Proposal valuation lots" })).getAllByRole("gridcell");
+    expect(sheetCells.filter((cell) => cell.getAttribute("tabindex") === "0")).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Next assets page" }));
     expect(screen.getByText("26–26 of 26")).toBeInTheDocument();
@@ -240,7 +242,7 @@ describe("ProposalValuationDialog", () => {
     mocks.get.mockResolvedValue(payload);
     render(<ProposalValuationDialog open pageMode reportId="report-1" />);
     const footer = await screen.findByRole("rowgroup", { name: "All-lot valuation totals" });
-    const table = within(screen.getByRole("region", { name: "Proposal valuation lots table" })).getByRole("table");
+    const table = within(screen.getByRole("region", { name: "Proposal valuation lots table" })).getByRole("grid");
     const row = table.querySelector("tbody tr")!;
     for (const [label, text] of Object.entries({ "Buyer Premium ($)": "US$638", "Total Expected Gross ($)": "US$4,888", "Allocated Value ($)": "US$4,888" })) {
       const header = within(table).getByRole("columnheader", { name: label });
@@ -488,7 +490,7 @@ describe("ProposalValuationDialog", () => {
       ["evaluator-1", "evaluator-2", "evaluator-3", "evaluator-4"],
       { baseRevision: 7, clientMutationId: "mutation-1" }));
     expect(screen.getByRole("columnheader", { name: "Report Creator" })).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Report Creator valuation for 13")[0]).toHaveValue(39000);
+    expect(screen.getAllByLabelText("Report Creator valuation for 13")[0]).toHaveValue("US$39,000");
   });
 
   it("removes only an additional evaluator and never sends the intrinsic owner as an assignment", async () => {

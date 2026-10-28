@@ -41,12 +41,13 @@ import {
   proposalValuationColumnTotals,
   proposalValuationTotals,
   recalculateProposalValuationSheet,
-  rowValuationAmounts,
 } from "./proposal-valuation/calculations";
 import EvaluatorPicker from "./proposal-valuation/EvaluatorPicker";
 import FormulaDetailsDialog from "./proposal-valuation/FormulaDetailsDialog";
 import ProposalValuationExcelButton from "./proposal-valuation/ProposalValuationExcelButton";
-import { ColumnTotalsFooter, MobileColumnTotals } from "./proposal-valuation/ColumnTotals";
+import { MobileColumnTotals } from "./proposal-valuation/ColumnTotals";
+import { assetLabel, pictureCount, rowDisplayValues, validPictureUrls } from "./proposal-valuation/rowDisplay";
+import ValuationGrid, { type ValuationGridStatus } from "./proposal-valuation/ValuationGrid";
 import type {
   ProposalValuationCalculation,
   ProposalValuationCandidate,
@@ -145,40 +146,6 @@ function applyDraftChanges(
 const textControlClass =
   "w-full rounded border border-[var(--app-control-border)] bg-[var(--app-input)] px-2 py-1 text-xs text-[var(--app-text)] outline-none focus:border-[var(--app-accent)] focus:ring-2 focus:ring-[var(--app-accent-ring)]";
 const numericControlClass = `${textControlClass} text-right font-semibold tabular-nums`;
-
-function assetLabel(row: ProposalValuationRow) {
-  return row.asset_id || row.lot_id || "asset";
-}
-
-function validPictureUrls(row: ProposalValuationRow) {
-  return (row.picture_urls || [])
-    .map((url) => String(url || "").trim())
-    .filter(Boolean);
-}
-
-function pictureCount(row: ProposalValuationRow, urls = validPictureUrls(row)) {
-  return urls.length || Math.max(0, Math.trunc(Number(row.pictures) || 0));
-}
-
-function rowDisplayValues(
-  row: ProposalValuationRow,
-  evaluators: ProposalValuationEvaluator[]
-) {
-  const { average, low, high, premium, gross } = rowValuationAmounts(row, evaluators);
-
-  return {
-    average: average ?? 0,
-    low,
-    high,
-    buyerPremiumPercent: row.buyer_premium_percent || 15,
-    buyerPremiumAmount: premium,
-    totalExpectedGross: gross,
-    allocatedValue: gross,
-    cleaning: high === null ? null : high * 0.01,
-    lottingFee: high === null ? null : high * 0.01,
-    advertising: high === null ? null : high * 0.01,
-  };
-}
 
 function ScheduleTextField({
   value,
@@ -330,94 +297,6 @@ function PictureSummary({
     </button>
   );
 }
-
-const ValuationRow = memo(function ValuationRow({
-  row,
-  evaluators,
-  currency,
-  canEditAll,
-  editableEvaluatorId,
-  onChange,
-  onEvaluatorChange,
-  onOpenGallery,
-}: {
-  row: ProposalValuationRow;
-  evaluators: ProposalValuationEvaluator[];
-  currency: string;
-  canEditAll: boolean;
-  editableEvaluatorId: string | null;
-  onChange: RowChange;
-  onEvaluatorChange: EvaluatorChange;
-  onOpenGallery: OpenPictureGallery;
-}) {
-  const display = rowDisplayValues(row, evaluators);
-  const label = assetLabel(row);
-
-  return (
-    <tr
-      className="border-b border-[var(--app-border)] align-top last:border-0"
-      style={{ contentVisibility: "auto", containIntrinsicSize: "72px" }}
-    >
-      <td className="sticky left-0 z-[2] min-w-[92px] bg-[var(--app-panel)] px-1.5 py-2 text-xs font-bold text-[var(--app-text-strong)]">
-        {label}
-      </td>
-      <td className="min-w-[184px] px-2 py-3">
-        <ScheduleTextField value={row.asset_category} onChange={(value) => onChange(row.lot_id, "asset_category", value)} ariaLabel={`Asset category for ${label}`} disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[104px] px-2 py-3">
-        <ScheduleTextField value={row.year} onChange={(value) => onChange(row.lot_id, "year", value)} ariaLabel={`Year for ${label}`} disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[136px] px-2 py-3">
-        <ScheduleTextField value={row.make} onChange={(value) => onChange(row.lot_id, "make", value)} ariaLabel={`Make for ${label}`} disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[152px] px-2 py-3">
-        <ScheduleTextField value={row.model} onChange={(value) => onChange(row.lot_id, "model", value)} ariaLabel={`Model for ${label}`} disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[184px] px-2 py-3">
-        <ScheduleTextField value={row.serial_number} onChange={(value) => onChange(row.lot_id, "serial_number", value)} ariaLabel={`Serial number for ${label}`} disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[280px] px-2 py-3">
-        <ScheduleTextField value={row.cr_details} onChange={(value) => onChange(row.lot_id, "cr_details", value)} ariaLabel={`CR details for ${label}`} multiline disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[144px] px-2 py-3">
-        <ScheduleTextField value={row.condition_score} onChange={(value) => onChange(row.lot_id, "condition_score", value)} ariaLabel={`Condition for ${label}`} placeholder="1-5" disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[220px] px-2 py-3">
-        <ScheduleTextField value={row.location} onChange={(value) => onChange(row.lot_id, "location", value)} ariaLabel={`Location for ${label}`} placeholder="City, State/Prov" disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[120px] px-2 py-3">
-        <PictureSummary row={row} onOpen={onOpenGallery} />
-      </td>
-      <td className="min-w-[176px] px-2 py-3">
-        <ReadOnlyScheduleValue value={row.asset_insight || "-"} accent align="left" />
-      </td>
-      {evaluators.map((column) => (
-        <td key={column.id} className="min-w-[152px] px-2 py-3">
-          <ScheduleNumberField value={row.evaluator_values?.[column.id] ?? null} onChange={(value) => onEvaluatorChange(row.lot_id, column.id, value)} ariaLabel={`${column.name} valuation for ${label}`} disabled={!canEditAll && editableEvaluatorId !== column.id} />
-        </td>
-      ))}
-      <td className="min-w-[144px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.average, currency)} /></td>
-      <td className="min-w-[160px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.low, currency)} /></td>
-      <td className="min-w-[160px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.high, currency)} /></td>
-      <td className="min-w-[128px] px-2 py-3"><ReadOnlyScheduleValue value={`${display.buyerPremiumPercent}%`} /></td>
-      <td className="min-w-[152px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.buyerPremiumAmount, currency)} /></td>
-      <td className="min-w-[176px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.totalExpectedGross, currency)} /></td>
-      <td className="min-w-[152px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.allocatedValue, currency)} /></td>
-      <td className="min-w-[220px] px-2 py-3">
-        <ScheduleTextField value={row.notes} onChange={(value) => onChange(row.lot_id, "notes", value)} ariaLabel={`Notes for ${label}`} placeholder="Notes" multiline disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[120px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.cleaning, currency)} /></td>
-      <td className="min-w-[136px] px-2 py-3">
-        <ScheduleNumberField value={row.lien_search} onChange={(value) => onChange(row.lot_id, "lien_search", value)} ariaLabel={`Lien search cost for ${label}`} disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[136px] px-2 py-3">
-        <ScheduleNumberField value={row.video_cost} onChange={(value) => onChange(row.lot_id, "video_cost", value)} ariaLabel={`Video cost for ${label}`} disabled={!canEditAll} />
-      </td>
-      <td className="min-w-[132px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.lottingFee, currency)} /></td>
-      <td className="min-w-[132px] px-2 py-3"><ReadOnlyScheduleValue value={formatMoney(display.advertising, currency)} /></td>
-    </tr>
-  );
-});
 
 function MobileSection({
   title,
@@ -651,6 +530,7 @@ export default function ProposalValuationDialog({
   const [liveStatus, setLiveStatus] = useState<"connecting" | "live" | "offline">("connecting");
   const [formulaDetails, setFormulaDetails] = useState<ProposalValuationCalculation | null>(null);
   const [pictureGallery, setPictureGallery] = useState<PictureGalleryState | null>(null);
+  const [gridStatus, setGridStatus] = useState<ValuationGridStatus>({ selection: "", lots: "" });
   const galleryPanelRef = useRef<HTMLElement | null>(null);
   const galleryOpenerRef = useRef<HTMLButtonElement | null>(null);
   const restoreGalleryFocusRef = useRef(false);
@@ -1710,36 +1590,6 @@ export default function ProposalValuationDialog({
                   </div>
                 ))}
               </div>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="inline-flex rounded-md border border-[var(--app-border)] bg-[var(--app-panel-alt)] p-0.5">
-                  <button type="button" onClick={() => setTab("lots")} className={`h-8 rounded px-3 text-xs font-bold ${tab === "lots" ? "bg-[var(--app-panel)] text-[var(--app-accent)] shadow-sm" : "text-[var(--app-text-muted)]"}`}>Lots</button>
-                  <button type="button" onClick={() => setTab("summary")} className={`h-8 rounded px-3 text-xs font-bold ${tab === "summary" ? "bg-[var(--app-panel)] text-[var(--app-accent)] shadow-sm" : "text-[var(--app-text-muted)]"}`}>File summary</button>
-                </div>
-                {terminalMessage ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--app-danger)]">
-                    <AlertCircle className="size-3.5" /> Access ended · draft retained
-                  </span>
-                ) : saveBlocked ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--app-danger)]">
-                    <AlertCircle className="size-3.5" /> Draft merge paused
-                    <button
-                      type="button"
-                      onClick={retryBlockedSave}
-                      className="rounded border border-[var(--app-danger-border)] px-2 py-1 font-bold hover:bg-[var(--app-danger-soft)]"
-                    >
-                      Retry save
-                    </button>
-                  </span>
-                ) : dirty || syncing ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--app-warning)]">
-                    <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Saving draft" : "Draft queued"}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--app-success)]">
-                    <CheckCircle2 className="size-3.5" /> Saved · revision {payload?.revision ?? revisionRef.current}
-                  </span>
-                )}
-              </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-hidden">
@@ -1772,51 +1622,21 @@ export default function ProposalValuationDialog({
                     </label>
                   </div>
 
-                  <div tabIndex={0} role="region" aria-label="Proposal valuation lots table" className="hidden min-h-0 flex-1 overflow-auto rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] overscroll-contain focus-visible:outline-2 focus-visible:outline-[var(--app-accent)] focus-visible:outline-offset-2 md:block">
-                    <table className="w-max min-w-full border-separate border-spacing-0">
-                      <thead className="bg-[var(--app-panel-alt)] text-left text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--app-text-muted)]">
-                        <tr>
-                          <th colSpan={2} className="sticky top-0 z-[6] h-8 border-b border-r border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2 text-center">Identity</th>
-                          <th colSpan={9} className="sticky top-0 z-[6] h-8 border-b border-r border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2 text-center">Asset details</th>
-                          <th colSpan={sheet.evaluator_columns.length + 1} className="sticky top-0 z-[6] h-8 border-b border-r border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2 text-center">Evaluator values</th>
-                          <th colSpan={2} className="sticky top-0 z-[6] h-8 border-b border-r border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2 text-center">Estimated sale values</th>
-                          <th colSpan={2} className="sticky top-0 z-[6] h-8 border-b border-r border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2 text-center">Buyer premium</th>
-                          <th colSpan={2} className="sticky top-0 z-[6] h-8 border-b border-r border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2 text-center">Totals</th>
-                          <th colSpan={6} className="sticky top-0 z-[6] h-8 border-b border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2 text-center">Costs &amp; notes</th>
-                        </tr>
-                        <tr className="[&>th]:sticky [&>th]:top-8 [&>th]:z-[7] [&>th]:h-10 [&>th]:border-b [&>th]:border-[var(--app-border)] [&>th]:bg-[var(--app-panel-alt)] [&>th]:px-2 [&>th]:py-1.5">
-                          <th className="left-0 !z-[9] min-w-[92px]">Asset ID</th>
-                          <th className="min-w-[184px] px-2 py-2.5">Asset Category</th>
-                          <th className="min-w-[104px] px-2 py-2.5">Year</th>
-                          <th className="min-w-[136px] px-2 py-2.5">Make</th>
-                          <th className="min-w-[152px] px-2 py-2.5">Model</th>
-                          <th className="min-w-[184px] px-2 py-2.5">Serial Number</th>
-                          <th className="min-w-[280px] px-2 py-2.5">CR Details</th>
-                          <th className="min-w-[144px] px-2 py-2.5">Condition (1-5)</th>
-                          <th className="min-w-[220px] px-2 py-2.5">Location (City, State/Prov)</th>
-                          <th className="min-w-[120px] px-2 py-2.5">Pictures</th>
-                          <th className="min-w-[176px] px-2 py-2.5">Asset Insight</th>
-                          {sheet.evaluator_columns.map((column) => <th key={column.id} className="min-w-[152px] px-2 py-2.5 text-right">{column.name}</th>)}
-                          <th className="min-w-[144px] px-2 py-2.5 text-right">Average</th>
-                          <th className="min-w-[160px] px-2 py-2.5 text-right">Low Est. Sale Value ($)</th>
-                          <th className="min-w-[160px] px-2 py-2.5 text-right">High Est. Sale Value ($)</th>
-                          <th className="min-w-[128px] px-2 py-2.5 text-right">Buyer Premium %</th>
-                          <th className="min-w-[152px] px-2 py-2.5 text-right">Buyer Premium ($)</th>
-                          <th className="min-w-[176px] px-2 py-2.5 text-right">Total Expected Gross ($)</th>
-                          <th className="min-w-[152px] px-2 py-2.5 text-right">Allocated Value ($)</th>
-                          <th className="min-w-[220px] px-2 py-2.5">Notes</th>
-                          <th className="min-w-[120px] px-2 py-2.5 text-right">Cleaning</th>
-                          <th className="min-w-[136px] px-2 py-2.5 text-right">Lien Search</th>
-                          <th className="min-w-[136px] px-2 py-2.5 text-right">Video Cost</th>
-                          <th className="min-w-[132px] px-2 py-2.5 text-right">Lotting Fee</th>
-                          <th className="min-w-[132px] px-2 py-2.5 text-right">Advertising</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pagedRows.map((row) => <ValuationRow key={row.lot_id} row={row} evaluators={sheet.evaluator_columns} currency={currency} canEditAll={workspaceCanEditAll} editableEvaluatorId={workspaceEvaluatorColumnId} onChange={updateRow} onEvaluatorChange={updateEvaluatorValue} onOpenGallery={openPictureGallery} />)}
-                      </tbody>
-                      {columnTotals ? <ColumnTotalsFooter totals={columnTotals} currency={currency} /> : null}
-                    </table>
+                  <div className="hidden min-h-0 flex-1 flex-col md:flex">
+                    <ValuationGrid
+                      key={reportId}
+                      rows={filteredRows}
+                      allRows={sheet.rows}
+                      evaluators={sheet.evaluator_columns}
+                      currency={currency}
+                      canEditAll={workspaceCanEditAll}
+                      editableEvaluatorId={workspaceEvaluatorColumnId}
+                      totals={columnTotals}
+                      onRowChange={updateRow}
+                      onEvaluatorChange={updateEvaluatorValue}
+                      onOpenGallery={openPictureGallery}
+                      onStatusChange={setGridStatus}
+                    />
                   </div>
 
                   <div className="min-h-0 flex-1 overflow-y-auto md:hidden">
@@ -1827,7 +1647,7 @@ export default function ProposalValuationDialog({
                   </div>
                   {!filteredRows.length ? <div className="rounded-lg border border-dashed border-[var(--app-border)] p-10 text-center text-sm text-[var(--app-text-muted)]">No assets match this search.</div> : null}
                   {filteredRows.length ? (
-                    <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--app-border)] bg-[var(--app-panel)] px-2 py-1.5 text-xs">
+                    <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--app-border)] bg-[var(--app-panel)] px-2 py-1.5 text-xs md:hidden">
                       <span className="text-[var(--app-text-muted)]">
                         {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredRows.length)} of {filteredRows.length}
                       </span>
@@ -1855,6 +1675,58 @@ export default function ProposalValuationDialog({
                 </div>
               )}
             </div>
+            {/* Sheet tabs and status, as along the bottom of an Excel window. */}
+            <footer className="flex h-9 shrink-0 items-stretch gap-3 border-t border-[var(--app-border)] bg-[var(--app-panel-alt)] pr-3 text-xs">
+              <div className="flex shrink-0 items-stretch" aria-label="Sheets">
+                {([["lots", "Lots"], ["summary", "File summary"]] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setTab(value)}
+                    aria-pressed={tab === value}
+                    className={`border-r border-[var(--app-border)] px-4 font-bold ${
+                      tab === value
+                        ? "border-b-2 border-b-[var(--app-success)] bg-[var(--app-panel)] text-[var(--app-text-strong)]"
+                        : "text-[var(--app-text-muted)] hover:bg-[var(--app-panel)]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex min-w-0 items-center">
+                {terminalMessage ? (
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--app-danger)]">
+                    <AlertCircle className="size-3.5" /> Access ended · draft retained
+                  </span>
+                ) : saveBlocked ? (
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--app-danger)]">
+                    <AlertCircle className="size-3.5" /> Draft merge paused
+                    <button
+                      type="button"
+                      onClick={retryBlockedSave}
+                      className="rounded border border-[var(--app-danger-border)] px-2 py-0.5 font-bold hover:bg-[var(--app-danger-soft)]"
+                    >
+                      Retry save
+                    </button>
+                  </span>
+                ) : dirty || syncing ? (
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--app-warning)]">
+                    <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Saving draft" : "Draft queued"}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--app-success)]">
+                    <CheckCircle2 className="size-3.5" /> Saved · revision {payload?.revision ?? revisionRef.current}
+                  </span>
+                )}
+              </div>
+              {tab === "lots" ? (
+                <div className="ml-auto hidden min-w-0 items-center gap-4 whitespace-pre tabular-nums text-[var(--app-text-muted)] md:flex">
+                  {gridStatus.selection ? <span className="truncate font-semibold text-[var(--app-text)]">{gridStatus.selection}</span> : null}
+                  <span>{gridStatus.lots}</span>
+                </div>
+              ) : null}
+            </footer>
           </>
         ) : null}
       </section>
