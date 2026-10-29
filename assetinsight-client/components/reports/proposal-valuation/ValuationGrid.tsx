@@ -38,6 +38,8 @@ type EvaluatorValueChange = (lotId: string, evaluatorId: string, value: number |
 export type ValuationGridStatus = { selection: string; lots: string };
 
 type Props = {
+  /** Hidden mobile grids retain editing state without mounting desktop rows. */
+  visible?: boolean;
   /** Lots after the search box, in sheet order. */
   rows: ProposalValuationRow[];
   /** Every lot in sheet order; its position gives the exported workbook's row number. */
@@ -362,6 +364,7 @@ function HeaderMenu({
 }
 
 export default function ValuationGrid({
+  visible = true,
   rows,
   allRows,
   evaluators,
@@ -976,11 +979,11 @@ export default function ValuationGrid({
     return () => observer.disconnect();
   }, []);
 
-  // Draw only the rows in view once the sheet has a measured height; an unmeasured
-  // sheet (first paint, tests) draws every row.
+  // Draw no desktop rows on mobile; a CSS-hidden scroller has no measured height
+  // and must not fall back to rendering the entire report.
   const windowed = viewport.height > 0;
-  const firstRow = windowed ? Math.max(0, Math.floor(viewport.top / ROW_HEIGHT) - OVERSCAN) : 0;
-  const lastRow = windowed
+  const firstRow = visible && windowed ? Math.max(0, Math.floor(viewport.top / ROW_HEIGHT) - OVERSCAN) : 0;
+  const lastRow = !visible ? 0 : windowed
     ? Math.min(rowCount, Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + OVERSCAN)
     : rowCount;
 
@@ -1124,6 +1127,7 @@ export default function ValuationGrid({
               if (commit()) select(Math.min(rowCount - 1, active.row + 1), active.col);
             } else if (event.key === "Escape") {
               event.preventDefault();
+              event.stopPropagation();
               cancelEdit();
             }
           }}

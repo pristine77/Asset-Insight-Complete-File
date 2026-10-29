@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ProposalValuationAccessLost,
   ProposalValuationRevisionConflict,
@@ -150,6 +150,7 @@ function makeOwnerPayload(additionalCount = 3): ProposalValuationPayload {
 }
 
 describe("ProposalValuationDialog", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     const payload = makePayload();
     mocks.get.mockReset();
@@ -177,6 +178,115 @@ describe("ProposalValuationDialog", () => {
           signal.addEventListener("abort", () => resolve(), { once: true });
         })
     );
+  });
+
+  function largePayload() {
+    const payload = makePayload();
+    payload.assetScheduleSheet.rows = Array.from({ length: 225 }, (_, i) => ({
+      ...structuredClone(payload.assetScheduleSheet.rows[0]),
+      lot_id: `lot-${i + 1}`, asset_id: String(i + 1),
+    }));
+    return payload;
+  }
+
+  async function pasteLargeBlock() {
+    const grid = await screen.findByRole("grid", { name: "Proposal valuation lots" });
+    const cell = within(grid).getByLabelText("Year for 1").closest("td")!;
+    fireEvent.mouseDown(cell, { button: 0 });
+    fireEvent.paste(cell, { clipboardData: {
+      getData: () => Array.from({ length: 225 }, () => "2024\tNew Make\tNew Model").join("\n"),
+    } });
+    return grid;
+  }
+
+  it.each(["none", "first", "second"] as const)("saves a 675-cell paste in bounded revisioned batches with %s response lost", async (lostResponse) => {
+    // jsdom has no layout. Give the real grid a measured viewport, as browsers
+    // do, rather than rendering 225 rows on every autosave response.
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("aria-label") === "Proposal valuation lots table" ? 480 : 0;
+    });
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      disconnect() {}
+    });
+    const persisted = largePayload();
+    mocks.get.mockResolvedValue(structuredClone(persisted));
+    const receipts = new Map<string, ProposalValuationPayload>();
+    let lost = false;
+    mocks.patchChanges.mockImplementation(async (_report, changes, request) => {
+      if (changes.length > 500) throw new Error("A save can contain at most 500 changes");
+      const receipt = receipts.get(request.clientMutationId);
+      if (receipt) return structuredClone(receipt);
+      expect(request.baseRevision).toBe(persisted.revision);
+      for (const change of changes) {
+        const row = persisted.assetScheduleSheet.rows.find(row => row.lot_id === change.lotId)!;
+        (row as unknown as Record<string, unknown>)[change.field] = change.value;
+      }
+      persisted.revision! += 1;
+      receipts.set(request.clientMutationId, structuredClone(persisted));
+      if (!lost && ((lostResponse === "first" && persisted.revision === 8) || (lostResponse === "second" && persisted.revision === 9))) {
+        lost = true;
+        throw new Error("Connection lost after committing this batch");
+      }
+      return structuredClone(persisted);
+    });
+    render(<ProposalValuationDialog open pageMode reportId="report-1" />);
+    const grid = await pasteLargeBlock();
+    if (lostResponse === "first") {
+      await waitFor(() => expect(mocks.patchChanges).toHaveBeenCalledTimes(1));
+      // A newer edit must survive the old batch's idempotent response.
+      const year = within(grid).getByLabelText("Year for 1");
+      fireEvent.doubleClick(year.closest("td")!);
+      fireEvent.change(year, { target: { value: "2025" } });
+      fireEvent.keyDown(year, { key: "Enter" });
+    }
+    await screen.findByText(/Saved.*revision 9/, {}, { timeout: 8_000 });
+    const calls = mocks.patchChanges.mock.calls;
+    expect(calls.map(call => call[1].length)).toEqual(lostResponse === "none" ? [500, 175] : lostResponse === "first" ? [500, 500, 176] : [500, 175, 175]);
+    expect(calls.map(call => call[2].baseRevision)).toEqual(lostResponse === "none" ? [7, 8] : lostResponse === "first" ? [7, 7, 8] : [7, 8, 8]);
+    expect(new Set(calls.map(call => call[2].clientMutationId)).size).toBe(2);
+    if (lostResponse === "first") expect(calls[1]).toEqual(calls[0]);
+    if (lostResponse === "second") expect(calls[2]).toEqual(calls[1]);
+    expect(persisted.assetScheduleSheet.rows.every((row, i) => row.year === (lostResponse === "first" && i === 0 ? "2025" : "2024") && row.make === "New Make" && row.model === "New Model")).toBe(true);
+  });
+
+  it("cancels the formula bar edit without closing its valuation dialog", async () => {
+    const onClose = vi.fn();
+    render(<ProposalValuationDialog open reportId="report-1" onClose={onClose} />);
+    const grid = await screen.findByRole("grid", { name: "Proposal valuation lots" });
+    fireEvent.mouseDown(within(grid).getByLabelText("Year for 13").closest("td")!, { button: 0 });
+    const bar = screen.getByRole("textbox", { name: "Formula bar" });
+    fireEvent.focus(bar);
+    fireEvent.change(bar, { target: { value: "999" } });
+    fireEvent.keyDown(bar, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(bar).toHaveValue("2023");
+    expect(mocks.patchChanges).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("does not render hidden desktop rows on mobile and keeps editing state across breakpoint changes", async () => {
+    let desktop = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", () => ({
+      get matches() { return desktop; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    mocks.get.mockResolvedValue(largePayload());
+    render(<ProposalValuationDialog open pageMode reportId="report-1" />);
+    const grid = await screen.findByRole("grid", { name: "Proposal valuation lots" });
+    expect(grid.querySelectorAll("tbody td[data-row]")).toHaveLength(0);
+    expect(screen.getAllByLabelText("Year for 1")).toHaveLength(1);
+    act(() => { desktop = true; listeners.forEach(listener => listener()); });
+    const year = within(grid).getByLabelText("Year for 1");
+    fireEvent.doubleClick(year.closest("td")!);
+    fireEvent.change(year, { target: { value: "2025" } });
+    act(() => { desktop = false; listeners.forEach(listener => listener()); });
+    expect(grid.querySelectorAll("tbody td[data-row]")).toHaveLength(0);
+    act(() => { desktop = true; listeners.forEach(listener => listener()); });
+    expect(within(grid).getByLabelText("Year for 1")).toHaveValue("2025");
   });
 
   it("keeps all-lot column totals through pagination/search and recalculates edits including zero and blanks", async () => {

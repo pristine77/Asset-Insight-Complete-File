@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   AlertCircle,
@@ -103,6 +104,26 @@ type DraftMutationEnvelope = {
     clientMutationId: string;
   };
 };
+
+// Match Tailwind's md breakpoint without rendering every desktop row on phones.
+// Keep the grid mounted so rotation retains its selection, undo and active edit.
+const DESKTOP_GRID_QUERY = "(min-width: 768px)";
+const MAX_DRAFT_CHANGES_PER_SAVE = 500; // Existing Proposal Valuation API limit.
+function subscribeDesktopGrid(onChange: () => void) {
+  if (typeof window.matchMedia !== "function") {
+    window.addEventListener("resize", onChange);
+    return () => window.removeEventListener("resize", onChange);
+  }
+  const query = window.matchMedia(DESKTOP_GRID_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+function desktopGridSnapshot() {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia(DESKTOP_GRID_QUERY).matches
+    : window.innerWidth >= 768;
+}
+function serverDesktopGridSnapshot() { return false; }
 
 type OpenPictureGallery = (
   label: string,
@@ -512,6 +533,7 @@ export default function ProposalValuationDialog({
   onSaved,
   pageMode = false,
 }: Props) {
+  const desktopGridVisible = useSyncExternalStore(subscribeDesktopGrid, desktopGridSnapshot, serverDesktopGridSnapshot);
   const [payload, setPayload] = useState<ProposalValuationPayload | null>(null);
   const [sheet, setSheet] = useState<ProposalValuationSheet | null>(null);
   const [loading, setLoading] = useState(true);
@@ -677,13 +699,17 @@ export default function ProposalValuationDialog({
     syncingRef.current = true;
     setSyncing(true);
     const envelope = retryEnvelopeRef.current ?? {
-      changes: [...pendingChangesRef.current.values()],
+      changes: [...pendingChangesRef.current.values()].slice(0, MAX_DRAFT_CHANGES_PER_SAVE),
       request: {
         baseRevision: revisionRef.current,
         clientMutationId: ProposalValuationService.newMutationId("pv-draft"),
       },
     };
-    if (!retryEnvelopeRef.current) pendingChangesRef.current.clear();
+    if (!retryEnvelopeRef.current) {
+      // Leave the remainder queued, including newer edits made during a request.
+      // Retries must reuse this exact batch and mutation identity until resolved.
+      for (const change of envelope.changes) pendingChangesRef.current.delete(draftChangeKey(change));
+    }
     retryEnvelopeRef.current = envelope;
     const { changes: batch, request } = envelope;
     let retryDelay = 3000;
@@ -1625,6 +1651,7 @@ export default function ProposalValuationDialog({
                   <div className="hidden min-h-0 flex-1 flex-col md:flex">
                     <ValuationGrid
                       key={reportId}
+                      visible={desktopGridVisible}
                       rows={filteredRows}
                       allRows={sheet.rows}
                       evaluators={sheet.evaluator_columns}
