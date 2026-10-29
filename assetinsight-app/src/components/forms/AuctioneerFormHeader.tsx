@@ -14,7 +14,7 @@ export default function AuctioneerFormHeader({ setup, disabled, closeDisabled, s
 }) {
   const { colors } = useAppTheme();
   return <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-    <Text style={[styles.title, { color: colors.text }]}>Contract {setup.contract.contractNo}{setup.kind === 'scheduleA' ? ' · Schedule A lots are locked' : ''}</Text>
+    <Text style={[styles.title, { color: colors.text }]}>Contract {setup.contract.contractNo}{setup.kind === 'scheduleA' ? ' · Schedule A lots are locked' : setup.proposalList ? ' · Proposal list' : ''}</Text>
     <View testID="auctioneer-create-actions" style={styles.actions}>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Create Lot & Continue"
         accessibilityHint="Submit this report and open a new form for the same contract."

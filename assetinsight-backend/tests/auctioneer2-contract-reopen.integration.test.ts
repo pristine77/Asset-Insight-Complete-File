@@ -11,7 +11,7 @@ vi.mock("../src/utils/openaiClient.js", () => ({ default: {} }));
 const upstream = vi.hoisted(() => ({
   getContractCapturePermission: vi.fn(), reopenContractForUser: vi.fn(),
   listIncomingContracts: vi.fn(), listIncomingTasks: vi.fn(), getContractLots: vi.fn(),
-  closeContractPartForUser: vi.fn(), getLot: vi.fn(),
+  closeContractPartForUser: vi.fn(), getLot: vi.fn(), getContractScheduleAItems: vi.fn(),
   submitLot: vi.fn(), patchLot: vi.fn(), uploadLotPhotos: vi.fn(), setLotVideo: vi.fn(),
   completeConditionReport: vi.fn(), markArrived: vi.fn(), pushToAssetInsight: vi.fn(), completeContractTask: vi.fn(),
 }));
@@ -104,6 +104,10 @@ beforeEach(async () => {
   // A reopening must never import the old contract lots returned by this feed.
   upstream.getContractLots.mockResolvedValue([{ id: "old-upstream-lot", contractId, eventId: "event-regina-1", description: "Old lot" }]);
   upstream.getLot.mockResolvedValue({ id: "old-upstream-lot", contractId, eventId: "event-regina-1" });
+  upstream.getContractScheduleAItems.mockResolvedValue({ contractId, hasScheduleA: true, items: [
+    { lineId: "line-original", title: "Original report", severalLots: true, parentLotId: "old-upstream-lot", lotCount: 1, sortOrder: 1 },
+    { lineId: "line-unticked", title: "Single item", severalLots: false, parentLotId: "single-lot", lotCount: 1, sortOrder: 2 },
+  ] });
   upstream.getContractCapturePermission.mockResolvedValue({ reopen: { allowed: true, reason: null, reopenUntil: "2026-10-27T15:00:00.000Z" } });
   upstream.reopenContractForUser.mockImplementation(async (id: string) => ({ contractId: id, reopened: true, alreadyOpen: false, accessRevision: 42 }));
   upstream.closeContractPartForUser.mockImplementation(async (id: string, body: { completedByUserId: string }) => ({
@@ -146,6 +150,19 @@ describe.sequential("Auctioneer per-user contract Re-Open", () => {
     expect(upstream.getContractLots).not.toHaveBeenCalled();
     expect(await Work.findById(old._id).lean()).toEqual(oldBefore);
     expect(await Asset.findById(report._id).lean()).toEqual(reportBefore);
+  });
+
+  it("keeps a Schedule A contract's Several lots items on the Re-Open capture", async () => {
+    // Owner 2026-10-28: lots captured after Re-Open must name a Schedule A item.
+    const owner = await user("schedule-a-items"); await closed(owner._id);
+    expect((await post(owner._id)).status).toBe(200);
+    const fresh = (await integration.listAuctioneerIncoming(true, String(owner._id))).find(row => row.contractId === contractId && row.status === "available");
+    const claim = await integration.claimAuctioneerIncoming(fresh!.cycleKey, String(owner._id), "asset");
+    const original = { lineId: "line-original", title: "Original report", parentLotId: "old-upstream-lot" };
+    expect((await Work.findById(claim.workItemId).lean())?.scheduleAChoices).toEqual([original]);
+    expect(upstream.getContractScheduleAItems).toHaveBeenCalledWith(contractId);
+    const setup = await integration.getAuctioneerWorkItemSetup(claim.workItemId, String(owner._id));
+    expect(setup).toMatchObject({ kind: "unknown", requiresScheduleAItem: true, scheduleAChoices: [original] });
   });
 
   it("uses only the authenticated user and refuses body or query actor overrides", async () => {
@@ -393,8 +410,11 @@ describe.sequential("Auctioneer per-user contract Re-Open", () => {
     const fresh = (await integration.listAuctioneerIncoming(true, String(owner._id))).find(row => row.status === "available");
     const claim = await integration.claimAuctioneerIncoming(fresh!.cycleKey, String(owner._id), "asset");
     const report = await readyReport(owner._id);
+    // The listing has a Schedule A, so the Re-Open lot names its item (owner 2026-10-28).
     await Asset.updateOne({ _id: report._id }, { $set: { "lots.0.auctioneer_source_key": "fresh-close-source",
-      "preview_data.lots.0.auctioneer_source_key": "fresh-close-source" } });
+      "preview_data.lots.0.auctioneer_source_key": "fresh-close-source",
+      "lots.0.schedule_a_parent_lot_id": "old-upstream-lot",
+      "preview_data.lots.0.schedule_a_parent_lot_id": "old-upstream-lot" } });
     await Work.updateOne({ _id: claim.workItemId }, { $set: { status: "report_created", linkedReportId: report._id,
       linkedReportModel: "AssetReport", "delivery.status": "ready" } });
     await integration.queueAuctioneerDelivery(claim.workItemId, String(owner._id), { destination: "LottingBoard", completeContract: true });

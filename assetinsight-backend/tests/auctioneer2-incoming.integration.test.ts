@@ -22,6 +22,7 @@ const upstream = vi.hoisted(() => ({
   listIncomingTasks: vi.fn(),
   getContractLots: vi.fn(),
   getLot: vi.fn(),
+  getContractScheduleAItems: vi.fn(),
 }));
 
 vi.mock("../src/service/auctioneer2Client.js", async (importOriginal) => {
@@ -34,6 +35,7 @@ vi.mock("../src/service/auctioneer2Client.js", async (importOriginal) => {
     listIncomingTasks: upstream.listIncomingTasks,
     getContractLots: upstream.getContractLots,
     getLot: upstream.getLot,
+    getContractScheduleAItems: upstream.getContractScheduleAItems,
   };
 });
 
@@ -331,6 +333,14 @@ beforeEach(async () => {
   await AuctioneerWorkItem.createIndexes();
   vi.clearAllMocks();
   integration.clearAuctioneer2IncomingCacheForTests();
+  // No Proposal lists here (owner 2026-10-28; those are covered in
+  // auctioneer2-proposal-list.integration.test.ts): every Proposal keeps the
+  // older single-user flow these cases describe.
+  upstream.getContractScheduleAItems.mockImplementation(async (contractId: string) => ({
+    contractId,
+    hasScheduleA: false,
+    items: [],
+  }));
   upstream.listContracts.mockResolvedValue([
     {
       id: "contract-1",

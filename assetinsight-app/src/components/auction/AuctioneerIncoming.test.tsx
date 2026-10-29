@@ -516,3 +516,17 @@ it('does not turn a stale outcome-check action into a new Re-Open intent', async
   expect(await screen.findByText(/Refresh Incoming to check its status/)).toBeTruthy();
   expect(auctioneerService.reopenContract).not.toHaveBeenCalled();
 });
+
+// owner 2026-10-28: a Proposal worked from its list shows how many listed items
+// this user still has to capture; any other lots-free row reads as before.
+it('labels a Proposal list row with its listed items to capture', async () => {
+  jest.mocked(auctioneerService.getIncoming).mockResolvedValue([
+    { ...available, kind: 'unknown', lotCount: 3, proposalList: true },
+    { ...available, cycleKey: 'cycle-2', contractNo: '93531', kind: 'unknown', lotCount: 1, proposalList: true },
+    { ...available, cycleKey: 'cycle-3', contractNo: '93532', kind: 'unknown', lotCount: 0 },
+  ]);
+  await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
+  expect(await screen.findByText('Proposal list · 3 listed items to capture')).toBeTruthy();
+  expect(screen.getByText('Proposal list · 1 listed item to capture')).toBeTruthy();
+  expect(screen.getByText('New lot capture')).toBeTruthy();
+});

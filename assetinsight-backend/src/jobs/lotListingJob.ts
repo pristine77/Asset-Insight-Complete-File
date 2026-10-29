@@ -1549,6 +1549,11 @@ type NormalizedLotListingGroup = {
   sourceKey?: string;
   /** Set when this lot was split out of a Schedule A line — see delivery. */
   sourceParentKey?: string;
+  /**
+   * The Auctioneer lot of the Schedule A item an unknown-work lot was linked
+   * to (owner 2026-10-28); copied unchanged onto every lot of the group.
+   */
+  scheduleAParentLotId?: string;
   reviewedLotNumber?: string;
 };
 
@@ -1589,11 +1594,16 @@ function normalizeLotListingGroups(
         typeof lot?.source_parent_key === "string"
           ? lot.source_parent_key.trim() || undefined
           : undefined;
+      const scheduleAParentLotId =
+        typeof lot?.schedule_a_parent_lot_id === "string"
+          ? lot.schedule_a_parent_lot_id.trim() || undefined
+          : undefined;
       const reviewedLotNumber = allowReviewedNumbers
         ? normalizeDetectedBundleLotNumber(lot?.reviewed_lot_number)
         : null;
       return count > 0
         ? { count, extraCount, videoCount, coverIndex, mode, sourceKey, sourceParentKey,
+          ...(scheduleAParentLotId ? { scheduleAParentLotId } : {}),
           ...(reviewedLotNumber ? { reviewedLotNumber } : {}) }
         : null;
     })
@@ -1928,6 +1938,9 @@ export async function analyzeLotListingGroupsWithAssetService(
         */
         ...(group.sourceParentKey
           ? { auctioneer_source_parent_key: group.sourceParentKey }
+          : {}),
+        ...(group.scheduleAParentLotId
+          ? { schedule_a_parent_lot_id: group.scheduleAParentLotId }
           : {}),
       });
     }

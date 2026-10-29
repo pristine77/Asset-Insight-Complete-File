@@ -31,6 +31,19 @@ export type MixedLot = {
     title?: string;
     description?: string;
     locked?: boolean;
+    /**
+     * The Schedule A line this lot belongs to is ticked "Several lots" in
+     * Auctioneer 2.0, so lots may be split off it (owner 2026-10-28). Copied
+     * onto every split, so a split of a split still carries the original
+     * line's answer. Absent means the line comes back as exactly one lot.
+     */
+    severalLots?: boolean;
+    /**
+     * The lot captures one listed item of a Proposal (owner 2026-10-28):
+     * `key` names the item, and one item is one lot, so the analysis mode is
+     * fixed. Lots without it on such a form are items that were not listed.
+     */
+    listed?: boolean;
   };
   /** Main images sent through the analysis workflow. */
   files: File[];

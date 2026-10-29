@@ -11,6 +11,7 @@ import {
   type ReportTransferHandoff,
 } from "./directR2UploadService";
 import type { ReportWorkflowStage } from './assetService';
+import { scheduleAItemLotField } from './scheduleAItemLotField';
 
 export type LotListingMode = 'single_lot' | 'per_item' | 'per_photo';
 
@@ -40,6 +41,8 @@ export interface LotListingDetails {
     source_key?: string;
     source_lot_id?: string;
     source_submission_id?: string;
+    // owner 2026-10-28: the chosen Schedule A item (its Auctioneer parent lot).
+    schedule_a_parent_lot_id?: string;
   }>;
   focus_boxes?: Array<{ imageIndex: number; x: number; y: number; w: number; h: number }>;
   progress_id?: string;
@@ -166,6 +169,9 @@ class LotListingService {
         source_key: details.mixed_lots?.[index]?.source_key,
         source_lot_id: details.mixed_lots?.[index]?.source_lot_id,
         source_submission_id: details.mixed_lots?.[index]?.source_submission_id,
+        // This rebuild would otherwise drop the Schedule A item the appraiser
+        // chose (owner 2026-10-28); the server refuses such a lot.
+        ...scheduleAItemLotField(details.mixed_lots?.[index]?.schedule_a_parent_lot_id),
       } : {}),
       count: lot.files.length,
       extra_count: lot.extraFiles?.length || 0,

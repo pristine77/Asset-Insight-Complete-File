@@ -66,6 +66,8 @@ export type AssetCreateDetails = {
     source_key?: string;
     source_lot_id?: string;
     source_submission_id?: string;
+    // Auctioneer lot of the Schedule A item this lot belongs to (owner 2026-10-28).
+    schedule_a_parent_lot_id?: string;
   }>;
   focus_boxes?: Array<{
     imageIndex: number;

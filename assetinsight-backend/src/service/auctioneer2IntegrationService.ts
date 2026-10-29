@@ -15,9 +15,31 @@ import { createLotPhotoResolver, firstReportImageManifest } from "../utils/lotPh
 import AuctioneerWorkItem, {
   type AuctioneerDeliveryDestination,
   type AuctioneerReportType,
+  type IAuctioneerProposalItem,
+  type IAuctioneerScheduleAChoice,
   type IAuctioneerSourceLot,
   type IAuctioneerWorkItem,
 } from "../models/auctioneerWorkItem.model.js";
+import {
+  PROPOSAL_ITEM_INVALID_CODE,
+  PROPOSAL_ITEM_INVALID_MESSAGE,
+  isProposalListResponse,
+  isProposalListWorkItem,
+  proposalItemSourceKey,
+  proposalItemStates,
+  proposalItemsFromScheduleAItems,
+  proposalItemsPushedTo,
+  proposalListedItemRef,
+  sameProposalItems,
+} from "./auctioneerProposalList.js";
+import {
+  SCHEDULE_A_ITEM_REQUIRED_CODE,
+  SCHEDULE_A_ITEM_REQUIRED_MESSAGE,
+  lotsMissingScheduleAItem,
+  requiresScheduleAItem,
+  sameScheduleAChoices,
+  scheduleAChoicesFromItems,
+} from "./auctioneerScheduleAItemLink.js";
 import LotListing from "../models/lotListing.model.js";
 import ReportJob from "../models/reportJob.model.js";
 import User from "../models/user.model.js";
@@ -38,11 +60,14 @@ import {
   AUCTIONEER2_INCOMING_CONTRACT_STATUS,
   Auctioneer2ClientError,
   type Auctioneer2Record,
+  type Auctioneer2ScheduleAItem,
   closeContractPartForUser,
   getContractLots,
+  getContractScheduleAItems,
   getLot,
   listIncomingContracts,
   listIncomingTasks,
+  returnProposalReviewItems,
 } from "./auctioneer2Client.js";
 
 export class Auctioneer2ServiceError extends Error {
@@ -121,6 +146,12 @@ type NormalizedTask = {
 type IncomingSource = {
   contracts: Auctioneer2Record[];
   tasks: Auctioneer2Record[];
+  /**
+   * Proposals this user works from their list (owner 2026-10-28), by contract
+   * id: the items pushed to the user. Such a Proposal never takes the
+   * contract-level Proposal path below; see PROPOSAL LISTS.
+   */
+  proposalLists?: Map<string, IAuctioneerProposalItem[]>;
 };
 
 type ExpiringRecords = {
@@ -128,8 +159,14 @@ type ExpiringRecords = {
   expiresAt: number;
 };
 
-const contractCaches = new Map<string, ExpiringRecords>();
-const contractPromises = new Map<string, Promise<Auctioneer2Record[]>>();
+/** Incoming contracts after the user's Proposal lists were confirmed. */
+type AdmittedContracts = {
+  records: Auctioneer2Record[];
+  proposalLists: Map<string, IAuctioneerProposalItem[]>;
+};
+
+const contractCaches = new Map<string, AdmittedContracts & { expiresAt: number }>();
+const contractPromises = new Map<string, Promise<AdmittedContracts>>();
 const incomingCacheGenerations = new Map<string, number>();
 const taskCaches = new Map<string, ExpiringRecords>();
 const taskPromises = new Map<string, Promise<Auctioneer2Record[]>>();
@@ -480,6 +517,8 @@ export function normalizeAuctioneer2Lot(
     ["photos", "sourcePhotos", "images", "lot.photos"],
     "url"
   );
+  const scheduleALineId = textValue(raw, ["scheduleALineId", "schedule_a_line_id"]);
+  const scheduleAItemTitle = textValue(raw, ["scheduleAItemTitle", "schedule_a_item_title"]);
   return {
     sourceKey: fallback.sourceKey,
     lotId:
@@ -516,6 +555,12 @@ export function normalizeAuctioneer2Lot(
       "condition",
       "conditionNotes",
     ]),
+    // Owner 2026-10-28: the lot's Schedule A item and whether it is ticked
+    // "Several lots". Absent from an older Auctioneer, which reads as false:
+    // only an explicit tick lets an item come back as more than one lot.
+    ...(scheduleALineId ? { scheduleALineId } : {}),
+    severalLots: booleanValue(raw, ["severalLots", "several_lots"]) === true,
+    ...(scheduleAItemTitle ? { scheduleAItemTitle } : {}),
     ...(services.length ? { services } : {}),
     ...(sourcePhotos.length ? { sourcePhotos } : {}),
     raw,
@@ -672,7 +717,7 @@ function taskCacheKey(userId: string, contractId?: string): string {
 async function loadContractsForUser(
   userId: string,
   force = false
-): Promise<Auctioneer2Record[]> {
+): Promise<AdmittedContracts> {
   const key = contractCacheKey(userId);
   const now = Date.now();
   for (const [cachedKey, cachedValue] of contractCaches) {
@@ -681,18 +726,20 @@ async function loadContractsForUser(
     }
   }
   const cached = contractCaches.get(key);
-  if (!force && cached && cached.expiresAt > now) return cached.records;
+  if (!force && cached && cached.expiresAt > now) {
+    return { records: cached.records, proposalLists: cached.proposalLists };
+  }
   const inFlight = contractPromises.get(key);
   if (!force && inFlight) return inFlight;
   const generation = incomingCacheGenerations.get(key) || 0;
   const promise = listIncomingContracts(userId, true)
-    .then((contracts) => validateAssignedContracts(contracts, userId))
-    .then((contracts) => {
+    .then((contracts) => admitIncomingContracts(contracts, userId, { fresh: force }))
+    .then((admitted) => {
       if ((incomingCacheGenerations.get(key) || 0) === generation) contractCaches.set(key, {
-        records: contracts,
+        ...admitted,
         expiresAt: Date.now() + 15_000,
       });
-      return contracts;
+      return admitted;
     })
     .finally(() => {
       if (contractPromises.get(key) === promise) contractPromises.delete(key);
@@ -733,6 +780,130 @@ function validateAssignedContracts(
     }
   }
   return records;
+}
+
+/*
+   ── PROPOSAL LISTS (owner 2026-10-28) ─────────────────────────────────────
+
+   A Proposal used to be pushed to ONE Asset Insight user, named on the
+   contract (assignedUserId). The office can now upload a Schedule A list onto
+   the Proposal and push its items to several users. Auctioneer then returns
+   the Proposal to every user who has items pushed to them, still naming only
+   the contract-level assignee (or nobody) — so "assigned to someone else" no
+   longer proves the record is foreign.
+
+   The proof is Auctioneer's own per-user list, GET
+   /contracts/:id/schedule-a-items?userId=: a Proposal is this user's list
+   work when it holds items pushed to them. Such a record is admitted with the
+   user as its assignee — that is what it is for this user — and its items
+   travel beside it. Everything else keeps the earlier rules exactly:
+     - assigned to this user, nothing pushed, no list at all: the older
+       single-user Proposal, unchanged;
+     - assigned to this user, a list exists but none of it is theirs: not
+       their work, left out (it can only be returned item by item);
+     - not assigned to this user and nothing pushed: foreign, refused as an
+       invalid provider response, as before.
+   When the list cannot be read, a record assigned to the user stays as the
+   older Proposal (claiming re-reads strictly) and any other is left out
+   rather than guessed at — it reappears on the next successful read.
+*/
+type ProposalListRead = { items: Auctioneer2ScheduleAItem[] } | undefined;
+const PROPOSAL_LIST_CACHE_MS = 15_000;
+const proposalListCaches = new Map<string, { value: ProposalListRead; expiresAt: number }>();
+const proposalListPromises = new Map<string, Promise<ProposalListRead>>();
+
+/**
+ * One contract's list, for one user or (userId "") everybody. Shared by all
+ * callers for a short window like the Incoming reads. With strict, the read
+ * is fresh and a failure is thrown, for decisions that create work.
+ */
+async function readProposalList(
+  contractId: string,
+  userId: string,
+  options: { fresh?: boolean; strict?: boolean } = {}
+): Promise<ProposalListRead> {
+  const key = `${contractId}\u0000${userId.trim().toLowerCase()}`;
+  const now = Date.now();
+  for (const [cachedKey, value] of proposalListCaches) {
+    if (value.expiresAt <= now && !proposalListPromises.has(cachedKey)) proposalListCaches.delete(cachedKey);
+  }
+  const reuse = !options.fresh && !options.strict;
+  const cached = proposalListCaches.get(key);
+  if (reuse && cached && cached.expiresAt > now) return cached.value;
+  const inFlight = proposalListPromises.get(key);
+  if (reuse && inFlight) return inFlight;
+  const read = Promise.resolve()
+    .then(() => (userId ? getContractScheduleAItems(contractId, { userId }) : getContractScheduleAItems(contractId)))
+    .then(({ items }) => ({ items: userId ? proposalItemsPushedTo(items, userId) : items }));
+  if (options.strict) {
+    const value = await read;
+    proposalListCaches.set(key, { value, expiresAt: Date.now() + PROPOSAL_LIST_CACHE_MS });
+    return value;
+  }
+  const promise: Promise<ProposalListRead> = read
+    .then((value) => {
+      proposalListCaches.set(key, { value, expiresAt: Date.now() + PROPOSAL_LIST_CACHE_MS });
+      return value;
+    })
+    .catch((error) => {
+      proposalListCaches.set(key, { value: undefined, expiresAt: Date.now() + PROPOSAL_LIST_CACHE_MS });
+      console.warn("[Auctioneer2] A Proposal's list could not be read", {
+        contractId,
+        perUser: Boolean(userId),
+        code: error instanceof Auctioneer2ClientError ? error.code : "unexpected",
+        upstreamStatus: error instanceof Auctioneer2ClientError ? error.upstreamStatus : undefined,
+      });
+      return undefined;
+    })
+    .finally(() => {
+      if (proposalListPromises.get(key) === promise) proposalListPromises.delete(key);
+    });
+  proposalListPromises.set(key, promise);
+  return promise;
+}
+
+const ASSIGNMENT_KEYS = [
+  "assignedTo", "assigned_to", "assignedUserId", "assigned_user_id", "assetInsightUserId",
+  "asset_insight_user_id", "assignedUser", "assignee", "assignedUserName", "assigned_user_name",
+  "assetInsightUserName", "asset_insight_user_name", "assignedUserEmail", "assigned_user_email",
+  "assetInsightUserEmail", "asset_insight_user_email",
+];
+
+/** The record as this user's list work: they are its assignee for their items. */
+function withProposalListAssignee(record: Auctioneer2Record, userId: string): Auctioneer2Record {
+  const admitted: Auctioneer2Record = { ...record };
+  for (const key of ASSIGNMENT_KEYS) delete admitted[key];
+  admitted.assignedUserId = userId;
+  return admitted;
+}
+
+async function admitIncomingContracts(
+  records: Auctioneer2Record[],
+  userId: string,
+  options: { fresh?: boolean; freshContractId?: string } = {}
+): Promise<AdmittedContracts> {
+  const proposalLists = new Map<string, IAuctioneerProposalItem[]>();
+  const admitted = await Promise.all(records.map(async (record): Promise<Auctioneer2Record | null> => {
+    const contract = normalizeAuctioneer2Contract(record);
+    if (!contract || !isIncomingProposalContract(contract)) return record;
+    const assignedToUser = Boolean(contract.assignedUserId && userIdsMatch(contract.assignedUserId, userId));
+    // A decision about one contract (Continue, Re-Open) reads only that one
+    // afresh; the others may answer from the short shared cache.
+    const read = { fresh: Boolean(options.fresh || contract.id === options.freshContractId) };
+    const mine = await readProposalList(contract.id, userId, read);
+    if (mine?.items.length) {
+      proposalLists.set(contract.id, proposalItemsFromScheduleAItems(mine.items));
+      return withProposalListAssignee(record, userId);
+    }
+    if (!mine) return assignedToUser ? record : null;
+    if (!assignedToUser) return record;
+    const whole = await readProposalList(contract.id, "", read);
+    return whole && isProposalListResponse(whole.items) ? null : record;
+  }));
+  return {
+    records: validateAssignedContracts(admitted.filter((record): record is Auctioneer2Record => Boolean(record)), userId),
+    proposalLists,
+  };
 }
 
 function validateAssignedTasks(
@@ -791,7 +962,7 @@ async function loadIncomingSource(
   userId: string,
   force = false
 ): Promise<IncomingSource> {
-  const contracts = await loadContractsForUser(userId, force);
+  const { records: contracts, proposalLists } = await loadContractsForUser(userId, force);
   // Proposal contracts are the current visibility authority and must remain
   // usable even when the legacy task feed is unavailable. Keep successful
   // task rows additive for older assignments, but never make proposal cards
@@ -815,7 +986,7 @@ async function loadIncomingSource(
     }
     tasks = [];
   }
-  return { contracts, tasks };
+  return { contracts, tasks, proposalLists };
 }
 
 export function clearAuctioneer2IncomingCacheForTests() {
@@ -824,6 +995,101 @@ export function clearAuctioneer2IncomingCacheForTests() {
   incomingCacheGenerations.clear();
   taskCaches.clear();
   taskPromises.clear();
+  scheduleAChoiceCaches.clear();
+  scheduleAChoicePromises.clear();
+  proposalListCaches.clear();
+  proposalListPromises.clear();
+}
+
+/*
+   ── SCHEDULE A CHOICES (owner 2026-10-28) ─────────────────────────────────
+
+   A work item whose lots must name a Schedule A item keeps the contract's
+   choosable items on itself, read from Auctioneer when it is created and
+   again whenever its setup is opened — the office may tick "Several lots"
+   after the appraiser started. The list is per contract, so several users on
+   one contract share a short cache and one in-flight read, exactly like the
+   Incoming reads above.
+
+   Reading is best effort. When Auctioneer cannot answer (an older deployment
+   without the route, a timeout) the saved list stays as it was: Send and the
+   delivery still check every lot, and Auctioneer itself refuses an orphan.
+   A failed read is remembered for the same short window, so an outage does
+   not make every setup open wait for its own timeout.
+*/
+const SCHEDULE_A_CHOICES_CACHE_MS = 15_000;
+const scheduleAChoiceCaches = new Map<string, { choices: IAuctioneerScheduleAChoice[] | undefined; expiresAt: number }>();
+const scheduleAChoicePromises = new Map<string, Promise<IAuctioneerScheduleAChoice[] | undefined>>();
+
+async function readScheduleAChoices(contractId: string): Promise<IAuctioneerScheduleAChoice[] | undefined> {
+  const now = Date.now();
+  for (const [key, value] of scheduleAChoiceCaches) {
+    if (value.expiresAt <= now && !scheduleAChoicePromises.has(key)) scheduleAChoiceCaches.delete(key);
+  }
+  const cached = scheduleAChoiceCaches.get(contractId);
+  if (cached && cached.expiresAt > now) return cached.choices;
+  const inFlight = scheduleAChoicePromises.get(contractId);
+  if (inFlight) return inFlight;
+  // The same unfiltered read, made moments ago to check for a Proposal list
+  // (see PROPOSAL LISTS), answers this too without asking Auctioneer again.
+  const shared = proposalListCaches.get(`${contractId}\u0000`);
+  if (shared?.value && shared.expiresAt > now) {
+    const choices = scheduleAChoicesFromItems(shared.value.items);
+    scheduleAChoiceCaches.set(contractId, { choices, expiresAt: shared.expiresAt });
+    return choices;
+  }
+  const promise = getContractScheduleAItems(contractId)
+    .then(({ items }) => {
+      const choices = scheduleAChoicesFromItems(items);
+      scheduleAChoiceCaches.set(contractId, { choices, expiresAt: Date.now() + SCHEDULE_A_CHOICES_CACHE_MS });
+      return choices;
+    })
+    .catch((error) => {
+      scheduleAChoiceCaches.set(contractId, { choices: undefined, expiresAt: Date.now() + SCHEDULE_A_CHOICES_CACHE_MS });
+      console.warn("[Auctioneer2] Schedule A items could not be read; keeping the saved choices", {
+        contractId,
+        code: error instanceof Auctioneer2ClientError ? error.code : "unexpected",
+        upstreamStatus: error instanceof Auctioneer2ClientError ? error.upstreamStatus : undefined,
+      });
+      return undefined;
+    })
+    .finally(() => {
+      if (scheduleAChoicePromises.get(contractId) === promise) scheduleAChoicePromises.delete(contractId);
+    });
+  scheduleAChoicePromises.set(contractId, promise);
+  return promise;
+}
+
+/** The fields a new successor/Re-Open work item is created with. */
+async function initialScheduleAChoices(contract: { id: string; hasScheduleA?: boolean }) {
+  if (!requiresScheduleAItem({ kind: "unknown", contract })) return {};
+  const choices = await readScheduleAChoices(contract.id);
+  return choices ? { scheduleAChoices: choices } : {};
+}
+
+/**
+ * Brings a saved work item's choices up to date and returns the current list.
+ * Only an actual change is written, so opening a setup repeatedly costs one
+ * cached read and no write. Sent work never changes again and is left alone.
+ */
+async function refreshScheduleAChoices(workItem: {
+  _id: Types.ObjectId;
+  kind: IAuctioneerWorkItem["kind"];
+  status?: string;
+  delivery?: { status?: string };
+  contract: { id: string; hasScheduleA?: boolean };
+  scheduleAChoices?: IAuctioneerScheduleAChoice[];
+}): Promise<IAuctioneerScheduleAChoice[]> {
+  const saved = Array.isArray(workItem.scheduleAChoices) ? workItem.scheduleAChoices : [];
+  if (!requiresScheduleAItem(workItem) || workItem.status === "sent" || workItem.delivery?.status === "sent") {
+    return saved;
+  }
+  const current = await readScheduleAChoices(workItem.contract.id);
+  if (!current) return saved;
+  if (!sameScheduleAChoices(saved, current)) {
+    await AuctioneerWorkItem.updateOne({ _id: workItem._id }, { $set: { scheduleAChoices: current } });
+  }
+  return current;
 }
 
 export function clearAuctioneer2IncomingCacheForUser(userId: string) {
@@ -836,6 +1102,9 @@ export function clearAuctioneer2IncomingCacheForUser(userId: string) {
     if (key.startsWith(prefix)) taskCaches.delete(key);
   }
   for (const key of taskPromises.keys()) if (key.startsWith(prefix)) taskPromises.delete(key);
+  // The user's own Proposal lists: a not-found return or a delivery changes them.
+  const listSuffix = `\u0000${userId.trim().toLowerCase()}`;
+  for (const key of proposalListCaches.keys()) if (key.endsWith(listSuffix)) proposalListCaches.delete(key);
 }
 const clearAuctioneer2IncomingCache = clearAuctioneer2IncomingCacheForUser;
 
@@ -1005,7 +1274,11 @@ function buildIncomingCycles(source: IncomingSource): IncomingCycle[] {
   }
 
   const normalizedTasks = source.tasks.map(normalizeTask);
-  const proposalCycles = [...proposalContracts.values()].map((contract) => {
+  // A Proposal this user works from its list is built per user, not here: the
+  // contract-level cycle below admits one claimant for the whole contract.
+  const proposalCycles = [...proposalContracts.values()]
+    .filter((contract) => !source.proposalLists?.has(contract.id))
+    .map((contract) => {
     const contractTasks = normalizedTasks.filter((task) =>
       taskBelongsToContract(task, contract)
     );
@@ -1263,9 +1536,12 @@ export async function listAuctioneerIncoming(force: boolean, userId: string) {
         lotCount:
           workItem.snapshot?.lots?.length ||
           workItem.snapshot?.tasks?.length ||
+          // A Proposal list keeps its items beside the snapshot (owner 2026-10-28).
+          workItem.proposalList?.items?.length ||
           0,
         pendingLotCount: 0,
         status: publicIncomingStatus(workItem),
+        ...(isProposalListWorkItem(workItem) ? { proposalList: true } : {}),
         assignedUser: {
           id: assignmentUserId,
           ...(claimedBy?.name ? { name: claimedBy.name } : {}),
@@ -1293,7 +1569,382 @@ export async function listAuctioneerIncoming(force: boolean, userId: string) {
       ...(own ? { claimedBy: publicClaimedBy(own.claimedBy), workItemId: String(own._id), selectedReportType: own.selectedReportType as AuctioneerReportType } : {}) };
   });
   const completedIds = new Set(completedRows.map(row => row.contractId));
-  return [...liveRows.filter(row => !completedIds.has(row.contractId)), ...frozenRows, ...completedRows];
+  const listContracts = contracts.filter((contract) =>
+    source.proposalLists?.has(contract.id) && !stateByContract.has(contract.id) && !completedIds.has(contract.id));
+  const proposalListRows = (await availableProposalListCycles(listContracts, source.proposalLists, userId))
+    .map(({ row }) => row);
+  return [...liveRows.filter(row => !completedIds.has(row.contractId)), ...proposalListRows, ...frozenRows, ...completedRows];
+}
+
+/*
+   ── A PROPOSAL LIST IN INCOMING (owner 2026-10-28) ────────────────────────
+
+   Several users work one list, so a list Proposal is offered per user, never
+   per contract: one user's claim or delivery must not hide it from another,
+   which the contract-level Proposal cycle above would do.
+
+   While the user has an open list work item on the Proposal, that work item
+   is what Incoming shows (it is listed with the user's other open work). With
+   none open, the Proposal is offered again whenever the user still has an
+   outstanding item — one pushed after their last delivery, or one they left
+   out of it. Each such offer is a new cycle: its key counts the user's
+   earlier claims on the Proposal, so a delivered work item's key is never
+   reused and a double claim of the same offer still meets the unique index.
+*/
+type ProposalListOwnWork = {
+  _id: Types.ObjectId;
+  cycleKey: string;
+  contract: { id: string };
+  status: string;
+  selectedReportType: AuctioneerReportType;
+  delivery?: { status?: string };
+  continuationOfWorkItemId?: Types.ObjectId;
+  proposalCapturedLineIds?: string[];
+  proposalNotFound?: Array<{ lineId: string }>;
+};
+
+function proposalListCycleKey(contractId: string, userId: string, round: number): string {
+  return stableHash(`${contractId}:proposal-list:${userId.trim().toLowerCase()}:${round}`);
+}
+
+function isOpenProposalListWork(work: ProposalListOwnWork): boolean {
+  return ["claimed", "report_created"].includes(work.status) && work.delivery?.status !== "sent";
+}
+
+async function ownProposalListWork(contractIds: string[], userId: string): Promise<ProposalListOwnWork[]> {
+  if (!contractIds.length) return [];
+  return AuctioneerWorkItem.find({
+    claimedBy: userId,
+    "contract.id": { $in: contractIds },
+    proposalList: { $exists: true },
+  })
+    .select("cycleKey contract.id status selectedReportType delivery.status continuationOfWorkItemId proposalCapturedLineIds proposalNotFound")
+    .lean() as unknown as Promise<ProposalListOwnWork[]>;
+}
+
+/** The user's items with their state, given their own list work on the contract. */
+function proposalListItemStates(
+  items: readonly IAuctioneerProposalItem[],
+  own: readonly ProposalListOwnWork[],
+  exceptWorkItemId?: string
+) {
+  const notFoundLineIds = new Set(own.flatMap((work) => (work.proposalNotFound || []).map((entry) => entry.lineId)));
+  const otherReportLineIds = new Set(own
+    .filter((work) => String(work._id) !== exceptWorkItemId && isOpenProposalListWork(work))
+    .flatMap((work) => work.proposalCapturedLineIds || []));
+  return proposalItemStates({ items, notFoundLineIds, otherReportLineIds });
+}
+
+async function availableProposalListCycles(
+  contracts: NormalizedContract[],
+  lists: Map<string, IAuctioneerProposalItem[]> | undefined,
+  userId: string
+) {
+  const own = await ownProposalListWork(contracts.map((contract) => contract.id), userId);
+  return contracts.flatMap((contract) => {
+    const mine = own.filter((work) => work.contract.id === contract.id);
+    if (mine.some(isOpenProposalListWork)) return [];
+    const outstanding = proposalListItemStates(lists?.get(contract.id) || [], mine)
+      .filter((item) => item.state === "outstanding").length;
+    if (!outstanding) return [];
+    const round = mine.filter((work) => !work.continuationOfWorkItemId).length;
+    const cycleKey = proposalListCycleKey(contract.id, userId, round);
+    return [{
+      contract,
+      cycleKey,
+      row: {
+        cycleKey,
+        contractId: contract.id,
+        contractNo: contract.contractNo,
+        ...(contract.customerName ? { customerName: contract.customerName } : {}),
+        ...(contract.description ? { description: contract.description } : {}),
+        ...contractContactNames(contract, contract.id),
+        ...(contract.eventTitle ? { eventTitle: contract.eventTitle } : {}),
+        ...(contract.eventDate ? { eventDate: contract.eventDate } : {}),
+        ...(contract.eventTime ? { eventTime: contract.eventTime } : {}),
+        ...(contract.eventClosed !== undefined ? { eventClosed: contract.eventClosed } : {}),
+        ...(contract.location ? { location: contract.location } : {}),
+        kind: "unknown" as const,
+        // The user's own items still to capture, not the whole list.
+        lotCount: outstanding,
+        pendingLotCount: 0,
+        status: "available" as const,
+        proposalList: true,
+        assignedUser: { id: userId },
+        assignedToCurrentUser: true,
+      },
+    }];
+  });
+}
+
+/** Creates the user's list work item for a Proposal offered by availableProposalListCycles. */
+async function claimProposalListWork(
+  contract: NormalizedContract,
+  cycleKey: string,
+  userId: string,
+  reportType: AuctioneerReportType
+) {
+  return withAuctioneerContractOperation(contract.id, userId, async (lease) => {
+    await assertAuctioneerContractSendOpen(contract.id, userId);
+    // Work is created only from Auctioneer's current answer, never a cached one.
+    const read = await readProposalList(contract.id, userId, { strict: true });
+    const items = proposalItemsFromScheduleAItems(read?.items || []);
+    if (!items.length) {
+      throw new Auctioneer2ServiceError(
+        "No item of this Proposal is pushed to you any more. Refresh Incoming.",
+        409,
+        "auctioneer_proposal_list_unavailable"
+      );
+    }
+    const own = await ownProposalListWork([contract.id], userId);
+    const open = own.find(isOpenProposalListWork);
+    if (open) {
+      if (open.cycleKey !== cycleKey) {
+        throw new Auctioneer2ServiceError(
+          "You already have this Proposal open. Refresh Incoming to continue it.",
+          409,
+          "auctioneer_already_claimed"
+        );
+      }
+      if (open.selectedReportType !== reportType) {
+        throw new Auctioneer2ServiceError(
+          "The report type is already locked for this incoming contract.",
+          409,
+          "auctioneer_report_type_locked"
+        );
+      }
+      const openWork = await AuctioneerWorkItem.findById(open._id);
+      if (openWork) return claimPayload(openWork);
+    }
+    const round = own.filter((work) => !work.continuationOfWorkItemId).length;
+    if (proposalListCycleKey(contract.id, userId, round) !== cycleKey) {
+      throw new Auctioneer2ServiceError(
+        "This incoming contract is no longer available.",
+        404,
+        "auctioneer_incoming_not_found"
+      );
+    }
+    assertEventContractContext(contract.raw, contract.id, true);
+    const eventId = reconcileEventIdentity([contract.raw, { eventId: contract.eventId }]);
+    const activeContractKey = auctioneer2ActiveContractKey(contract.id, userId, cycleKey);
+    try {
+      await lease.assertOwned();
+      const created = await AuctioneerWorkItem.create({
+        source: "auctioneer2",
+        cycleKey,
+        activeContractKey,
+        assignmentUserId: new Types.ObjectId(userId),
+        contract: {
+          id: contract.id,
+          contractNo: contract.contractNo,
+          customerName: contract.customerName,
+          description: contract.description,
+          ...contractContactNames(contract, contract.id),
+          eventId,
+          eventTitle: contract.eventTitle,
+          eventDate: contract.eventDate,
+          location: contract.location,
+          categories: contract.categories,
+          hasScheduleA: contract.hasScheduleA,
+          hasUnknownLots: contract.hasUnknownLots,
+        },
+        // Lots-free like an Unknown Lots claim: the listed items are offered
+        // from proposalList, and the user may add items that were not listed.
+        kind: "unknown",
+        proposalList: { items, refreshedAt: new Date() },
+        snapshot: {
+          contract: contract.raw,
+          event: {
+            ...(nestedRecord(contract.raw, ["event"]) || {}),
+            ...(eventId !== undefined ? { id: eventId } : {}),
+            ...(contract.eventTitle ? { title: contract.eventTitle } : {}),
+            ...(contract.eventDate ? { date: contract.eventDate } : {}),
+            ...(contract.location ? { location: contract.location } : {}),
+          },
+          customer: nestedRecord(contract.raw, ["customer", "client", "owner"]) ||
+            (contract.customerName ? { name: contract.customerName } : {}),
+          tasks: [],
+          lots: [],
+          capturedAt: new Date(),
+        },
+        claimedBy: new Types.ObjectId(userId),
+        claimedAt: new Date(),
+        selectedReportType: reportType,
+        clientSubmissionId: `auctioneer2-${stableHash(`${cycleKey}:${reportType}`).slice(0, 40)}`,
+        status: "claimed",
+        delivery: { status: "not_ready", completeContract: false, attempts: 0, lots: [], reconciliation: { required: false } },
+      });
+      clearAuctioneer2IncomingCache(userId);
+      return claimPayload(created);
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+      const winner = await AuctioneerWorkItem.findOne({ $or: [{ cycleKey }, { activeContractKey }] });
+      if (winner && winner.cycleKey === cycleKey && String(winner.claimedBy) === userId) {
+        if (winner.selectedReportType !== reportType) {
+          throw new Auctioneer2ServiceError(
+            "The report type is already locked for this incoming contract.",
+            409,
+            "auctioneer_report_type_locked"
+          );
+        }
+        return claimPayload(winner);
+      }
+      throw new Auctioneer2ServiceError("This incoming contract is already claimed.", 409, "auctioneer_already_claimed");
+    }
+  });
+}
+
+/**
+ * The user's listed items for a list work item's setup, refreshed from
+ * Auctioneer (the office may push more after the claim) and with each item's
+ * state. Only a real change is written; sent work is never rewritten.
+ */
+async function proposalListSetup(
+  workItem: {
+    _id: Types.ObjectId;
+    contract: { id: string };
+    status?: string;
+    delivery?: { status?: string };
+    proposalList?: { items: IAuctioneerProposalItem[] };
+  },
+  userId: string,
+  options: { strict?: boolean } = {}
+) {
+  let items = workItem.proposalList?.items || [];
+  if (!isSentWorkItem(workItem)) {
+    const read = await readProposalList(workItem.contract.id, userId, options.strict ? { strict: true } : {});
+    if (read) {
+      const current = proposalItemsFromScheduleAItems(read.items);
+      if (!sameProposalItems(items, current)) {
+        await AuctioneerWorkItem.updateOne(
+          { _id: workItem._id, status: { $in: ["claimed", "report_created"] } },
+          { $set: { proposalList: { items: current, refreshedAt: new Date() } } }
+        );
+      }
+      items = current;
+    }
+  }
+  const own = await ownProposalListWork([workItem.contract.id], userId);
+  return proposalListItemStates(items, own, String(workItem._id)).map((item) => ({
+    lineId: item.lineId,
+    sourceKey: proposalItemSourceKey(item.lineId),
+    title: item.title,
+    ...(item.lotNumber ? { lotNumber: item.lotNumber } : {}),
+    ...(item.serialNumber ? { serialNumber: item.serialNumber } : {}),
+    ...(item.year ? { year: item.year } : {}),
+    ...(item.make ? { make: item.make } : {}),
+    ...(item.model ? { model: item.model } : {}),
+    ...(item.description ? { description: item.description } : {}),
+    state: item.state,
+  }));
+}
+
+/*
+   ── NOT FOUND (owner 2026-10-28) ───────────────────────────────────────────
+
+   "Part of the proposal but not done in Asset Insight because it wasn't found
+   by the user." A listed item the user cannot find is returned to Auctioneer
+   at once, as not found, instead of being captured: it needs no report, and a
+   user who finds none of their items can still finish. Auctioneer shows it
+   red, and the Proposal leaves the queue once every listed item is back.
+
+   Returned under the item's own proposalItemRef, so a repeat is harmless and
+   a later capture of the same item, if it turns up, replaces the red return.
+   An item already returned, or waiting in one of the user's submitted
+   reports, is refused: marking it here would contradict what that report
+   will send.
+*/
+export async function markAuctioneerProposalItemsNotFound(
+  workItemId: string,
+  userId: string,
+  input: unknown
+) {
+  const lineIds = isRecord(input) && Array.isArray(input.lineIds) &&
+    Object.keys(input).every((key) => key === "lineIds")
+    ? input.lineIds.map((value) => (typeof value === "string" ? value.trim() : ""))
+    : [];
+  if (!lineIds.length || lineIds.length > 500 || lineIds.some((lineId) => !lineId || lineId.length > 200) ||
+      new Set(lineIds).size !== lineIds.length) {
+    throw new Auctioneer2ServiceError(
+      "Choose the listed items to return as not found.",
+      400,
+      "invalid_proposal_not_found_request"
+    );
+  }
+  const owner = Types.ObjectId.isValid(workItemId)
+    ? await AuctioneerWorkItem.findOne({ _id: workItemId, claimedBy: userId }).select("contract.id").lean()
+    : null;
+  if (!owner) throw new Auctioneer2ServiceError("Work item not found.", 404, "work_item_not_found");
+  return withAuctioneerContractOperation(owner.contract.id, userId, async (lease) => {
+    const workItem = await AuctioneerWorkItem.findOne({ _id: workItemId, claimedBy: userId }).lean();
+    if (!workItem) throw new Auctioneer2ServiceError("Work item not found.", 404, "work_item_not_found");
+    if (!isProposalListWorkItem(workItem) || String(workItem.assignmentUserId || "") !== userId) {
+      throw new Auctioneer2ServiceError(
+        "Only a Proposal's listed items can be returned as not found.",
+        409,
+        "auctioneer_not_a_proposal_list"
+      );
+    }
+    if (isSentWorkItem(workItem) || !["claimed", "report_created"].includes(workItem.status)) {
+      throw new Auctioneer2ServiceError(
+        "This work was already sent. Open the Proposal again from Incoming.",
+        409,
+        "auctioneer_work_item_closed"
+      );
+    }
+    const items = await proposalListSetup(workItem, userId, { strict: true });
+    const byLine = new Map(items.map((item) => [item.lineId, item]));
+    const submittedHere = workItem.status === "report_created"
+      ? new Set(workItem.proposalCapturedLineIds || [])
+      : new Set<string>();
+    const toReturn: string[] = [];
+    for (const lineId of lineIds) {
+      const item = byLine.get(lineId);
+      if (!item) {
+        throw new Auctioneer2ServiceError(PROPOSAL_ITEM_INVALID_MESSAGE, 409, PROPOSAL_ITEM_INVALID_CODE);
+      }
+      if (item.state === "not_found") continue;
+      if (item.state !== "outstanding" || submittedHere.has(lineId)) {
+        throw new Auctioneer2ServiceError(
+          "This item was already returned, or is in a report you submitted. It cannot also be returned as not found.",
+          409,
+          "auctioneer_proposal_item_not_outstanding"
+        );
+      }
+      toReturn.push(lineId);
+    }
+    let remainsInAssetInsight: boolean | null = null;
+    if (toReturn.length) {
+      const user = await User.findById(userId).select("username email").lean();
+      const completedBy = String((user as any)?.username || "").trim() ||
+        String((user as any)?.email || "").trim() || `Asset Insight user ${userId}`;
+      await lease.assertOwned();
+      // No description: Auctioneer fills in the listed title. An Auctioneer
+      // that predates not-found refuses an item without one rather than
+      // recording it as captured.
+      const outcome = await returnProposalReviewItems(workItem.contract.id, {
+        completedBy,
+        completedByUserId: userId,
+        items: toReturn.map((lineId) => ({
+          proposalItemRef: proposalListedItemRef(workItem.contract.id, lineId),
+          scheduleALineId: lineId,
+          notFound: true as const,
+        })),
+      });
+      remainsInAssetInsight = outcome.remainsInAssetInsight;
+      const returnedAt = new Date();
+      await AuctioneerWorkItem.updateOne(
+        { _id: workItem._id },
+        { $push: { proposalNotFound: { $each: toReturn.map((lineId) => ({ lineId, returnedAt })) } } }
+      );
+    }
+    clearAuctioneer2IncomingCache(userId);
+    return {
+      notFound: toReturn,
+      remainsInAssetInsight,
+      setup: await getAuctioneerWorkItemSetup(workItemId, userId),
+    };
+  });
 }
 
 export async function getAuctioneerIncomingSummary(userId: string) {
@@ -1533,7 +2184,8 @@ export async function claimAuctioneerIncoming(
   const reopenState = await AuctioneerContractClose.findOne({ user: userId, status: "open", reopenCycleKey: cycleKey }).lean();
   if (reopenState) return withAuctioneerContractOperation(reopenState.contractId, userId, async lease => {
     await assertAuctioneerContractSendOpen(reopenState.contractId, userId, reopenState.accessRevision);
-    const currentContracts = validateAssignedContracts(await listIncomingContracts(userId, true), userId);
+    const currentContracts = (await admitIncomingContracts(await listIncomingContracts(userId, true), userId,
+      { freshContractId: reopenState.contractId })).records;
     const contract = currentContracts.map(normalizeAuctioneer2Contract).find(c => c && c.id === reopenState.contractId &&
       userIdsMatch(String(c.assignedUserId || ""), userId));
     if (!contract) throw new Auctioneer2ServiceError("This contract is no longer assigned to you. Refresh Incoming.", 409, "auctioneer_continuation_assignment_unavailable");
@@ -1545,9 +2197,13 @@ export async function claimAuctioneerIncoming(
           saved.status !== "claimed" || saved.linkedReportId) throw new Auctioneer2ServiceError("This capture has already started. Refresh Incoming to open its current report.", 409, "auctioneer_work_item_closed");
       return claimPayload(saved);
     }
+    // Owner 2026-10-28: a Re-Open capture on a Schedule A contract must link
+    // each lot to a Schedule A item; keep the choosable ones with it.
+    const scheduleAChoiceFields = await initialScheduleAChoices(contract);
+    await lease.assertOwned();
     const created = await AuctioneerWorkItem.create({ source: "auctioneer2", cycleKey,
       activeContractKey: auctioneer2ActiveContractKey(contract.id, userId, cycleKey), assignmentUserId: userId,
-      contractAccessRevision: reopenState.accessRevision, contract, kind: "unknown",
+      contractAccessRevision: reopenState.accessRevision, contract, kind: "unknown", ...scheduleAChoiceFields,
       snapshot: { contract: contract.raw, event: { id: contract.eventId, title: contract.eventTitle, date: contract.eventDate },
         customer: { name: contract.customerName }, tasks: [], lots: [], capturedAt: new Date() },
       claimedBy: userId, claimedAt: new Date(), selectedReportType: reportType,
@@ -1555,6 +2211,15 @@ export async function claimAuctioneerIncoming(
       delivery: { status: "not_ready", completeContract: false, attempts: 0, lots: [], reconciliation: { required: false } } });
     return claimPayload(created);
   });
+  // Owner 2026-10-28: a Proposal worked from its list is offered per user.
+  if (source.proposalLists?.size) {
+    const listContracts = source.contracts
+      .map(normalizeAuctioneer2Contract)
+      .filter((contract): contract is NormalizedContract => Boolean(contract && source.proposalLists?.has(contract.id)));
+    const offered = (await availableProposalListCycles(listContracts, source.proposalLists, userId))
+      .find((candidate) => candidate.cycleKey === cycleKey);
+    if (offered) return claimProposalListWork(offered.contract, cycleKey, userId, reportType);
+  }
   const cycle = findIncomingCycle(source, cycleKey);
   if (!cycle) {
     throw new Auctioneer2ServiceError(
@@ -1868,7 +2533,8 @@ async function freshContinuationContract(parent: any, userId: string) {
   // other lots. New work requires a freshly confirmed Incoming assignment.
   // Do not join an Incoming read that began before this accepted handoff: even a
   // forced shared read can contain an assignment that was since removed/restored.
-  const currentContracts = validateAssignedContracts(await listIncomingContracts(userId), userId);
+  const currentContracts = (await admitIncomingContracts(await listIncomingContracts(userId), userId,
+    { freshContractId: String(parent.contract.id) })).records;
   let live = currentContracts.map(normalizeAuctioneer2Contract).find(
     (contract) => contract && isIncomingProposalContract(contract) && contract.id === parent.contract.id &&
       userIdsMatch(String(contract.assignedUserId || ""), userId)
@@ -1924,8 +2590,18 @@ async function freshContinuationContract(parent: any, userId: string) {
 async function createContinuationChild(parent: any, contract: any, cycleKey: string, userId: string) {
   let created = true;
   let successor;
+  // Owner 2026-10-28: the successor has no Schedule A lines of its own, so on a
+  // Schedule A contract each of its lots must name one of these items. A
+  // Proposal worked from its list is the exception: its successor keeps
+  // returning listed items (the ones the parent's report did not capture)
+  // and items that were not listed, never creating lots.
+  const proposalListFields = parent.proposalList
+    ? { proposalList: { items: parent.proposalList.items || [], refreshedAt: new Date() } }
+    : undefined;
+  const scheduleAChoiceFields = proposalListFields || await initialScheduleAChoices(contract);
   try {
     successor = await AuctioneerWorkItem.create({
+      ...scheduleAChoiceFields,
       // An unused claim can be released. Retrying this exact continuation must
       // still recover its original identity, including any saved local draft.
       _id: new Types.ObjectId(stableHash(`continuation-work-item:${cycleKey}`).slice(0, 24)),
@@ -2080,6 +2756,9 @@ export async function getAuctioneerWorkItemSetup(workItemId: string, userId: str
   if (!workItem) {
     throw new Auctioneer2ServiceError("Work item not found.", 404, "work_item_not_found");
   }
+  // Owner 2026-10-28: read afresh on every open, because the office may have
+  // ticked "Several lots" since the work item was created.
+  const scheduleAChoices = await refreshScheduleAChoices(workItem);
   return {
     workItemId: String(workItem._id),
     cycleKey: workItem.cycleKey,
@@ -2088,6 +2767,30 @@ export async function getAuctioneerWorkItemSetup(workItemId: string, userId: str
     clientSubmissionId: workItem.clientSubmissionId,
     status: workItem.status,
     reportId: workItem.linkedReportId ? String(workItem.linkedReportId) : null,
+    /*
+       Owner 2026-10-28: no lot on a Schedule A contract is sent until the
+       appraiser has chosen its Schedule A item. True for this contract's
+       lines-free work ("Create Lot & Continue", Re-Open); every lot the form
+       submits then carries schedule_a_parent_lot_id = one choice's
+       parentLotId. Both fields are always present so a client can rely on them.
+    */
+    requiresScheduleAItem: requiresScheduleAItem(workItem),
+    scheduleAChoices: requiresScheduleAItem(workItem)
+      ? scheduleAChoices.map(({ lineId, title, parentLotId }) => ({ lineId, title, parentLotId }))
+      : [],
+    /*
+       Owner 2026-10-28: present only for a Proposal worked from its list. The
+       user's listed items, each with the source key its lot carries and its
+       state; the form seeds one lot per "outstanding" item, may add items
+       that were not listed, and returns an item as not found through
+       POST /work-items/:id/proposal-items/not-found. A client that does not
+       know this field sees an ordinary lots-free work item, whose lots can
+       only come back as items that were not listed — never against the
+       wrong listed item.
+    */
+    ...(isProposalListWorkItem(workItem)
+      ? { proposalList: { items: await proposalListSetup(workItem, userId) } }
+      : {}),
     canResumeUpload: workItem.status === "report_created" && Boolean(workItem.linkedReportId)
       ? await canResumeAuctioneerUpload(workItem) : false,
     ...(workItem.continuationOfWorkItemId
@@ -2123,6 +2826,11 @@ export async function getAuctioneerWorkItemSetup(workItemId: string, userId: str
       ...(lot.model ? { model: lot.model } : {}),
       ...(lot.year !== undefined ? { year: lot.year } : {}),
       ...(lot.conditionReport ? { conditionReport: lot.conditionReport } : {}),
+      ...(lot.scheduleALineId ? { scheduleALineId: lot.scheduleALineId } : {}),
+      // Always a boolean: snapshots taken before 2026-10-28 have no value,
+      // which means not ticked.
+      severalLots: lot.severalLots === true,
+      ...(lot.scheduleAItemTitle ? { scheduleAItemTitle: lot.scheduleAItemTitle } : {}),
       ...(lot.services?.length
         ? {
             services: lot.services
@@ -2339,7 +3047,21 @@ function publicDeliverySummary(
     filesReady: readiness.filesReady,
     destination: workItem.delivery?.destination || null,
     opTaskDescription: workItem.delivery?.opTaskDescription || null,
-    canCompleteContract: true,
+    // A Proposal list leaves the queue by itself once every listed item is
+    // back (owner 2026-10-28); nobody closes it, so the choice is not offered.
+    canCompleteContract: !isProposalListWorkItem(workItem),
+    ...(isProposalListWorkItem(workItem)
+      ? {
+          proposalList: true,
+          proposalReturn: workItem.delivery?.proposalReturn
+            ? {
+                returnedAt: workItem.delivery.proposalReturn.returnedAt,
+                itemCount: workItem.delivery.proposalReturn.itemCount,
+                remainsInAssetInsight: workItem.delivery.proposalReturn.remainsInAssetInsight,
+              }
+            : null,
+        }
+      : {}),
     contractCompletionScope,
     completeContract: Boolean(workItem.delivery?.completeContract),
     // Set once Auctioneer confirmed the close: this user's part for assigned
@@ -2475,6 +3197,18 @@ async function queueAuctioneerDeliveryLocked(
      is closing on somebody else's behalf — work whose assignment names a user
      other than the one sending it.
   */
+  /*
+     Owner 2026-10-28: a Proposal worked from its list is never closed from
+     Asset Insight. Auctioneer takes it out of the queue once every listed item
+     is returned or not found; a close by one user would end the others' work.
+  */
+  if (input.completeContract === true && isProposalListWorkItem(initial)) {
+    throw new Auctioneer2ServiceError(
+      "A Proposal list leaves Asset Insight by itself once every listed item is returned or marked not found. Send without closing the contract.",
+      409,
+      "auctioneer_proposal_list_no_close"
+    );
+  }
   if (
     input.completeContract === true &&
     initial.assignmentUserId &&
@@ -2571,6 +3305,22 @@ async function queueAuctioneerDeliveryLocked(
         opTaskDescription: validated.opTaskDescription || "",
         completeContract,
       };
+  /*
+     Owner 2026-10-28: no lot on a Schedule A contract is sent until it names
+     its Schedule A item. Refuse here so Send fails at once with something the
+     appraiser can act on, instead of in the background job after other lots
+     were created. The check reads the lots this delivery will actually send
+     (a resumed delivery's frozen manifest) and skips any a failed attempt
+     already created in Auctioneer, since those are never submitted again.
+  */
+  const lotsToSend = isRecord((manifest as any).previewData) && Array.isArray((manifest as any).previewData.lots)
+    ? (manifest as any).previewData.lots
+    : Array.isArray(previewData.lots) ? previewData.lots : [];
+  const checkpoints = resumesCheckpoints ? initial.delivery.lots || [] : [];
+  if (lotsMissingScheduleAItem(initial, lotsToSend, (index) =>
+    Boolean(checkpoints[index]?.createdLotId) || checkpoints[index]?.status === "sent").length) {
+    throw new Auctioneer2ServiceError(SCHEDULE_A_ITEM_REQUIRED_MESSAGE, 409, SCHEDULE_A_ITEM_REQUIRED_CODE);
+  }
   const payloadHash =
     (resumesCheckpoints && initial.delivery.payloadHash) ||
     stableHash(JSON.stringify(manifest));
@@ -2812,8 +3562,17 @@ async function closeAuctioneerContractPartLocked(normalizedContractId: string, u
     status: { $in: CLOSE_ELIGIBLE_WORK_STATES },
   };
   const ownWork = await AuctioneerWorkItem.find(ownWorkFilter)
-    .select({ "contract.contractNo": 1, "delivery.status": 1, contractAccessRevision: 1 })
+    .select({ "contract.contractNo": 1, "delivery.status": 1, contractAccessRevision: 1, proposalList: 1 })
     .lean();
+  // Owner 2026-10-28: on a Proposal worked from its list, Auctioneer treats a
+  // close as closing the whole Proposal for every user; the list ends itself.
+  if (ownWork.some((item: any) => isProposalListWorkItem(item))) {
+    throw new Auctioneer2ServiceError(
+      "A Proposal list leaves Asset Insight by itself once every listed item is returned or marked not found. Return your remaining items, or mark them not found.",
+      409,
+      "auctioneer_proposal_list_no_close"
+    );
+  }
   if (!ownWork.length) {
     // The same answer whether the contract exists, belongs to somebody else
     // or was never assigned: none of those is this user's to close.

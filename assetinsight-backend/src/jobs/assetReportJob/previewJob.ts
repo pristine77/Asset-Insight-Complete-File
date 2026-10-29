@@ -619,6 +619,12 @@ export async function runAssetPreviewJob(
         sourceKey?: string;
         /** The Schedule A line a split lot descends from — carried unsuffixed. */
         sourceParentKey?: string;
+        /**
+         * The Auctioneer lot of the Schedule A item an unknown-work lot was
+         * linked to (owner 2026-10-28). Every lot the group yields belongs to
+         * that one item, so it is copied unchanged onto each of them.
+         */
+        scheduleAParentLotId?: string;
         reviewedLotNumber?: string;
       };
       const rawLots: any[] = Array.isArray(details?.mixed_lots)
@@ -657,6 +663,10 @@ export async function runAssetPreviewJob(
             sourceParentKey:
               typeof entry?.source_parent_key === "string"
                 ? entry.source_parent_key.trim() || undefined
+                : undefined,
+            scheduleAParentLotId:
+              typeof entry?.schedule_a_parent_lot_id === "string"
+                ? entry.schedule_a_parent_lot_id.trim() || undefined
                 : undefined,
           } as MixedMap;
         })
@@ -729,6 +739,7 @@ export async function runAssetPreviewJob(
           mode: subMode,
           sourceKey,
           sourceParentKey,
+          scheduleAParentLotId,
         } = useMappings[lotIdx];
         const end = Math.min(imageUrls.length, base + Math.max(0, count));
         const extraEnd = Math.min(
@@ -802,6 +813,7 @@ export async function runAssetPreviewJob(
               subMode,
               sourceKey,
               sourceParentKey,
+              scheduleAParentLotId,
               currency: selectedCurrency,
               imageUrls,
               mainImageIndexes: mainImageIdxs,
@@ -934,6 +946,9 @@ export async function runAssetPreviewJob(
                   ...(sourceParentKey
                     ? { auctioneer_source_parent_key: sourceParentKey }
                     : {}),
+                  ...(scheduleAParentLotId
+                    ? { schedule_a_parent_lot_id: scheduleAParentLotId }
+                    : {}),
                 });
               }
             } else {
@@ -989,6 +1004,9 @@ export async function runAssetPreviewJob(
                   : {}),
                 ...(sourceParentKey
                   ? { auctioneer_source_parent_key: sourceParentKey }
+                  : {}),
+                ...(scheduleAParentLotId
+                  ? { schedule_a_parent_lot_id: scheduleAParentLotId }
                   : {}),
                 ...(bundleDiagnostic
                   ? {

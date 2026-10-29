@@ -5,6 +5,24 @@
  */
 import { Types } from "mongoose";
 import { resolveScheduleAMapping } from "./auctioneerScheduleAMapping.js";
+import {
+  SCHEDULE_A_ITEM_REQUIRED_CODE,
+  SCHEDULE_A_ITEM_REQUIRED_MESSAGE,
+  SCHEDULE_A_PARENT_LOT_FIELD,
+  inheritScheduleAItemLinks,
+  lotsMissingScheduleAItem,
+  requiresScheduleAItem,
+  scheduleAChoiceParentLotIds,
+  scheduleAParentLotId,
+} from "./auctioneerScheduleAItemLink.js";
+import {
+  PROPOSAL_ITEM_INVALID_CODE,
+  PROPOSAL_ITEM_INVALID_MESSAGE,
+  isProposalListWorkItem,
+  proposalItemSourceKey,
+  proposalLineIdFromSourceKey,
+  proposalLotLineIds,
+} from "./auctioneerProposalList.js";
 import AuctioneerWorkItem, {
   type AuctioneerReportType,
   type IAuctioneerWorkItem,
@@ -77,8 +95,11 @@ function canonicalizeAuctioneerLots(
             "AUCTIONEER_SCHEDULE_A_MAPPING_MISMATCH"
           );
         }
+        // A Schedule A work item links its splits through source_parent_key;
+        // the unknown-work link field means nothing here and is dropped.
+        const { [SCHEDULE_A_PARENT_LOT_FIELD]: _scheduleAParentLotId, ...lineLot } = submitted || {};
         return {
-          ...submitted,
+          ...lineLot,
           mode: "single_lot",
           source_key: key,
           source_parent_key: parentKey || undefined,
@@ -99,6 +120,20 @@ function canonicalizeAuctioneerLots(
       "AUCTIONEER_UNKNOWN_LOT_REQUIRED"
     );
   }
+  if (isProposalListWorkItem(item)) {
+    canonicalizeProposalListLots(details, item, submittedLots);
+    return;
+  }
+  /*
+     Owner 2026-10-28: on a contract with a Schedule A, every lot of this
+     lines-free work item must name the Schedule A item it belongs to, and only
+     an item the work item offers counts (ticked "Several lots", with an
+     Auctioneer lot to create under). Without one the submission is refused
+     before any photo is processed. Anywhere else the link is not accepted, so
+     it can never be forged onto a plain Unknown Lot.
+  */
+  const linkRequired = requiresScheduleAItem(item);
+  const allowedParents = scheduleAChoiceParentLotIds(item);
   details.mixed_lots = submittedLots.map(
     (submitted: Record<string, any>, index: number) => {
       const source = index === 0 ? sourceLots[0] : undefined;
@@ -107,8 +142,17 @@ function canonicalizeAuctioneerLots(
         source_parent_key: _sourceParentKey,
         source_lot_id: _sourceLotId,
         source_submission_id: _sourceSubmissionId,
+        [SCHEDULE_A_PARENT_LOT_FIELD]: _scheduleAParentLotId,
         ...editableLot
       } = submitted || {};
+      const scheduleAParent = linkRequired ? scheduleAParentLotId(submitted) : "";
+      if (linkRequired && !allowedParents.has(scheduleAParent)) {
+        throw new AuctioneerReportContextError(
+          SCHEDULE_A_ITEM_REQUIRED_MESSAGE,
+          409,
+          SCHEDULE_A_ITEM_REQUIRED_CODE
+        );
+      }
       return {
         ...editableLot,
         source_key:
@@ -117,9 +161,111 @@ function canonicalizeAuctioneerLots(
         ...(source?.submissionId
           ? { source_submission_id: source.submissionId }
           : {}),
+        ...(scheduleAParent ? { [SCHEDULE_A_PARENT_LOT_FIELD]: scheduleAParent } : {}),
       };
     }
   );
+}
+
+/*
+   A Proposal worked from its list (owner 2026-10-28). A lot that names one of
+   the user's listed items keeps that item's source key and is one lot — a
+   listed item comes back as exactly one item, so its photos are never split
+   into several lots that would all claim it. Every other lot is an item that
+   was not on the list and gets an ordinary local key. A listed key that is
+   not this user's, or that two lots share, is refused before any photo is
+   processed rather than sent as an extra the appraiser did not intend.
+*/
+function canonicalizeProposalListLots(
+  details: Record<string, any>,
+  item: IAuctioneerWorkItem,
+  submittedLots: Record<string, any>[]
+) {
+  const listed = new Set(
+    (item.proposalList?.items || []).map((entry) => proposalItemSourceKey(entry.lineId))
+  );
+  const used = new Set<string>();
+  details.mixed_lots = submittedLots.map((submitted, index) => {
+    const {
+      source_key: submittedKey,
+      source_parent_key: _sourceParentKey,
+      source_lot_id: _sourceLotId,
+      source_submission_id: _sourceSubmissionId,
+      [SCHEDULE_A_PARENT_LOT_FIELD]: _scheduleAParentLotId,
+      ...editableLot
+    } = submitted || {};
+    const key = typeof submittedKey === "string" ? submittedKey.trim() : "";
+    if (proposalLineIdFromSourceKey(key)) {
+      if (!listed.has(key) || used.has(key)) {
+        throw new AuctioneerReportContextError(
+          PROPOSAL_ITEM_INVALID_MESSAGE,
+          409,
+          PROPOSAL_ITEM_INVALID_CODE
+        );
+      }
+      used.add(key);
+      return { ...editableLot, mode: "single_lot", source_key: key };
+    }
+    return { ...editableLot, source_key: `${String(item._id)}:unknown:${index + 1}` };
+  });
+}
+
+/** The listed items a canonical submission captures (see canonicalizeProposalListLots). */
+function submittedProposalLineIds(details: Record<string, any>): string[] {
+  const lots = Array.isArray(details.mixed_lots) ? details.mixed_lots : [];
+  return proposalLotLineIds(lots).filter(Boolean);
+}
+
+/**
+ * Puts back Schedule A item links a client did not send with its preview data
+ * (owner 2026-10-28). For the other paths that save client preview data —
+ * submit/resubmit and an assigned approver's edits — which must never drop a
+ * link but do not decide it: Send still refuses a lot without a valid one.
+ */
+export function restoreScheduleAItemLinks<T extends Record<string, any>>(
+  previewData: T,
+  previousPreviewData: unknown
+): T {
+  if (!previewData || !Array.isArray(previewData.lots)) return previewData;
+  const previousLots = (previousPreviewData as any)?.lots;
+  if (!Array.isArray(previousLots) || !previousLots.length) return previewData;
+  return { ...previewData, lots: inheritScheduleAItemLinks(previewData.lots, previousLots) };
+}
+
+/**
+ * Applies the Schedule A item rule to a preview edit of a report linked to an
+ * Auctioneer work item (owner 2026-10-28): a lot may not be left, or added,
+ * without a valid schedule_a_parent_lot_id while the work item still has to
+ * be sent. Links the client did not send back are restored first (see
+ * inheritScheduleAItemLinks), so an editor that does not know the field never
+ * loses them. Returns the preview data to save; throws the same 409 as
+ * report submission. A report with no work item costs no read; sent work and
+ * work items that need no item are never refused.
+ */
+export async function applyPreviewScheduleAItemRule<T extends Record<string, any>>(input: {
+  workItemId: unknown;
+  previewData: T;
+  previousPreviewData: unknown;
+}): Promise<T> {
+  const previewData = restoreScheduleAItemLinks(input.previewData, input.previousPreviewData);
+  if (!Array.isArray(previewData?.lots)) return previewData;
+  const workItemId = asObjectId(plainId(input.workItemId));
+  if (!workItemId) return previewData;
+  const item = await AuctioneerWorkItem.findById(workItemId)
+    .select("kind contract.hasScheduleA scheduleAChoices proposalList status delivery.status")
+    .lean();
+  if (!item || !requiresScheduleAItem(item as any) ||
+      item.status === "sent" || item.delivery?.status === "sent") {
+    return previewData;
+  }
+  if (lotsMissingScheduleAItem(item as any, previewData.lots).length) {
+    throw new AuctioneerReportContextError(
+      SCHEDULE_A_ITEM_REQUIRED_MESSAGE,
+      409,
+      SCHEDULE_A_ITEM_REQUIRED_CODE
+    );
+  }
+  return previewData;
 }
 
 export function applyCanonicalAuctioneerDetails(
@@ -208,6 +354,19 @@ export async function resolveAuctioneerReportContext(input: {
   }
 
   applyCanonicalAuctioneerDetails(input.details, item);
+  if (isProposalListWorkItem(item)) {
+    /*
+       Owner 2026-10-28: remember which listed items this submission captures,
+       so a "Create Lot & Continue" successor does not offer them again while
+       this report is on its way. Each submission of the work item replaces
+       the record; a write that loses a race only affects what is offered.
+    */
+    const lineIds = submittedProposalLineIds(input.details);
+    await AuctioneerWorkItem.updateOne(
+      { _id: item._id, status: { $in: ["claimed", "report_created"] } },
+      { $set: { proposalCapturedLineIds: lineIds } }
+    );
+  }
   return item;
 }
 

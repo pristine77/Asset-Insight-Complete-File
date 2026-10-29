@@ -57,12 +57,21 @@ import { captureAuthSession, assertAuthSessionCurrent, isAuthSessionCurrent } fr
 import { isUploadReviewScope, type UploadReviewIdentity } from "@/services/uploadReviewNavigation";
 import SeparateReportDraftRecovery from "./SeparateReportDraftRecovery";
 import {
+  SCHEDULE_A_CHOICE_REQUIRED_MESSAGE,
+  SCHEDULE_A_ITEM_REQUIRED_CODE,
   auctioneerDateOnly,
   auctioneerDraftScope,
   auctioneerIndustry,
   buildAuctioneerSeedLots,
+  currentScheduleAParentLotId,
+  proposalItemLot,
+  scheduleAChoicesFor,
+  scheduleAItemError,
+  withCurrentSeveralLots,
   type AuctioneerFormIntegration,
 } from "./auctioneerSeed";
+import ScheduleAItemField from "./ScheduleAItemField";
+import ProposalListField from "./ProposalListField";
 import {
   getMixedFileKey,
   type MixedLot,
@@ -184,9 +193,18 @@ type AssetDraftFormData = UploadReviewIdentity & {
   factorsAgeCondition: string;
   factorsQuality: string;
   factorsAnalysis: string;
+  /**
+   * The Schedule A item every lot in this form is sent against, saved only on
+   * a work item that asks for one (owner 2026-10-28).
+   */
+  scheduleAParentLotId?: string;
 };
 
-export type AssetContinuationDetails = Omit<AssetDraftFormData, "clientSubmissionId" | "auctioneerWorkItemId">;
+/*
+   The Schedule A item is not carried into the next form: each form is its own
+   batch, and the appraiser chooses its item afresh (owner 2026-10-28).
+*/
+export type AssetContinuationDetails = Omit<AssetDraftFormData, "clientSubmissionId" | "auctioneerWorkItemId" | "scheduleAParentLotId">;
 
 type LegacyAssetDraftEnvelope = {
   version: 2;
@@ -425,6 +443,15 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   const [mixedLots, setMixedLots] = useState<MixedLot[]>(() =>
     buildAuctioneerSeedLots(auctioneer)
   );
+  /*
+     Owner 2026-10-28: on a work item that requires it, the appraiser chooses
+     which Schedule A item this form's lots belong to. The kept choice only
+     counts while the current setup still offers it (see
+     currentScheduleAParentLotId), so a stale draft choice reads as none.
+  */
+  const requiresScheduleAItem = auctioneer?.requiresScheduleAItem === true;
+  const [scheduleAChoice, setScheduleAChoice] = useState("");
+  const scheduleAParentLotId = currentScheduleAParentLotId(auctioneer, scheduleAChoice);
 
 
   const [openSections, setOpenSections] = useState<Set<SectionId>>(
@@ -603,6 +630,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     factorsAgeCondition,
     factorsQuality,
     factorsAnalysis,
+    ...(requiresScheduleAItem ? { scheduleAParentLotId } : {}),
   };
 
   const locationStateRef = useRef({ location, latitude, longitude });
@@ -654,6 +682,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       factorsAgeCondition,
       factorsQuality,
       factorsAnalysis,
+      scheduleAParentLotId,
       mixedLots,
     ]
   );
@@ -976,6 +1005,9 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     if (typeof formData.factorsAgeCondition === "string") setFactorsAgeCondition(formData.factorsAgeCondition);
     if (typeof formData.factorsQuality === "string") setFactorsQuality(formData.factorsQuality);
     if (typeof formData.factorsAnalysis === "string") setFactorsAnalysis(formData.factorsAnalysis);
+    if (typeof formData.scheduleAParentLotId === "string") {
+      setScheduleAChoice(formData.scheduleAParentLotId);
+    }
   };
 
   const restoreLocalDraft = async (): Promise<boolean> => {
@@ -1073,7 +1105,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     committedRevisionRef.current = envelope.revision || 0;
     restoredLocationMigrationDirtyRef.current = false;
     restoreFormFields(envelope.formData || {});
-    setMixedLots(restoredLots);
+    setMixedLots(withCurrentSeveralLots(restoredLots, auctioneer));
     if (missingMediaCount) {
       setDraftGuidance({
         tone: "warning",
@@ -1186,6 +1218,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       ),
       factorsQuality: textValue("factorsQuality", "factors_quality"),
       factorsAnalysis: textValue("factorsAnalysis", "factors_analysis"),
+      scheduleAParentLotId: textValue("scheduleAParentLotId"),
     });
 
     const restoredLots: MixedLot[] =
@@ -1193,7 +1226,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
         ? []
         : await ReportDraftService.restoreLots<MixedLot>(record, { signal });
     signal.throwIfAborted();
-    setMixedLots(restoredLots);
+    setMixedLots(withCurrentSeveralLots(restoredLots, auctioneer));
     jobIdRef.current = record.clientDraftId;
     if (record.storageMode === "smart_upload") {
       setDraftGuidance(null);
@@ -1500,6 +1533,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     setIncludeValuationTable(false);
     setSelectedValuationMethods(["FML"]);
     setMixedLots(buildAuctioneerSeedLots(auctioneer));
+    setScheduleAChoice("");
     setErrors({});
     setError(null);
     setUploadProgress(0);
@@ -1712,6 +1746,10 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       ) {
         nextErrors.media = `Every lot needs a mode and a main photo, with no more than ${MAX_ASSET_LOT_PHOTOS} main and report-only photos combined.`;
       }
+      // Owner 2026-10-28: no lot leaves for a Schedule A contract without its
+      // item. Nothing is added when the work item does not ask for one.
+      const scheduleAError = scheduleAItemError(auctioneer, scheduleAParentLotId);
+      if (scheduleAError) nextErrors.scheduleAItem = scheduleAError;
     }
     setErrors(nextErrors);
     if (!Object.keys(nextErrors).length) return true;
@@ -1724,12 +1762,13 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       "currency",
       "location",
       "valuationMethods",
+      "scheduleAItem",
       "media",
     ].find((key) => nextErrors[key]);
     const section: SectionId =
       firstKey === "valuationMethods"
         ? "comparison"
-        : firstKey === "media"
+        : firstKey === "media" || firstKey === "scheduleAItem"
           ? "media"
           : "report";
     setOpenSections((current) => new Set(current).add(section));
@@ -1826,6 +1865,17 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     if (mixedLots.length > 0) {
       toast.info(
         "Smart Upload starts with an empty media form. Clear the manually created lots first."
+      );
+      return;
+    }
+    /*
+       Owner 2026-10-28: a lot on this contract may not be sent without its
+       Schedule A item, and Smart Upload's lots are formed on the server, where
+       the item chosen here cannot be attached to them.
+    */
+    if (requiresScheduleAItem) {
+      toast.info(
+        "Smart Upload cannot be used here because each lot must name its Schedule A item. Add the lots in this form instead."
       );
       return;
     }
@@ -1994,6 +2044,13 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
             source_lot_id: lot.source.lotId,
             source_submission_id: lot.source.submissionId,
           }),
+          /*
+             The Schedule A item the appraiser chose for this form, on every
+             lot (one form batch = one item, owner 2026-10-28). Outside the
+             source block because lots added on an unknown work item have no
+             source. Empty, and so absent, unless the work item asks for it.
+          */
+          ...(scheduleAParentLotId && { schedule_a_parent_lot_id: scheduleAParentLotId }),
         })),
         ...(focusBoxes.length ? { focus_boxes: focusBoxes } : {}),
       } as AssetCreateDetails & {
@@ -2004,17 +2061,30 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
 
       /*
          Hand the upload to the background line and close the form, unless this
-         submission needs to stay here. Auctioneer work does: its continuation
-         can only be requested against an accepted reportId, and the decision
-         prompts (active report, changed manifest, separate draft) live in this
-         component. A draft whose last background attempt hit one of those is
-         marked foreground, so its next Submit runs inline where it can be
-         answered.
+         submission needs to stay here. Auctioneer work items hand off too
+         (owner, 2026-10-29): "Create Lot & Close" and a plain submit send the
+         work item in the payload, so the server links the report exactly as
+         an inline upload would. Three cases stay:
+         - "Create Lot & Continue". The next work item can only be requested
+           against the reportId of an accepted upload, and the website cannot
+           reserve it earlier (the server's pre-acceptance reservation is for
+           approved phones only). A next form opened sooner would not know its
+           work item, submission identity, Schedule A choices or Proposal list.
+         - A saved upload's review copy, which exists to answer a question.
+         - A draft whose last background attempt needed a decision only this
+           form can offer (active report, changed manifest, separate draft, a
+           Schedule A item or any other Auctioneer refusal; the manager adds
+           auctioneerRefusalNeedsForm to assetSubmissionNeedsForm). The mark is
+           kept in this tab and on the saved upload, so it survives a reload;
+           the next Submit runs inline where the question can be answered.
       */
+      const continuing = Boolean(continueWithNewLot && auctioneer && onAcceptedAndContinue);
       const mustStayInForm =
-        Boolean(auctioneer) ||
+        continuing ||
         isUploadReviewScope(draftScopeId) ||
-        backgroundUploads.isForegroundRequired("asset", draftScopeId);
+        (await backgroundUploads.requiresFormSubmission(userId, "asset", draftScopeId, jobId, { signal: controller.signal }));
+      assertAuthSessionCurrent(submitSession);
+      controller.signal.throwIfAborted();
       if (!mustStayInForm) {
         const orderedFiles = [...filesToSend, ...videosToSend];
         setPreparingBackgroundUpload(true);
@@ -2130,7 +2200,6 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       setAcceptedMessage(accepted);
       toast.success(accepted);
       saveRevisionRef.current += 1;
-      const continuing = Boolean(continueWithNewLot && auctioneer && onAcceptedAndContinue);
       if (continuing) {
         // Acceptance, not old-draft cleanup or background analysis, authorizes
         // the next-work-item request. The parent hides this accepted form now.
@@ -2199,6 +2268,20 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
           );
         }
         publishDraftStatus("dirty", "New upload identity required");
+      } else if (
+        submitError?.response?.status === 409 &&
+        submitError?.response?.data?.code === SCHEDULE_A_ITEM_REQUIRED_CODE
+      ) {
+        /*
+           The server's own wording, shown as a field error on the picker it
+           refers to; the "Review required information" alert repeats it at
+           the top, as it does for the form's own validation.
+        */
+        const message = safeReportOperationError(submitError, SCHEDULE_A_CHOICE_REQUIRED_MESSAGE);
+        setErrors((current) => ({ ...current, scheduleAItem: message }));
+        setOpenSections((current) => new Set(current).add("media"));
+        toast.error(message);
+        publishDraftStatus("dirty", "Submission failed · unsaved changes");
       } else {
         if (!auctioneer && canSaveSeparateReportDraft(submitError)) {
           const sessionId = reportTransferErrorData(submitError).data.sessionId;
@@ -2717,11 +2800,44 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
               title="Lots & Media"
               description={`Create lots, select a grouping mode, and add up to ${MAX_ASSET_LOT_PHOTOS} main and report-only photos per lot.`}
               summary={`${mixedLots.length} lot${mixedLots.length === 1 ? "" : "s"} · ${mediaTotals.photos} photo${mediaTotals.photos === 1 ? "" : "s"}${mediaTotals.videos ? ` · ${mediaTotals.videos} video${mediaTotals.videos === 1 ? "" : "s"}` : ""}`}
-              errorSummary={errors.media}
-              status={errors.media ? "error" : mediaTotals.photos > 0 ? "complete" : "incomplete"}
+              errorSummary={errors.media || errors.scheduleAItem}
+              status={errors.media || errors.scheduleAItem ? "error" : mediaTotals.photos > 0 ? "complete" : "incomplete"}
               open={openSections.has("media")}
               onOpenChange={(open) => toggleSection("media", open)}
             >
+              {requiresScheduleAItem ? (
+                <ScheduleAItemField
+                  id="asset-scheduleAItem"
+                  choices={scheduleAChoicesFor(auctioneer)}
+                  value={scheduleAParentLotId}
+                  onChange={(parentLotId) => {
+                    setScheduleAChoice(parentLotId);
+                    clearFieldError("scheduleAItem");
+                  }}
+                  error={errors.scheduleAItem}
+                  disabled={submitting}
+                />
+              ) : null}
+              {auctioneer?.proposalList ? (
+                <ProposalListField
+                  id="asset-proposalList"
+                  integration={auctioneer}
+                  lots={mixedLots}
+                  disabled={submitting}
+                  onAddItem={(item) =>
+                    setMixedLots((current) =>
+                      current.some((lot) => lot.source?.key === item.sourceKey)
+                        ? current
+                        : [...current, proposalItemLot(auctioneer, item)]
+                    )
+                  }
+                  onItemNotFound={(item) =>
+                    setMixedLots((current) =>
+                      current.filter((lot) => lot.source?.key !== item.sourceKey)
+                    )
+                  }
+                />
+              ) : null}
               <div
                 id="asset-media-workspace"
                 tabIndex={-1}

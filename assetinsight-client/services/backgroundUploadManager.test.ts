@@ -128,6 +128,44 @@ describe("durable background upload manager", () => {
     expect(store.markResumableNeedsForm).toHaveBeenCalledWith("owner-1", "asset", "scope-1", "submission-1", expect.any(Object));
     manager.resume(id); expect(f.upload).toHaveBeenCalledOnce();
   });
+  /*
+     Owner 2026-10-29: Auctioneer work items upload in the background too. Their
+     refusals go back to the form even without the form's own predicate (a job
+     rebuilt by Finish upload has none), and whatever their HTTP status.
+  */
+  it.each([
+    { status: 409, code: "AUCTIONEER_SCHEDULE_A_ITEM_REQUIRED", message: "Choose which Schedule A item this lot belongs to." },
+    { status: 400, code: "AUCTIONEER_UNKNOWN_LOT_REQUIRED", message: "At least one Unknown Lot is required." },
+    { status: 403, code: "AUCTIONEER_WORK_ITEM_NOT_OWNER", message: "This Auctioneer contract is claimed by another user." },
+  ])("sends an Auctioneer $code refusal back to the form, never to Resume", async ({ status, code, message }) => {
+    const f = fixture(); const id = await manager.enqueue(f.request); await flush();
+    f.result.reject({ message: `Request failed with status code ${status}`, response: { status, data: { code, message } } }); await flush(); await flush();
+    const held = manager.getSnapshot().held[0];
+    expect(held.needsForm).toBe(true); expect(held.message).toContain(message);
+    expect(manager.isForegroundRequired("asset", "scope-1")).toBe(true);
+    expect(store.markResumableNeedsForm).toHaveBeenCalledWith("owner-1", "asset", "scope-1", "submission-1", expect.any(Object));
+    manager.resume(id); await flush(); expect(f.upload).toHaveBeenCalledOnce();
+    expect(store.forgetResumableUpload).not.toHaveBeenCalled();
+  });
+  it("keeps a transient failure resumable from the bar", async () => {
+    const f = fixture(); const id = await manager.enqueue(f.request); await flush();
+    f.result.reject({ message: "Request failed with status code 503", response: { status: 503, data: {} } }); await flush(); await flush();
+    expect(manager.getSnapshot().held[0].needsForm).toBe(false); expect(store.markResumableNeedsForm).not.toHaveBeenCalled();
+    manager.resume(id); await flush(); expect(f.upload).toHaveBeenCalledTimes(2);
+  });
+  it("requires an inline submit for an identity sent back for review, in this tab or saved before a reload", async () => {
+    expect(await manager.requiresFormSubmission("owner-1", "asset", "scope-1", "submission-1")).toBe(false);
+    expect(store.getResumableUpload).toHaveBeenCalledWith("owner-1", "asset", "scope-1", "submission-1", undefined);
+    manager.markForegroundReview("asset", "scope-1");
+    expect(await manager.requiresFormSubmission("owner-1", "asset", "scope-1", "submission-1")).toBe(true);
+    manager.resetForTests(); manager.setOwner("owner-1");
+    store.getResumableUpload.mockResolvedValueOnce({ needsForm: true });
+    expect(await manager.requiresFormSubmission("owner-1", "asset", "scope-1", "submission-1")).toBe(true);
+    store.getResumableUpload.mockResolvedValueOnce({ needsForm: false });
+    expect(await manager.requiresFormSubmission("owner-1", "asset", "scope-1", "submission-1")).toBe(false);
+    store.getResumableUpload.mockRejectedValueOnce(new Error("IndexedDB unavailable"));
+    expect(await manager.requiresFormSubmission("owner-1", "asset", "scope-1", "submission-1")).toBe(false);
+  });
   it("keeps success truthful even when exact local cleanup fails", async () => {
     const f = fixture(); store.forgetResumableUpload.mockRejectedValue(new Error("quota"));
     await manager.enqueue(f.request); await flush(); f.result.resolve({ reportId: "r1", accepted: true }); await flush();

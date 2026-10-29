@@ -6,7 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuctioneerWorkItemSetup } from "@/services/auctioneer";
 import type { ReportDraftRecord } from "@/services/reportDrafts";
 import LotListingForm from "./LotListingForm";
@@ -42,9 +42,25 @@ vi.mock("@/services/backgroundUploadManager", () => ({
   backgroundUploads: {
     enqueue: mocks.enqueue,
     isForegroundRequired: mocks.isForegroundRequired,
+    // One switch for both marks (this tab's, and a saved upload's after reload).
+    requiresFormSubmission: async (_ownerId: string, kind: string, scopeId?: string) =>
+      Boolean(mocks.isForegroundRequired(kind, scopeId)),
     clearForegroundRequirement: vi.fn(),
   },
 }));
+
+/**
+ * Lets the mocked line start each handed-off upload, as the real one does
+ * right after hand-off, so a test can read what reaches the transport.
+ */
+function runEnqueuedUploads() {
+  mocks.enqueue.mockImplementation(async (request: BackgroundUploadRequest) => {
+    setTimeout(() => {
+      void Promise.resolve(request.upload(() => undefined, new AbortController().signal)).catch(() => undefined);
+    }, 0);
+    return "background-job";
+  });
+}
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push }),
@@ -541,6 +557,7 @@ describe("LotListingForm explicit save and upload workflow", () => {
   });
 
   it("prefills edited continuation details while keeping fresh media", async () => {
+    runEnqueuedUploads();
     render(<LotListingForm auctioneer={makeAuctioneerSetup("unknown")} continuationDetails={{ location: "Edited yard", salesDate: "2026-10-05", currency: "USD", bankPhotosEnabled: true, watermarkImages: true }} />);
     expect(screen.getByRole("textbox", { name: /contract number/i })).toHaveValue("IMPORTED-100");
     expect(screen.getByDisplayValue("Edited yard")).toBeVisible();
@@ -550,6 +567,52 @@ describe("LotListingForm explicit save and upload workflow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
     await waitFor(() => expect(mocks.uploadReportFilesDirectToR2).toHaveBeenCalledOnce());
     expect(mocks.uploadReportFilesDirectToR2.mock.calls[0][0].details).toMatchObject({ sales_date: "2026-10-05", location: "Edited yard", currency: "USD" });
+  });
+
+  /*
+     Owner 2026-10-29: "i thought the job works in the background and not hold
+     up the screen". Create Lot & Close on an Auctioneer work item hands its
+     upload to the line like any listing; the payload names the work item.
+  */
+  it("hands Create Lot & Close for an Auctioneer work item to the background and frees the screen", async () => {
+    const persistence = deferred<string>();
+    const onAcceptedAndContinue = vi.fn();
+    const onSuccess = vi.fn();
+    const auctioneer = makeAuctioneerSetup("scheduleA");
+    mocks.enqueue.mockReturnValueOnce(persistence.promise);
+    mocks.uploadReportFilesDirectToR2.mockResolvedValueOnce({ reportId: "accepted-in-background", jobId: "accepted-job", status: "processing" });
+    render(<LotListingForm auctioneer={auctioneer} onAcceptedAndContinue={onAcceptedAndContinue} onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot & Close" }));
+
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    const request = mocks.enqueue.mock.calls[0][0] as BackgroundUploadRequest;
+    expect(request).toMatchObject({
+      ownerId: "user-1", kind: "lot-listing", endpoint: "/lot-listing", title: auctioneer.contract.contractNo,
+      scopeId: auctioneer.clientSubmissionId, clientSubmissionId: auctioneer.clientSubmissionId,
+    });
+    expect(request.details).toMatchObject({
+      auctioneer_work_item_id: auctioneer.workItemId,
+      client_submission_id: auctioneer.clientSubmissionId,
+      contract_no: auctioneer.contract.contractNo,
+    });
+    // A review copy of this saved upload must reopen against the same work item.
+    expect(request.draftSnapshot).toMatchObject({ data: { auctioneerWorkItemId: auctioneer.workItemId, clientSubmissionId: auctioneer.clientSubmissionId } });
+    expect(mocks.uploadReportFilesDirectToR2).not.toHaveBeenCalled();
+
+    await act(async () => persistence.resolve("background-job"));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("while this tab stays open")));
+    expect(screen.queryByRole("dialog", { name: "Uploading your report" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Lot & Close" })).toBeEnabled();
+    expect(request.signal?.aborted).toBe(false);
+    expect(onAcceptedAndContinue).not.toHaveBeenCalled();
+    expect(mocks.deleteByClientId).not.toHaveBeenCalled();
+
+    // The line sends exactly the payload the inline path would have sent.
+    await act(async () => { await request.upload(vi.fn(), new AbortController().signal); });
+    expect(mocks.uploadReportFilesDirectToR2).toHaveBeenCalledOnce();
+    expect(mocks.uploadReportFilesDirectToR2.mock.calls[0][0].details).toMatchObject(request.details);
+    expect(onAcceptedAndContinue).not.toHaveBeenCalled();
   });
 
   it.each(["unknown", "scheduleA"] as const)(
@@ -637,6 +700,7 @@ describe("LotListingForm explicit save and upload workflow", () => {
       const onSuccess = vi.fn();
       mocks.uploadReportFilesDirectToR2.mockReturnValue(pending.promise);
       mocks.upsertWithMedia.mockReturnValue(pending.promise);
+      runEnqueuedUploads();
       render(<LotListingForm auctioneer={makeAuctioneerSetup()} onAcceptedAndContinue={onAcceptedAndContinue} onSuccess={onSuccess} />);
       fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
       const actions = {
@@ -658,6 +722,8 @@ describe("LotListingForm explicit save and upload workflow", () => {
         await waitFor(() => expect(mocks.uploadReportFilesDirectToR2).toHaveBeenCalledOnce());
         expect(mocks.upsertWithMedia).not.toHaveBeenCalled();
       }
+      // Close hands off to the upload line (owner, 2026-10-29); Continue stays inline.
+      expect(mocks.enqueue).toHaveBeenCalledTimes(first === "normal" ? 1 : 0);
       await act(async () => pending.resolve({ _id: "saved-draft", media: [], reportId: "accepted-single-flight", jobId: "accepted-job", status: "processing" }));
       if (first === "continue") {
         await waitFor(() => expect(onAcceptedAndContinue).toHaveBeenCalledExactlyOnceWith("accepted-single-flight", expect.objectContaining({ contractNo: "IMPORTED-100" })));
@@ -726,18 +792,150 @@ describe("LotListingForm explicit save and upload workflow", () => {
     mocks.restoreLots.mockResolvedValueOnce(lots);
     mocks.deleteScopedDraft.mockClear();
     mocks.uploadReportFilesDirectToR2.mockResolvedValueOnce({ reportId: "successor-accepted", jobId: "accepted-job", status: "processing" });
+    runEnqueuedUploads();
     render(<LotListingForm auctioneer={next} resumeDraft={resumeDraft} onSuccess={onSuccess} />);
     await waitFor(() => expect(screen.getByTestId("selected-listing-media")).toHaveTextContent("lot-photo.jpg"));
     fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
     await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
 
+    // The saved draft's identity is the upload's: the line keeps its media under it.
+    expect(mocks.enqueue.mock.calls[0][0]).toMatchObject({ scopeId: next.clientSubmissionId, clientSubmissionId: next.clientSubmissionId });
+    await waitFor(() => expect(mocks.uploadReportFilesDirectToR2).toHaveBeenCalledOnce());
     expect(mocks.uploadReportFilesDirectToR2.mock.calls[0][0].details).toMatchObject({
       auctioneer_work_item_id: next.workItemId,
       client_submission_id: next.clientSubmissionId,
       contract_no: previous.contract.contractNo,
     });
-    expect(mocks.deleteByClientId).toHaveBeenCalledExactlyOnceWith(next.clientSubmissionId, "lot-listing");
-    expect(mocks.deleteScopedDraft).toHaveBeenCalledExactlyOnceWith("user-1", "lot-listing", next.clientSubmissionId);
+    // A handed-off upload never deletes its draft; the server does on acceptance.
+    expect(mocks.deleteByClientId).not.toHaveBeenCalled();
+    expect(mocks.deleteScopedDraft).not.toHaveBeenCalled();
+  });
+
+  /*
+     Owner 2026-10-28: a successor work item on a Schedule A contract sends
+     nothing until the appraiser chooses the item its lots belong to; the one
+     choice covers every lot in the listing.
+  */
+  describe("Schedule A item choice", () => {
+    const CHOOSE = "Choose which Schedule A item these lots belong to.";
+    const choices = [
+      { lineId: "line-1", title: "2021 Ford F150", parentLotId: "lot-10" },
+      { lineId: "line-2", title: "Misc Shop Tools", parentLotId: "lot-20" },
+    ];
+    const requiringSetup = (scheduleAChoices = choices): AuctioneerWorkItemSetup => ({
+      ...makeAuctioneerSetup("unknown"),
+      requiresScheduleAItem: true,
+      scheduleAChoices,
+    });
+    const picker = () => screen.getByRole("combobox", { name: /Schedule A item/i });
+    const submittedDetails = () => mocks.uploadReportFilesDirectToR2.mock.calls[0][0].details;
+    // An invalid section focuses and scrolls to its field, which jsdom lacks.
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    beforeAll(() => {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+    });
+    afterAll(() => {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: originalScrollIntoView });
+      } else {
+        delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    });
+
+    it("blocks the upload until an item is chosen, then sends it on the lot", async () => {
+      mocks.uploadReportFilesDirectToR2.mockResolvedValueOnce({ reportId: "schedule-a-listing", jobId: "accepted-job", status: "processing" });
+      runEnqueuedUploads();
+      render(<LotListingForm auctioneer={requiringSetup()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+      expect(await screen.findAllByText(CHOOSE)).not.toHaveLength(0);
+      await waitFor(() => expect(picker()).toHaveFocus());
+      expect(mocks.uploadReportFilesDirectToR2).not.toHaveBeenCalled();
+
+      fireEvent.change(picker(), { target: { value: "lot-10" } });
+      expect(screen.queryByText(CHOOSE)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+      await waitFor(() => expect(mocks.uploadReportFilesDirectToR2).toHaveBeenCalledOnce());
+      expect(submittedDetails().mixed_lots).toEqual([
+        expect.objectContaining({ schedule_a_parent_lot_id: "lot-10", mode: "single_lot" }),
+      ]);
+    });
+
+    it("explains in place of the picker when no item is ticked Several lots", async () => {
+      render(<LotListingForm auctioneer={requiringSetup([])} />);
+      const explanation = "No Schedule A item on this contract is marked Several lots in Auctioneer 2.0. Ask the office to tick it on the contract, then try again.";
+      expect(screen.getByText(explanation)).toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: /Schedule A item/i })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+      expect(await screen.findByText("Review the highlighted fields before submitting.")).toBeInTheDocument();
+      expect(mocks.uploadReportFilesDirectToR2).not.toHaveBeenCalled();
+    });
+
+    it("shows the server's refusal when Auctioneer still lacks the item", async () => {
+      const refusal = "Choose which Schedule A item this lot belongs to.";
+      mocks.uploadReportFilesDirectToR2.mockRejectedValueOnce({
+        response: { status: 409, data: { code: "AUCTIONEER_SCHEDULE_A_ITEM_REQUIRED", message: refusal } },
+      });
+      // A background attempt was sent back with this refusal, so the reopened
+      // draft submits inline where the picker can answer it (owner, 2026-10-29).
+      mocks.isForegroundRequired.mockReturnValue(true);
+      render(<LotListingForm auctioneer={requiringSetup()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
+      fireEvent.change(picker(), { target: { value: "lot-20" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+
+      await waitFor(() => expect(screen.getAllByText(refusal).length).toBeGreaterThan(1));
+      expect(picker()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByTestId("selected-listing-media")).toHaveTextContent("lot-photo.jpg");
+    });
+
+    it("keeps the choice in the draft and drops it when the refreshed setup no longer offers it", async () => {
+      mocks.upsertWithMedia.mockResolvedValueOnce({ _id: "schedule-a-draft", media: [] });
+      const first = render(<LotListingForm auctioneer={requiringSetup()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
+      fireEvent.change(picker(), { target: { value: "lot-20" } });
+      fireEvent.click(screen.getAllByRole("button", { name: "Save Draft" })[0]);
+      await waitFor(() => expect(mocks.upsertWithMedia).toHaveBeenCalledOnce());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Saving your draft" })).not.toBeInTheDocument());
+      const [saved, lots] = mocks.upsertWithMedia.mock.calls[0];
+      expect(saved.formData.scheduleAParentLotId).toBe("lot-20");
+      first.unmount();
+
+      const resumeDraft: ReportDraftRecord = {
+        ...makeLotResumeDraft(),
+        clientDraftId: saved.clientDraftId,
+        contractNo: saved.contractNo,
+        revision: saved.revision,
+        formData: saved.formData,
+        lots,
+      };
+      mocks.restoreLots.mockResolvedValue(lots);
+      const reopened = render(<LotListingForm auctioneer={requiringSetup()} resumeDraft={resumeDraft} />);
+      await waitFor(() => expect(screen.getByTestId("selected-listing-media")).toHaveTextContent("lot-photo.jpg"));
+      expect(picker()).toHaveValue("lot-20");
+      reopened.unmount();
+
+      render(<LotListingForm auctioneer={requiringSetup([choices[0]])} resumeDraft={resumeDraft} />);
+      await waitFor(() => expect(screen.getByTestId("selected-listing-media")).toHaveTextContent("lot-photo.jpg"));
+      expect(picker()).toHaveValue("");
+      fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+      expect(await screen.findAllByText(CHOOSE)).not.toHaveLength(0);
+      expect(mocks.uploadReportFilesDirectToR2).not.toHaveBeenCalled();
+    });
+
+    it("changes nothing on a work item that does not ask for an item", async () => {
+      mocks.uploadReportFilesDirectToR2.mockResolvedValueOnce({ reportId: "plain-listing", jobId: "accepted-job", status: "processing" });
+      runEnqueuedUploads();
+      render(<LotListingForm auctioneer={{ ...makeAuctioneerSetup("unknown"), requiresScheduleAItem: false, scheduleAChoices: choices }} />);
+      expect(screen.queryByRole("combobox", { name: /Schedule A item/i })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
+      fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+      await waitFor(() => expect(mocks.uploadReportFilesDirectToR2).toHaveBeenCalledOnce());
+      expect(submittedDetails().mixed_lots[0]).not.toHaveProperty("schedule_a_parent_lot_id");
+    });
   });
 
   it("defaults new Lot Listings to no watermark and allows explicit opt-in", async () => {

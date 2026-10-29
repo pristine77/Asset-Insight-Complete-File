@@ -78,6 +78,7 @@ import {
 import { normalizeLotListingValuationMethods } from "../utils/lotListingValuationMethods.js";
 import { findCurrentReportFileGenerationJob } from "../service/reportDraftPromotionService.js";
 import { buildLotListingPreviewPersistence } from "../utils/lotListingPreviewPersistence.js";
+import { restoreScheduleAItemLinks } from "../service/auctioneerReportLinkService.js";
 import {
   ensureReportJobOutbox,
   shouldUseMongoReportQueue,
@@ -307,7 +308,9 @@ async function ensureAssignedLotListingGenerationHandoff(report: any) {
 function preserveCrDisclaimers(nextPreviewData: any, previousPreviewData: any) {
   if (!nextPreviewData || typeof nextPreviewData !== "object") return nextPreviewData;
   return {
-    ...nextPreviewData,
+    // Owner 2026-10-28: an approver's edit never drops a lot's Schedule A
+    // item link; the appraiser chose it and Send still checks it.
+    ...restoreScheduleAItemLinks(nextPreviewData, previousPreviewData),
     ...(!nextPreviewData.cr_disclaimers && previousPreviewData?.cr_disclaimers
       ? { cr_disclaimers: previousPreviewData.cr_disclaimers }
       : {}),

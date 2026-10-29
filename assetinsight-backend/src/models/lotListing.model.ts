@@ -10,6 +10,12 @@ export interface ILotListingLot {
   lot_id: string;
   auctioneer_source_key?: string;
   auctioneer_source_parent_key?: string;
+  /**
+   * The Auctioneer lot of the Schedule A item this lot belongs to, chosen by
+   * the appraiser on a Schedule A contract's extra (unknown) work (owner
+   * 2026-10-28). Sent as scheduleAParentRef when the lot is created.
+   */
+  schedule_a_parent_lot_id?: string;
   lot_number: string | number;
   title?: string;
   description?: string;
@@ -67,6 +73,7 @@ export interface ILotListing extends Document {
     video_count?: number;
     cover_index?: number;
     mode: LotListingMode;
+    schedule_a_parent_lot_id?: string;
   }>;
   status: 'processing' | 'preview' | 'pending_approval' | 'approved' | 'declined' | 'completed' | 'error';
   preview_data?: {
@@ -196,6 +203,7 @@ const LotListingLotSchema: Schema<ILotListingLot> = new Schema(
     lot_id: { type: String, required: true },
     auctioneer_source_key: { type: String },
     auctioneer_source_parent_key: { type: String },
+    schedule_a_parent_lot_id: { type: String },
     lot_number: { type: Schema.Types.Mixed, required: true },
     title: { type: String },
     description: { type: String },
@@ -245,6 +253,9 @@ const MixedLotMappingSchema = new Schema(
     video_count: { type: Number, default: 0 },
     cover_index: { type: Number, default: 0 },
     mode: { type: String, enum: ["single_lot", "per_item", "per_photo"], required: true },
+    // Owner 2026-10-28: kept with the saved batch so a recovered submission
+    // still names the Schedule A item the appraiser chose.
+    schedule_a_parent_lot_id: { type: String },
   },
   { _id: false }
 );

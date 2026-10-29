@@ -9,10 +9,20 @@ const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   continueWorkItem: vi.fn(),
   getSetup: vi.fn(),
+  loadScopedDraft: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.routerPush }),
+}));
+
+vi.mock("@/context/AuthContext", () => ({
+  useAuthContext: () => ({ user: { _id: "user-1" } }),
+}));
+
+vi.mock("./drafts/storage", async (original) => ({
+  ...await original<typeof import("./drafts/storage")>(),
+  loadScopedDraft: mocks.loadScopedDraft,
 }));
 
 vi.mock("@/services/auctioneer", () => ({
@@ -111,12 +121,84 @@ function seedServerDraft(workItemId: unknown = "work-101") {
   }));
 }
 
+/** A browser-only draft opened from Drafts or the upload bar: scope only. */
+function seedLocalDraft(kind: "asset" | "lot-listing", fields: Record<string, unknown>) {
+  window.sessionStorage.setItem("cv:report-form-handoff:v1", JSON.stringify({
+    version: 1, kind, returnTo: "/dashboard", resumeLocalDraftScopeId: "upload-review:submission-101",
+  }));
+  mocks.loadScopedDraft.mockResolvedValueOnce({
+    envelope: kind === "asset" ? { formData: fields } : { data: fields },
+    missingMediaCount: 0,
+  });
+}
+
 describe("ReportFormPage handoff", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
     mocks.routerPush.mockReset();
     mocks.continueWorkItem.mockReset();
     mocks.getSetup.mockReset();
+    mocks.loadScopedDraft.mockReset();
+  });
+
+  /*
+     Owner 2026-10-29: Auctioneer work items upload in the background, so a
+     refused one is reviewed from the upload bar as a browser-only copy. That
+     copy must open with its work item verified, never as an ordinary report.
+  */
+  it.each(["asset", "lot-listing"] as const)("opens a saved %s upload's review copy with its Auctioneer work item verified", async (kind) => {
+    seedLocalDraft(kind, { auctioneerWorkItemId: "work-101", clientSubmissionId: "submission-101", contractNo: "CV-E2E-100" });
+    mocks.getSetup.mockResolvedValueOnce({ ...freshSuccessor(), reportType: kind === "asset" ? "asset" : "lotListing" });
+    render(<ReportFormPage kind={kind} />);
+    expect(await screen.findByTestId("work-item")).toHaveTextContent("work-101");
+    expect(mocks.loadScopedDraft).toHaveBeenCalledExactlyOnceWith("user-1", kind, "upload-review:submission-101");
+    expect(mocks.getSetup).toHaveBeenCalledExactlyOnceWith("work-101", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(screen.getByTestId("submission")).toHaveTextContent("submission-101");
+    expect(screen.getByTestId("resume-state")).toHaveTextContent("resume");
+  });
+
+  it.each([
+    { setup: { status: "report_created", reportId: "accepted-101", canResumeUpload: false } },
+    { setup: { clientSubmissionId: "other-submission" } },
+    { fields: { contractNo: "other-contract" } },
+  ])("never opens an Auctioneer review copy as an ordinary report when it no longer matches: %j", async ({ setup, fields }) => {
+    seedLocalDraft("asset", { auctioneerWorkItemId: "work-101", clientSubmissionId: "submission-101", contractNo: "CV-E2E-100", ...fields });
+    mocks.getSetup.mockResolvedValueOnce({ ...freshSuccessor(), ...setup });
+    render(<ReportFormPage kind="asset" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("can no longer be opened as a new report");
+    expect(screen.queryByTestId("asset-handoff")).not.toBeInTheDocument();
+  });
+
+  it("opens an ordinary browser draft without Auctioneer setup", async () => {
+    seedLocalDraft("asset", { clientSubmissionId: "ordinary-submission", contractNo: "LOCAL-1" });
+    render(<ReportFormPage kind="asset" />);
+    expect(await screen.findByTestId("asset-handoff")).toHaveTextContent("No imported contract");
+    expect(screen.getByTestId("resume-state")).toHaveTextContent("resume");
+    expect(mocks.getSetup).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unreadable browser draft closed until a retried read succeeds", async () => {
+    window.sessionStorage.setItem("cv:report-form-handoff:v1", JSON.stringify({
+      version: 1, kind: "asset", returnTo: "/dashboard", resumeLocalDraftScopeId: "upload-review:submission-101",
+    }));
+    mocks.loadScopedDraft
+      .mockRejectedValueOnce(new Error("Browser storage is unavailable."))
+      .mockResolvedValueOnce({ envelope: { formData: { auctioneerWorkItemId: "work-101", clientSubmissionId: "submission-101", contractNo: "CV-E2E-100" } }, missingMediaCount: 0 });
+    mocks.getSetup.mockResolvedValueOnce(freshSuccessor());
+    render(<ReportFormPage kind="asset" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Browser storage is unavailable.");
+    expect(screen.queryByTestId("asset-handoff")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry saved draft" }));
+    expect(await screen.findByTestId("work-item")).toHaveTextContent("work-101");
+    expect(mocks.loadScopedDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not read a browser draft for an Incoming handoff that already carries its work item", async () => {
+    seedHandoff();
+    render(<ReportFormPage kind="asset" />);
+    expect(await screen.findByTestId("work-item")).toHaveTextContent("work-100");
+    expect(mocks.loadScopedDraft).not.toHaveBeenCalled();
+    expect(mocks.getSetup).not.toHaveBeenCalled();
   });
 
   it("preserves a single-use incoming handoff when Strict Mode replays effects", async () => {

@@ -57,11 +57,20 @@ import { acceptedAuctioneerReportId } from "./auctioneerContinuation";
 import { assertReportUploadAccepted, canSaveSeparateReportDraft, isPreviousReportReceipt, reportTransferErrorData, reportTransferErrorMessage, safeReportOperationError } from "@/services/reportTransferErrors";
 import SeparateReportDraftRecovery from "./SeparateReportDraftRecovery";
 import {
+  SCHEDULE_A_CHOICE_REQUIRED_MESSAGE,
+  SCHEDULE_A_ITEM_REQUIRED_CODE,
   auctioneerDateOnly,
   auctioneerDraftScope,
   buildAuctioneerSeedLots,
+  currentScheduleAParentLotId,
+  proposalItemLot,
+  scheduleAChoicesFor,
+  scheduleAItemError,
+  withCurrentSeveralLots,
   type AuctioneerFormIntegration,
 } from "./auctioneerSeed";
+import ScheduleAItemField from "./ScheduleAItemField";
+import ProposalListField from "./ProposalListField";
 import type { MixedLot } from "./mixed/types";
 import { buildMixedFocusBoxes } from "./mixed/focusBoxes";
 import {
@@ -157,10 +166,19 @@ type DraftSnapshot = UploadReviewIdentity & {
   bankPhotosEnabled: boolean;
   watermarkImages: boolean;
   clientSubmissionId: string | null;
+  /**
+   * The Schedule A item every lot in this listing is sent against, saved only
+   * on a work item that asks for one (owner 2026-10-28).
+   */
+  scheduleAParentLotId?: string;
   lots: MixedLot[];
 };
 
-export type LotContinuationDetails = Omit<DraftSnapshot, "clientSubmissionId" | "auctioneerWorkItemId" | "lots">;
+/*
+   The Schedule A item is not carried into the next form: each form is its own
+   batch, and the appraiser chooses its item afresh (owner 2026-10-28).
+*/
+export type LotContinuationDetails = Omit<DraftSnapshot, "clientSubmissionId" | "auctioneerWorkItemId" | "lots" | "scheduleAParentLotId">;
 
 type SerializedDraftImage = {
   lotId: string;
@@ -369,6 +387,15 @@ export default function LotListingForm({
   const [currency, setCurrency] = useState(continuationDetails?.currency ?? ("CAD"));
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuationDetails?.bankPhotosEnabled ?? (false));
   const [watermarkImages, setWatermarkImages] = useState(continuationDetails?.watermarkImages ?? (false));
+  /*
+     Owner 2026-10-28: on a work item that requires it, the appraiser chooses
+     which Schedule A item this listing's lots belong to. The kept choice only
+     counts while the current setup still offers it (see
+     currentScheduleAParentLotId), so a stale draft choice reads as none.
+  */
+  const requiresScheduleAItem = auctioneer?.requiresScheduleAItem === true;
+  const [scheduleAChoice, setScheduleAChoice] = useState("");
+  const scheduleAParentLotId = currentScheduleAParentLotId(auctioneer, scheduleAChoice);
 
 
   const [openSections, setOpenSections] = useState({
@@ -502,6 +529,7 @@ export default function LotListingForm({
     watermarkImages,
     clientSubmissionId: jobIdRef.current,
     ...(auctioneer ? { auctioneerWorkItemId: auctioneer.workItemId } : {}),
+    ...(requiresScheduleAItem ? { scheduleAParentLotId } : {}),
     lots: mixedLots,
   };
 
@@ -893,7 +921,12 @@ export default function LotListingForm({
       setCurrency(data.currency || "CAD");
       setBankPhotosEnabled(Boolean(data.bankPhotosEnabled));
       setWatermarkImages(data.watermarkImages === true);
-      setMixedLots(Array.isArray(data.lots) ? data.lots : []);
+      setScheduleAChoice(
+        typeof data.scheduleAParentLotId === "string" ? data.scheduleAParentLotId : ""
+      );
+      setMixedLots(
+        withCurrentSeveralLots(Array.isArray(data.lots) ? data.lots : [], auctioneer)
+      );
       jobIdRef.current =
         data.clientSubmissionId ||
         auctioneer?.clientSubmissionId ||
@@ -1116,6 +1149,10 @@ export default function LotListingForm({
       ),
       watermarkImages:
         (formData.watermarkImages ?? formData.watermark_images) === true,
+      scheduleAParentLotId:
+        typeof formData.scheduleAParentLotId === "string"
+          ? formData.scheduleAParentLotId
+          : undefined,
       clientSubmissionId: resumeDraft.clientDraftId,
       lots: resumeDraft.storageMode === "smart_upload" ? [] : metadataLots,
     };
@@ -1141,7 +1178,7 @@ export default function LotListingForm({
           },
         });
         if (controller.signal.aborted) return;
-        setMixedLots(lots);
+        setMixedLots(withCurrentSeveralLots(lots, auctioneer));
       }
       if (controller.signal.aborted) return;
       setRestoredAccountKey(accountRestoreKey);
@@ -1217,6 +1254,7 @@ export default function LotListingForm({
     locationLookupAbortRef.current?.abort();
     locationLookupAbortRef.current = null;
     setMixedLots(buildAuctioneerSeedLots(auctioneer));
+    setScheduleAChoice("");
     setContractNo(auctioneer?.contract.contractNo || "");
     setSalesDate(importedSalesDate);
     setLocation(importedLocation);
@@ -1348,19 +1386,23 @@ export default function LotListingForm({
           nextErrors.media =
             "Every lot needs a main photo and a Bundle, Per Item, or Per Photo mode.";
         }
+        // Owner 2026-10-28: no lot leaves for a Schedule A contract without
+        // its item. Nothing is added when the work item does not ask for one.
+        const scheduleAError = scheduleAItemError(auctioneer, scheduleAParentLotId);
+        if (scheduleAError) nextErrors.scheduleAItem = scheduleAError;
       }
 
       setErrors(nextErrors);
       if (nextErrors.contractNo || nextErrors.currency) {
         setOpenSections((current) => ({ ...current, details: true }));
       }
-      if (nextErrors.media) {
+      if (nextErrors.media || nextErrors.scheduleAItem) {
         setOpenSections((current) => ({ ...current, media: true }));
       }
 
       return Object.keys(nextErrors).length === 0;
     },
-    [contractNo, currency, location, mixedLots]
+    [auctioneer, contractNo, currency, location, mixedLots, scheduleAParentLotId]
   );
 
   const clearAcceptedDraft = useCallback(async (): Promise<unknown | null> => {
@@ -1438,6 +1480,17 @@ export default function LotListingForm({
       );
       return;
     }
+    /*
+       Owner 2026-10-28: a lot on this contract may not be sent without its
+       Schedule A item, and Smart Upload's lots are formed on the server, where
+       the item chosen here cannot be attached to them.
+    */
+    if (requiresScheduleAItem) {
+      toast.info(
+        "Smart Upload cannot be used here because each lot must name its Schedule A item. Add the lots in this form instead."
+      );
+      return;
+    }
     if (!validateForm({ requireMedia: false })) {
       const message =
         "Complete the highlighted listing details before starting Smart Upload.";
@@ -1448,7 +1501,7 @@ export default function LotListingForm({
     setError(null);
     setSmartGroupingMethod(method);
     setSmartUploadOpen(true);
-  }, [mixedLots.length, validateForm]);
+  }, [mixedLots.length, requiresScheduleAItem, validateForm]);
 
   const handleSmartUploadSubmitted = useCallback(async () => {
     const accepted =
@@ -1566,26 +1619,45 @@ export default function LotListingForm({
             source_lot_id: lot.source.lotId,
             source_submission_id: lot.source.submissionId,
           }),
+          /*
+             The Schedule A item the appraiser chose for this listing, on every
+             lot (one form batch = one item, owner 2026-10-28). Outside the
+             source block because lots added on an unknown work item have no
+             source. Empty, and so absent, unless the work item asks for it.
+          */
+          ...(scheduleAParentLotId ? { schedule_a_parent_lot_id: scheduleAParentLotId } : {}),
         })),
         ...(focusBoxes.length > 0 ? { focus_boxes: focusBoxes } : {}),
       };
 
       /*
          Hand the upload to the background line and close the form, unless this
-         submission needs to stay here. Auctioneer work does: its continuation
-         can only be requested against an accepted reportId, and the decision
-         prompts (active report, changed manifest) live in this component. A
-         draft whose last background attempt hit one of those is marked
-         foreground, so its next Submit runs inline where it can be answered.
+         submission needs to stay here. Auctioneer work items hand off too
+         (owner, 2026-10-29): "Create Lot & Close" and a plain submit send the
+         work item in the payload, so the server links the listing exactly as
+         an inline upload would. Three cases stay, as in AssetForm:
+         - "Create Lot & Continue": the next work item exists only once this
+           upload is accepted (the website cannot reserve it earlier), so a
+           sooner next form would not know its work item, identity, Schedule A
+           choices or Proposal list.
+         - A saved upload's review copy, which exists to answer a question.
+         - A draft whose last background attempt needed a decision only this
+           form can offer (active report, changed manifest, a Schedule A item
+           or any other Auctioneer refusal). The mark is kept in this tab and
+           on the saved upload, so it survives a reload; the next Submit runs
+           inline where it can be answered.
       */
       try {
       if (saveFlightRef.current) await saveFlightRef.current;
       assertAuthSessionCurrent(submitSession);
       controller.signal.throwIfAborted();
+      const continuing = Boolean(continueWithNewLot && auctioneer && onAcceptedAndContinue);
       const mustStayInForm =
-        Boolean(auctioneer) ||
+        continuing ||
         isUploadReviewScope(draftScopeId) ||
-        backgroundUploads.isForegroundRequired("lot-listing", draftScopeId);
+        (await backgroundUploads.requiresFormSubmission(userId || "", "lot-listing", draftScopeId, jobId, { signal: controller.signal }));
+      assertAuthSessionCurrent(submitSession);
+      controller.signal.throwIfAborted();
       if (!mustStayInForm && userId) {
         setPreparingBackgroundUpload(true);
         const orderedFiles = orderedSubmissionFiles("lot-listing", lotsForSubmission);
@@ -1701,7 +1773,6 @@ export default function LotListingForm({
         updateUploadProgress(1);
         const acceptedMessage =
           "Submission accepted — processing continues in My Reports.";
-        const continuing = Boolean(continueWithNewLot && auctioneer && onAcceptedAndContinue);
         if (continuing) {
           // Open the successor at upload acceptance; cleanup remains scoped to
           // the old draft and does not delay or authorize another upload.
@@ -1773,6 +1844,20 @@ export default function LotListingForm({
           return;
         }
 
+        if (
+          submitError?.response?.status === 409 &&
+          submitError?.response?.data?.code === SCHEDULE_A_ITEM_REQUIRED_CODE
+        ) {
+          // The server's own wording, also shown on the picker it refers to.
+          const message = safeReportOperationError(submitError, SCHEDULE_A_CHOICE_REQUIRED_MESSAGE);
+          setErrors((current) => ({ ...current, scheduleAItem: message }));
+          setOpenSections((current) => ({ ...current, media: true }));
+          setError(message);
+          reportDraftStatus("dirty", "Submission failed · unsaved changes");
+          toast.error(message);
+          return;
+        }
+
         if (!auctioneer && canSaveSeparateReportDraft(submitError)) {
           const sessionId = reportTransferErrorData(submitError).data.sessionId;
           if (typeof sessionId === "string" && sessionId.trim()) setUnavailableSessionId(sessionId);
@@ -1812,6 +1897,7 @@ export default function LotListingForm({
       onAcceptedAndContinue,
       reportDraftStatus,
       salesDate,
+      scheduleAParentLotId,
       watermarkImages,
       validateForm,
     ]
@@ -2211,11 +2297,53 @@ export default function LotListingForm({
               setOpenSections((current) => ({ ...current, media: open }))
             }
             status={
-              errors.media ? "error" : mediaComplete ? "complete" : "incomplete"
+              errors.media || errors.scheduleAItem
+                ? "error"
+                : mediaComplete
+                  ? "complete"
+                  : "incomplete"
             }
             summary={mediaSummary}
-            errorSummary={errors.media}
+            errorSummary={errors.media || errors.scheduleAItem}
           >
+            {requiresScheduleAItem ? (
+              <ScheduleAItemField
+                id="lot-schedule-a-item"
+                choices={scheduleAChoicesFor(auctioneer)}
+                value={scheduleAParentLotId}
+                onChange={(parentLotId) => {
+                  setScheduleAChoice(parentLotId);
+                  clearFieldError("scheduleAItem");
+                  markDirty();
+                }}
+                error={errors.scheduleAItem}
+                disabled={submitting}
+              />
+            ) : null}
+            {auctioneer?.proposalList ? (
+              <ProposalListField
+                id="lot-proposal-list"
+                integration={auctioneer}
+                lots={mixedLots}
+                disabled={submitting}
+                // Functional updates: a not-found return answers after a
+                // network call, when this render's lots may be out of date.
+                onAddItem={(item) => {
+                  setMixedLots((current) =>
+                    current.some((lot) => lot.source?.key === item.sourceKey)
+                      ? current
+                      : [...current, proposalItemLot(auctioneer, item)]
+                  );
+                  markDirty();
+                }}
+                onItemNotFound={(item) => {
+                  setMixedLots((current) =>
+                    current.filter((lot) => lot.source?.key !== item.sourceKey)
+                  );
+                  markDirty();
+                }}
+              />
+            ) : null}
             <div
               id="lot-media-workspace"
               tabIndex={errors.media ? -1 : undefined}

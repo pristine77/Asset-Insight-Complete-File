@@ -83,7 +83,7 @@ describe("MixedSection workflow", () => {
   it("adds a distinct Schedule A split without inheriting the parent's lot number", () => {
     render(<Harness sourceMappedLots initial={[{
       id: "original", files: [], extraFiles: [], coverIndex: 0, mode: "single_lot",
-      source: { key: "line-1", lotId: "upstream-1", lotNumber: "100", locked: true },
+      source: { key: "line-1", lotId: "upstream-1", lotNumber: "100", locked: true, severalLots: true },
     }]} />);
     fireEvent.click(screen.getByRole("button", { name: /add lot to this line/i }));
     const rows = JSON.parse(screen.getByTestId("lot-metadata").textContent || "[]");
@@ -93,6 +93,64 @@ describe("MixedSection workflow", () => {
     expect(rows[1].source.key).not.toBe("line-1");
     expect(rows[1].source.lotNumber).toBeUndefined();
     expect(rows[1].mode).toBe("single_lot");
+  });
+
+  /*
+     Owner 2026-10-28: Auctioneer refuses extra lots split off a Schedule A
+     item that is not ticked "Several lots", so only those lines offer it.
+  */
+  describe("Schedule A Several lots", () => {
+    const line = (id: string, key: string, lotNumber: string, severalLots?: boolean): MixedLot => ({
+      id, files: [], extraFiles: [], coverIndex: 0, mode: "single_lot",
+      source: { key, lotId: `upstream-${key}`, lotNumber, label: `Lot ${lotNumber}`, locked: true, ...(severalLots ? { severalLots } : {}) },
+    });
+
+    it("hides the add button and the tag on a line that is not ticked Several lots", () => {
+      render(<Harness sourceMappedLots initial={[line("only", "line-1", "100")]} />);
+
+      expect(screen.queryByRole("button", { name: /add lot to this line/i })).not.toBeInTheDocument();
+      expect(screen.queryByText("Several lots")).not.toBeInTheDocument();
+      expect(screen.getByTestId("lot-count")).toHaveTextContent("1");
+    });
+
+    it("tags only the ticked lines and follows the lot being worked on", () => {
+      render(<Harness sourceMappedLots initial={[line("ticked", "line-1", "100", true), line("plain", "line-2", "101")]} />);
+
+      // The last lot opens first: a plain line, so nothing can be added to it.
+      expect(screen.queryByRole("button", { name: /add lot to this line/i })).not.toBeInTheDocument();
+      const tabs = screen.getAllByRole("tab");
+      expect(within(tabs[0]).getByText("Several lots")).toBeInTheDocument();
+      expect(within(tabs[1]).queryByText("Several lots")).not.toBeInTheDocument();
+
+      fireEvent.click(tabs[0]);
+      expect(screen.getByRole("button", { name: /add lot to this line/i })).toBeInTheDocument();
+      // Tab and active-lot heading.
+      expect(screen.getAllByText("Several lots")).toHaveLength(2);
+    });
+
+    it("resolves a split of a split to the original line's tick", () => {
+      render(<Harness sourceMappedLots initial={[line("ticked", "line-1", "100", true)]} />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add lot to this line/i }));
+      // The split is now the lot being worked on and can be split again.
+      fireEvent.click(screen.getByRole("button", { name: /add lot to this line/i }));
+
+      const rows = JSON.parse(screen.getByTestId("lot-metadata").textContent || "[]");
+      expect(rows).toHaveLength(3);
+      expect(rows[1].source).toMatchObject({ parentKey: "line-1", severalLots: true });
+      expect(rows[2].source).toMatchObject({ parentKey: "line-1", severalLots: true });
+      // The tag marks the line, not the lots added beneath it.
+      const tabs = screen.getAllByRole("tab");
+      expect(within(tabs[0]).getByText("Several lots")).toBeInTheDocument();
+      expect(within(tabs[2]).queryByText("Several lots")).not.toBeInTheDocument();
+    });
+
+    it("keeps New lot on a form that is not Schedule A", () => {
+      render(<Harness initial={[line("unknown", "unknown-1", "100")]} />);
+
+      expect(screen.getByRole("button", { name: /new lot/i })).toBeInTheDocument();
+      expect(screen.queryByText("Several lots")).not.toBeInTheDocument();
+    });
   });
 
   it("explains the terminal lot-number card and high-number sampling policy", () => {

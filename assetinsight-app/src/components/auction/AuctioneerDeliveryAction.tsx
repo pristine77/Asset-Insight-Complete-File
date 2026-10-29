@@ -34,6 +34,16 @@ function sameManifest(a: AuctioneerDeliverySummary, b: AuctioneerDeliverySummary
   );
 }
 
+const PROPOSAL_STAYS_OPEN = 'The Proposal stays open in Auctioneer until every listed item is back.';
+
+/**
+ * Closing the contract or "my part" is never offered for Proposal list work
+ * (owner 2026-10-28); the server refuses it too. Everything else is unchanged.
+ */
+function offersClose(delivery: AuctioneerDeliverySummary) {
+  return delivery.canCompleteContract === true && delivery.proposalList !== true;
+}
+
 function canSend(delivery: AuctioneerDeliverySummary) {
   return delivery.canSend === true && (delivery.state === 'ready' || delivery.state === 'failed');
 }
@@ -59,6 +69,15 @@ function statusText(delivery: AuctioneerDeliverySummary) {
     case 'needs_reconciliation':
       return 'Auctioneer has not confirmed whether this lot was created. Open this report on the website to check and reconcile the existing delivery before sending again.';
     case 'sent':
+      // owner 2026-10-28: a Proposal list leaves Auctioneer's queue by itself
+      // once every listed item is back; say whether it is still waiting.
+      if (delivery.proposalList) {
+        if (delivery.proposalReturn?.remainsInAssetInsight === true)
+          return `Sent to Auctioneer. ${PROPOSAL_STAYS_OPEN}`;
+        if (delivery.proposalReturn?.remainsInAssetInsight === false)
+          return 'Sent to Auctioneer. Every listed item of this Proposal is back in Auctioneer.';
+        return 'Sent to Auctioneer.';
+      }
       if (delivery.contractCloseUserStatus === 'revoked')
         return 'Sent to Auctioneer. Your contract assignment was revoked.';
       if (delivery.contractTaskCompleted) return 'Sent to Auctioneer. The contract is complete.';
@@ -215,7 +234,7 @@ export default function AuctioneerDeliveryAction({ delivery, onUpdated }: Props)
         currentDelivery.current.state !== snapshot.state ||
         (savedRetry && !sameManifest(snapshot, fresh)) ||
         (requestsClose &&
-          (fresh.canCompleteContract !== true ||
+          (!offersClose(fresh) ||
             fresh.contractCompletionScope !== snapshot.contractCompletionScope))
       ) {
         if (sameDeliveryIdentity(snapshot, fresh)) updated.current(fresh);
@@ -229,7 +248,7 @@ export default function AuctioneerDeliveryAction({ delivery, onUpdated }: Props)
         ...(sendDestination === 'OpToDoBoard' ? { opTaskDescription: sendNote } : {}),
         completeContract: savedRetry
           ? snapshot.completeContract === true
-          : fresh.canCompleteContract === true && completeContract,
+          : offersClose(fresh) && completeContract,
       });
       if (!isCurrent()) return;
       updated.current(result);
@@ -348,7 +367,12 @@ export default function AuctioneerDeliveryAction({ delivery, onUpdated }: Props)
                   </Text>
                 </View>
               ) : null}
-              {delivery.canCompleteContract === true || (retrying && delivery.completeContract) ? (
+              {delivery.proposalList ? (
+                <Text style={[styles.copy, { color: colors.textSecondary }]}>
+                  This Proposal is not closed from here. {PROPOSAL_STAYS_OPEN}
+                </Text>
+              ) : null}
+              {offersClose(delivery) || (retrying && delivery.completeContract) ? (
                 <TouchableOpacity
                   accessibilityRole="checkbox"
                   accessibilityLabel={

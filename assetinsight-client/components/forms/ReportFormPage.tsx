@@ -6,8 +6,10 @@ import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import Loading from "@/components/common/Loading";
+import { useAuthContext } from "@/context/AuthContext";
 import { AuctioneerService, type AuctioneerWorkItemSetup } from "@/services/auctioneer";
 import { auctioneerSuccessorState } from "./auctioneerContinuation";
+import { loadScopedDraft, type ScopedDraftEnvelope } from "./drafts/storage";
 import { primaryButtonClass, secondaryButtonClass, type DraftStatus } from "./ui/FormUI";
 import {
   consumeReportFormHandoff,
@@ -46,9 +48,32 @@ type AcceptedContinuation = {
   alreadyUsed?: boolean;
 };
 
+/*
+   A browser-only draft (a local draft from Drafts, or a saved upload's review
+   copy from the upload bar) is opened by its scope alone, so its Auctioneer
+   work item is only known once the draft is read. Auctioneer work items now
+   upload in the background (owner, 2026-10-29), so a refused one reaches the
+   upload bar's "Review saved report". Mounted without its work item, that copy
+   would be sent as an ordinary report that never reaches Auctioneer; it must
+   open with the work item verified, exactly as an account draft does.
+*/
+type LocalDraftCheck = {
+  scopeId: string;
+  state: "loading" | "ready" | "error";
+  workItemId?: unknown;
+  submissionId?: string;
+  contractNo?: string;
+  message?: string;
+};
+type LocalDraftFields = { auctioneerWorkItemId?: unknown; clientSubmissionId?: unknown; contractNo?: unknown };
+
 export default function ReportFormPage({ kind }: Props) {
   const router = useRouter();
+  const { user } = useAuthContext();
+  const userId = user?._id || "";
   const [handoff, setHandoff] = useState<ReportFormHandoff | null | undefined>();
+  const [localDraftCheck, setLocalDraftCheck] = useState<LocalDraftCheck | null>(null);
+  const [localDraftRetry, setLocalDraftRetry] = useState(0);
   const consumedHandoffKindRef = useRef<ReportFormKind | null>(null);
   const continuationLockRef = useRef(false);
   const [draftSetup, setDraftSetup] = useState<{
@@ -67,14 +92,22 @@ export default function ReportFormPage({ kind }: Props) {
     label?: string;
   } | null>(null);
 
-  const resumeWorkItemId = handoff?.resumeDraft?.formData?.auctioneerWorkItemId;
-  const resumeDraftId = handoff?.resumeDraft?.clientDraftId;
-  const resumeSubmissionId = handoff?.resumeDraft?.formData?.clientSubmissionId;
-  const resumeDraftType = handoff?.resumeDraft?.type;
-  const resumeContractNo = handoff?.resumeDraft?.contractNo;
+  // A local draft has no account record: its frozen submission identity stands
+  // in for the account draft's clientDraftId in the same checks below. Chosen
+  // by source, not by ??, so an account draft's null reference still fails closed.
+  const accountDraft = handoff?.resumeDraft;
+  const localImport = !accountDraft && localDraftCheck?.state === "ready" && localDraftCheck.workItemId !== undefined
+    ? localDraftCheck
+    : undefined;
+  const resumeWorkItemId = accountDraft ? accountDraft.formData?.auctioneerWorkItemId : localImport?.workItemId;
+  const resumeDraftId = accountDraft ? accountDraft.clientDraftId : localImport?.submissionId;
+  const resumeSubmissionId = accountDraft ? accountDraft.formData?.clientSubmissionId : localImport?.submissionId;
+  const resumeDraftType = accountDraft ? accountDraft.type : localImport ? (kind === "asset" ? "asset" : "lotListing") : undefined;
+  const resumeContractNo = accountDraft ? accountDraft.contractNo : localImport?.contractNo;
   const draftSetupKey = resumeWorkItemId === undefined
     ? null
     : `${resumeDraftId}:${String(resumeWorkItemId)}`;
+  const localDraftScopeId = localDraftCheck?.scopeId;
 
   useEffect(() => {
     // Consuming removes the single-use handoff from session storage. React
@@ -82,8 +115,48 @@ export default function ReportFormPage({ kind }: Props) {
     // read or the replay replaces a valid incoming/draft handoff with null.
     if (consumedHandoffKindRef.current === kind) return;
     consumedHandoffKindRef.current = kind;
-    setHandoff(consumeReportFormHandoff(kind));
+    const consumed = consumeReportFormHandoff(kind);
+    setHandoff(consumed);
+    // An Incoming handoff already carries its verified work item.
+    setLocalDraftCheck(
+      consumed?.resumeLocalDraftScopeId && !consumed.resumeDraft && !consumed.auctioneer
+        ? { scopeId: consumed.resumeLocalDraftScopeId, state: "loading" }
+        : null
+    );
   }, [kind]);
+
+  useEffect(() => {
+    if (!localDraftScopeId || !userId) return;
+    let cancelled = false;
+    setLocalDraftCheck({ scopeId: localDraftScopeId, state: "loading" });
+    const readIdentity = async () => {
+      try {
+        const loaded = await loadScopedDraft<ScopedDraftEnvelope & { formData?: LocalDraftFields; data?: LocalDraftFields }>(
+          userId, kind, localDraftScopeId
+        );
+        if (cancelled) return;
+        // No draft is the form's own case to report; only identity is read here.
+        const fields = (kind === "asset" ? loaded?.envelope.formData : loaded?.envelope.data) || {};
+        setLocalDraftCheck({
+          scopeId: localDraftScopeId,
+          state: "ready",
+          workItemId: fields.auctioneerWorkItemId,
+          submissionId: typeof fields.clientSubmissionId === "string" ? fields.clientSubmissionId : undefined,
+          contractNo: typeof fields.contractNo === "string" ? fields.contractNo : undefined,
+        });
+      } catch (error) {
+        if (cancelled) return;
+        // Fail closed: an unread draft could be an Auctioneer one.
+        setLocalDraftCheck({
+          scopeId: localDraftScopeId,
+          state: "error",
+          message: safeReportOperationError(error, "This saved draft could not be read on this browser. Retry before editing or submitting it."),
+        });
+      }
+    };
+    void readIdentity();
+    return () => { cancelled = true; };
+  }, [kind, localDraftRetry, localDraftScopeId, userId]);
 
   useEffect(() => {
     if (draftSetupKey === null) return;
@@ -180,6 +253,8 @@ export default function ReportFormPage({ kind }: Props) {
       // Drop all prior draft/resume/saved-input state. A different key remounts
       // the form, including its immutable draft scope and submission refs.
       setHandoff({ version: 1, kind, returnTo, auctioneer: next });
+      // The successor is not the reviewed local draft; drop its identity too.
+      setLocalDraftCheck(null);
       setContinuationDetails(accepted.details);
       setFreshLotOpened(true);
       setContinuation(null);
@@ -245,7 +320,17 @@ export default function ReportFormPage({ kind }: Props) {
       </header>
 
       <section className={styles.body} aria-label={`${title} form`}>
-        {draftSetupKey !== null && (draftSetup?.key !== draftSetupKey || draftSetup.state !== "ready") ? (
+        {localDraftCheck && localDraftCheck.state !== "ready" ? (
+          localDraftCheck.state === "error" ? (
+            <div className={styles.continuation}>
+              <h2>Saved draft unavailable</h2>
+              <p role="alert">{localDraftCheck.message}</p>
+              <div className={styles.continuationActions}>
+                <button type="button" className={primaryButtonClass} onClick={() => setLocalDraftRetry((count) => count + 1)}>Retry saved draft</button>
+              </div>
+            </div>
+          ) : <Loading message="Opening saved draft…" />
+        ) : draftSetupKey !== null && (draftSetup?.key !== draftSetupKey || draftSetup.state !== "ready") ? (
           draftSetup?.key === draftSetupKey && draftSetup.state === "error" ? (
             <div className={styles.continuation}>
               <h2>Imported draft unavailable</h2>

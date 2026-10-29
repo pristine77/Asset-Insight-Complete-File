@@ -49,6 +49,12 @@ export interface IAssetLot {
   lot_id: string;
   auctioneer_source_key?: string;
   auctioneer_source_parent_key?: string;
+  /**
+   * The Auctioneer lot of the Schedule A item this lot belongs to, chosen by
+   * the appraiser on a Schedule A contract's extra (unknown) work (owner
+   * 2026-10-28). Sent as scheduleAParentRef when the lot is created.
+   */
+  schedule_a_parent_lot_id?: string;
   title: string;
   description: string;
   condition?: string;
@@ -331,6 +337,7 @@ const AssetLotSchema: Schema<IAssetLot> = new Schema(
     lot_id: { type: String, required: true },
     auctioneer_source_key: { type: String },
     auctioneer_source_parent_key: { type: String },
+    schedule_a_parent_lot_id: { type: String },
     title: { type: String, required: true },
     // Reviewed descriptions may be explicitly blank; exporters then use Title.
     description: { type: String },

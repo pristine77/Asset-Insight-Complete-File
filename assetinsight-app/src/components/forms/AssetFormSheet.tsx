@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { cameraDeadline } from '../camera/cameraDeadline';
 import {
   View,
@@ -65,7 +65,10 @@ import {
 import AuctioneerFormBoundary, { type AuctioneerFormControl } from './AuctioneerFormBoundary';
 import AuctioneerFormHeader from './AuctioneerFormHeader';
 import type { AuctioneerWorkItemSetup } from '../../services/auctioneerService';
-import { auctioneerSeedLots, auctioneerLotSource, hasValidAuctioneerLotStructure } from './auctioneerFormPolicy';
+import { acceptAuctioneerLots, auctioneerSeedLots, auctioneerLotSource, hasValidAuctioneerLotStructure, scheduleAItemLotField } from './auctioneerFormPolicy';
+import ScheduleAItemPicker, { useScheduleAItemChoice } from './ScheduleAItemPicker';
+import ProposalListPanel, { useProposalList } from './ProposalListPanel';
+import { proposalLotPresentation, proposalLotsWithoutMedia, proposalLotsWithoutMediaPrompt } from './proposalListPolicy';
 
 const MAX_ASSET_LOT_PHOTOS = 200;
 
@@ -137,6 +140,10 @@ const AssetFormSheet = ({
 }: AssetFormSheetProps) => {
   const auctioneer = auctioneerControl?.setup;
   const continuation = auctioneerControl?.continuationDetails;
+  // owner 2026-10-28: one Schedule A item for every lot of this form, when the
+  // setup requires it (never carried to the next form by Create Lot & Continue).
+  const scheduleAItem = useScheduleAItemChoice(auctioneer);
+  const restoreScheduleAItem = scheduleAItem.restore;
   const { user } = useAuth();
   const { width, fontScale } = useWindowDimensions();
   const compactFields = width < 480 || fontScale > 1.3;
@@ -176,7 +183,7 @@ const AssetFormSheet = ({
   const setLots = useCallback<React.Dispatch<React.SetStateAction<MixedLot[]>>>((update) => {
     setLotsRaw((previous) => {
       const next = typeof update === 'function' ? update(previous) : update;
-      return hasValidAuctioneerLotStructure(auctioneer, next) ? next : previous;
+      return acceptAuctioneerLots(auctioneer, previous, next);
     });
   }, [auctioneer]);
   const [activeStep, setActiveStep] = useState<'details' | 'images'>('details');
@@ -184,6 +191,12 @@ const AssetFormSheet = ({
   // Camera state
   const [cameraOpen, setCameraOpen] = useState(false);
   const [activeLotIdx, setActiveLotIdx] = useState(-1);
+  // owner 2026-10-28: a Proposal worked from its list; inert for every other setup.
+  const proposalList = useProposalList({ setup: auctioneer, lots, setLots, setActiveLotIdx });
+  const proposalLots = useMemo(
+    () => proposalLotPresentation(auctioneer, lots, proposalList.items),
+    [auctioneer, lots, proposalList.items]
+  );
   const [enhanceImages, setEnhanceImages] = useState(continuation?.enhanceImages ?? false); // Server-side enhancement toggle
 
   // Submission state
@@ -475,6 +488,8 @@ const AssetFormSheet = ({
         submissionIdRef.current = data.formData.clientSubmissionId;
       }
       supersedesSubmissionIdRef.current = data.formData.supersedesClientSubmissionId;
+      // Kept only if the current (online: just refreshed) setup still offers it.
+      restoreScheduleAItem(data.formData.scheduleAParentLotId);
       if (data.formData.effectiveDate) setEffectiveDate(data.formData.effectiveDate);
       if (data.formData.appraisalPurpose) setAppraisalPurpose(data.formData.appraisalPurpose);
       if (data.formData.ownerName) setOwnerName(data.formData.ownerName);
@@ -579,7 +594,7 @@ const AssetFormSheet = ({
       setActiveLotIdx(Math.max(0, Math.min(data.activeLotIdx || 0, restoredLots.length - 1)));
       setActiveStep(restoredLots.length ? 'images' : 'details');
     },
-    [setLots]
+    [setLots, restoreScheduleAItem]
   );
 
   useEffect(() => {
@@ -625,8 +640,20 @@ const AssetFormSheet = ({
     (): AutoSaveFormData => ({
       captureMode,
       manualSubmissionRequired,
-      auctioneerSnapshot: auctioneer ? { ...auctioneer } : undefined,
+      // A "Check again" list replaces the snapshot's, so an item chosen from it
+      // is still offered when this draft is reopened offline.
+      // A Proposal list refreshed here (Refresh, Not found) does the same.
+      auctioneerSnapshot: auctioneer
+        ? {
+            ...auctioneer,
+            ...(scheduleAItem.required ? { scheduleAChoices: scheduleAItem.choices } : {}),
+            ...(proposalList.listed ? { proposalList: { items: proposalList.items } } : {}),
+          }
+        : undefined,
       auctioneerWorkItemId: auctioneer?.workItemId,
+      // Written (even when empty) only where a Schedule A item is required, so
+      // a withdrawn choice is cleared and other drafts stay exactly as before.
+      ...(scheduleAItem.required ? { scheduleAParentLotId: scheduleAItem.parentLotId } : {}),
       clientSubmissionId:
         submissionIdRef.current ||
         (submissionIdRef.current = `cv-mobile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`),
@@ -680,6 +707,11 @@ const AssetFormSheet = ({
       selectedValuationMethods,
       hiddenLocation,
       auctioneer,
+      scheduleAItem.required,
+      scheduleAItem.choices,
+      scheduleAItem.parentLotId,
+      proposalList.listed,
+      proposalList.items,
       captureMode,
       manualSubmissionRequired,
     ]
@@ -1121,6 +1153,14 @@ const AssetFormSheet = ({
       Alert.alert('Validation Error', 'Please fix the required fields');
       return;
     }
+    // owner 2026-10-28: no lot on a Schedule A contract is sent without its
+    // Schedule A item. The picker is on the Images step, so show it.
+    const scheduleABlock = scheduleAItem.blockSubmit();
+    if (scheduleABlock) {
+      setActiveStep('images');
+      Alert.alert('Schedule A item required', scheduleABlock);
+      return;
+    }
 
     // Check if there are any images
     const totalImages = lots.reduce(
@@ -1140,6 +1180,23 @@ const AssetFormSheet = ({
         'Too Many Photos',
         `Lot ${overLimitLotIndex + 1} has ${lot.files.length + lot.extraFiles.length} photos. The maximum is ${MAX_ASSET_LOT_PHOTOS} photos per lot, including report-only photos.`
       );
+      return;
+    }
+    // owner 2026-10-28: a Proposal list form starts with a lot per listed item,
+    // and every lot sent needs a photo. Empty ones are left out on purpose: a
+    // listed item removed here simply stays to capture in Auctioneer.
+    const lotsWithoutMedia = proposalLotsWithoutMedia(auctioneer, lots);
+    if (lotsWithoutMedia.length) {
+      setActiveStep('images');
+      const emptyIds = new Set(lotsWithoutMedia.map((lot) => lot.id));
+      const remaining = lots.length - emptyIds.size;
+      Alert.alert('Lots without photos', proposalLotsWithoutMediaPrompt(auctioneer, lots, proposalList.items), [
+        { text: 'Keep capturing', style: 'cancel' },
+        { text: 'Remove them', style: 'destructive', onPress: () => {
+          setLots((previous) => previous.filter((lot) => !emptyIds.has(lot.id)));
+          setActiveLotIdx((index) => Math.max(0, Math.min(index, remaining - 1)));
+        } },
+      ]);
       return;
     }
 
@@ -1260,9 +1317,13 @@ const AssetFormSheet = ({
       setJobId(newJobId);
       const locationSnapshot = hiddenLocation || normalizeHiddenLocation();
 
-      // Build mixed_lots mapping for server
+      // Build mixed_lots mapping for server. The one chosen Schedule A item goes
+      // on every lot of this form (owner 2026-10-28); nothing when not required.
+      // A Proposal list's listed lot names its item by its own id (owner
+      // 2026-10-28); every other lot sends what it always did.
       const mixedLotsMapping = lots.map((lot, index) => ({
-        ...auctioneerLotSource(auctioneer, index),
+        ...auctioneerLotSource(auctioneer, index, lot),
+        ...scheduleAItemLotField(scheduleAItem.parentLotId),
         count: lot.files.length,
         extra_count: lot.extraFiles.length,
         video_count: lot.videoFile ? 1 : 0,
@@ -1602,6 +1663,7 @@ const AssetFormSheet = ({
     setHiddenLocation(null);
     setIncludeValuationTable(false);
     setSelectedValuationMethods(['FML']);
+    scheduleAItem.choose(undefined);
     setLots([]);
     setActiveStep('details');
     setProgressPhase('idle');
@@ -2340,10 +2402,17 @@ const AssetFormSheet = ({
           manualSubmissionRequired={manualSubmissionRequired} reviewingSavedDraft={reviewingSavedDraft}
           error={localSaveError} disabled={submitting || savingDraftPreview} paused={uploadPaused}
           onSave={() => { void handleSaveDraftPreview(); }} />
+        <ScheduleAItemPicker item={scheduleAItem} disabled={submitting || savingDraftPreview}
+          style={[styles.section, styles.scheduleAItemSection]} titleStyle={styles.sectionTitle} />
+        <ProposalListPanel list={proposalList} disabled={submitting || savingDraftPreview}
+          style={[styles.section, styles.scheduleAItemSection]} titleStyle={styles.sectionTitle} />
         <LotManager
           embedded
           lockedStructure={auctioneer?.kind === 'scheduleA'}
-          sourceLabels={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot, index) => lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`) : undefined}
+          sourceLabels={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot, index) => lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`) : proposalLots?.labels}
+          sourceTags={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot) => lot.severalLots ? 'Several lots' : undefined) : proposalLots?.tags}
+          sourceDetails={proposalLots?.details}
+          listedItemLots={proposalLots?.listed}
           lots={lots}
           setLots={setLots}
           activeLotIdx={activeLotIdx}
@@ -2511,7 +2580,7 @@ const AssetFormSheet = ({
             manualSubmissionRequired={captureMode === 'offline' || manualSubmissionRequired}
             visible={cameraOpen}
             lockedStructure={auctioneer?.kind === 'scheduleA'}
-            sourceLabels={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot, index) => lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`) : undefined}
+            sourceLabels={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot, index) => lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`) : proposalLots?.labels}
             onClose={() => setCameraOpen(false)}
             lots={lots}
             setLots={setLots}
@@ -2964,6 +3033,8 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   imagesScroll: { flex: 1, minHeight: 0 },
+  // The Images step has no side padding of its own; inset like the lot cards.
+  scheduleAItemSection: { marginHorizontal: 12, marginTop: 8, marginBottom: 0 },
   actionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

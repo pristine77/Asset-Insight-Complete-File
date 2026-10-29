@@ -106,6 +106,11 @@ export interface AutoSaveFormData {
   clientSubmissionId?: string;
   supersedesClientSubmissionId?: string;
   auctioneerWorkItemId?: string;
+  /**
+   * owner 2026-10-28: the Schedule A item (its Auctioneer parent lot) chosen for
+   * every lot of this form. Restored only while the setup still offers it.
+   */
+  scheduleAParentLotId?: string;
   clientName?: string;
   effectiveDate?: string;
   appraisalPurpose?: string;

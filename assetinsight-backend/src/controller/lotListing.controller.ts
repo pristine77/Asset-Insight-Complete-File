@@ -51,9 +51,11 @@ import {
   type ReportJobOutbox,
 } from "../utils/reportJobMongoQueue.js";
 import {
+  applyPreviewScheduleAItemRule,
   auctioneerContextErrorBody,
   linkAuctioneerReport,
   resolveAuctioneerReportContext,
+  restoreScheduleAItemLinks,
 } from "../service/auctioneerReportLinkService.js";
 import {
   findActiveSameContractReport,
@@ -657,7 +659,13 @@ function buildLotListingPreviewDataFromRequest(listing: any, input: any = {}) {
   }
 
   return {
-    data: normalizeLotListingPreviewData(lotNumberResult.data, listing),
+    // Owner 2026-10-28: every path that saves client preview data (edit,
+    // photo upload, submit, resubmit) keeps the lots' Schedule A item links
+    // even when the client did not send them back.
+    data: restoreScheduleAItemLinks(
+      normalizeLotListingPreviewData(lotNumberResult.data, listing),
+      existingPreviewData
+    ),
     previousPreviewData: existingPreviewData,
   };
 }
@@ -1810,7 +1818,15 @@ export const updateLotListingPreview = async (req: AuthRequest, res: Response) =
     if (previewBuild.message) {
       return res.status(400).json({ message: previewBuild.message });
     }
-    applyLotListingPreviewData(listing, previewBuild.data);
+    // Owner 2026-10-28: on a Schedule A contract's extra work every lot keeps
+    // (or gets) its Schedule A item; a lot left without one is refused with
+    // the same 409 as the original submission.
+    const nextPreviewData = await applyPreviewScheduleAItemRule({
+      workItemId: (listing as any).auctioneerWorkItem,
+      previewData: previewBuild.data,
+      previousPreviewData: previewBuild.previousPreviewData,
+    });
+    applyLotListingPreviewData(listing, nextPreviewData);
     const previousWorkflowStatus = listing.status;
     const shouldRegenerateFiles =
       (listing as any).is_draft_preview !== true &&
@@ -1851,7 +1867,7 @@ export const updateLotListingPreview = async (req: AuthRequest, res: Response) =
         progressPercent: 1,
         message: "Queued to regenerate final files",
         previousStatus: previousWorkflowStatus,
-        previewFingerprint: lotListingPreviewFingerprint(previewBuild.data),
+        previewFingerprint: lotListingPreviewFingerprint(nextPreviewData),
         updatedAt: new Date(),
       };
     }
@@ -1949,16 +1965,23 @@ export const uploadLotListingPreviewLotImages = async (req: AuthRequest, res: Re
       await cleanupMulterFiles(uploadedFiles);
       return res.status(400).json({ message: previewBuild.message });
     }
+    // Checked before any photo is stored, so a refused edit (owner 2026-10-28:
+    // a lot without its Schedule A item) leaves nothing behind in storage.
+    const candidatePreviewData = await applyPreviewScheduleAItemRule({
+      workItemId: (listing as any).auctioneerWorkItem,
+      previewData: previewBuild.data,
+      previousPreviewData: previewBuild.previousPreviewData,
+    });
 
     const appendResult = await appendImagesToPreviewLot({
       kind: "lot-listing",
-      previewData: previewBuild.data,
+      previewData: candidatePreviewData,
       rootImageUrls: listing.imageUrls,
       reportId: String(listing._id),
       lotKey: lotKey || "",
       files: uploadedFiles,
       watermarkImages: resolvePhotoWatermark(
-        previewBuild.data?.watermark_images,
+        candidatePreviewData?.watermark_images,
         (listing as any).watermark_images
       ),
     });

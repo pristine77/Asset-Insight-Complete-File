@@ -4,7 +4,12 @@ import {
   auctioneerDateOnly,
   auctioneerDraftScope,
   buildAuctioneerSeedLots,
+  currentScheduleAParentLotId,
+  scheduleAChoicesFor,
+  scheduleAItemError,
+  withCurrentSeveralLots,
 } from "./auctioneerSeed";
+import type { MixedLot } from "./mixed/types";
 
 function setup(
   kind: AuctioneerWorkItemSetup["kind"]
@@ -73,5 +78,62 @@ describe("Auctioneer form seeds", () => {
     const value = setup("scheduleA");
     expect(auctioneerDraftScope(value)).toBe("auctioneer:work-item-1");
     expect(auctioneerDateOnly(value.contract.eventDate)).toBe("2026-08-12");
+  });
+});
+
+// Owner 2026-10-28: "Several lots" lines and the Schedule A item choice.
+describe("Schedule A Several lots and item choice", () => {
+  const ticked = (kind: AuctioneerWorkItemSetup["kind"]) => {
+    const value = setup(kind);
+    value.lots[0].severalLots = true;
+    return value;
+  };
+
+  it("marks only ticked Schedule A lines as Several lots", () => {
+    const lots = buildAuctioneerSeedLots(ticked("scheduleA"));
+    expect(lots.map((lot) => lot.source?.severalLots)).toEqual([true, undefined]);
+    expect(buildAuctioneerSeedLots(ticked("unknown"))[0].source).not.toHaveProperty("severalLots");
+  });
+
+  it("re-reads the tick for restored lines and their splits from the current setup", () => {
+    const restored: MixedLot[] = [
+      ...buildAuctioneerSeedLots(setup("scheduleA")),
+      {
+        id: "split-1", files: [], extraFiles: [], coverIndex: 0, mode: "single_lot",
+        source: { key: "source-2:split:1", parentKey: "source-2", locked: false, severalLots: true },
+      },
+    ];
+    const current = setup("scheduleA");
+    current.lots[0].severalLots = true;
+
+    const refreshed = withCurrentSeveralLots(restored, current);
+    expect(refreshed.map((lot) => lot.source?.severalLots)).toEqual([true, undefined, undefined]);
+    // Nothing to change returns the same array, so no needless re-render.
+    expect(withCurrentSeveralLots(refreshed, current)).toBe(refreshed);
+    expect(withCurrentSeveralLots(restored, setup("unknown"))).toBe(restored);
+  });
+
+  it("asks for an item only when the work item requires one", () => {
+    const base = setup("unknown");
+    expect(scheduleAItemError(base, "")).toBeUndefined();
+    expect(scheduleAItemError({ ...base, requiresScheduleAItem: false, scheduleAChoices: [] }, "")).toBeUndefined();
+    expect(scheduleAChoicesFor({ ...base, requiresScheduleAItem: false, scheduleAChoices: [{ lineId: "line-1", title: "Item", parentLotId: "lot-1" }] })).toEqual([]);
+  });
+
+  it("blocks with the owner's wording until a currently offered item is chosen", () => {
+    const required = {
+      ...setup("unknown"),
+      requiresScheduleAItem: true,
+      scheduleAChoices: [{ lineId: "line-1", title: "2021 Ford F150", parentLotId: "lot-10" }],
+    };
+    expect(scheduleAItemError({ ...required, scheduleAChoices: [] }, "lot-10")).toBe(
+      "No Schedule A item on this contract is marked Several lots in Auctioneer 2.0. Ask the office to tick it on the contract, then try again."
+    );
+    expect(scheduleAItemError(required, "")).toBe("Choose which Schedule A item these lots belong to.");
+    // A saved choice the refreshed setup no longer offers counts as none.
+    expect(currentScheduleAParentLotId(required, "lot-gone")).toBe("");
+    expect(scheduleAItemError(required, "lot-gone")).toBe("Choose which Schedule A item these lots belong to.");
+    expect(currentScheduleAParentLotId(required, "lot-10")).toBe("lot-10");
+    expect(scheduleAItemError(required, "lot-10")).toBeUndefined();
   });
 });

@@ -260,7 +260,12 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
           {!!item.eventTitle && <Text style={styles.meta}>{item.eventTitle}</Text>}
           {!!item.location && <Text style={styles.meta}>{item.location}</Text>}
           <Text style={styles.meta}>
-            {item.kind === 'scheduleA' ? `${item.lotCount} imported lots` : 'New lot capture'}
+            {item.kind === 'scheduleA'
+              ? `${item.lotCount} imported lots`
+              : item.proposalList
+                ? // owner 2026-10-28: lotCount is this user's listed items still to capture.
+                  `Proposal list · ${item.lotCount} listed ${item.lotCount === 1 ? 'item' : 'items'} to capture`
+                : 'New lot capture'}
           </Text>
           <Text style={styles.status}>
             {item.status === 'sent'

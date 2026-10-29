@@ -36,6 +36,21 @@ export interface AuctioneerDeliverySummary {
   sentAt?: string;
   updatedAt?: string;
   error?: string;
+  /**
+   * owner 2026-10-28: work from a Proposal's uploaded list. Nobody closes it:
+   * Auctioneer takes the Proposal out of its queue once every listed item is
+   * back, so neither the contract nor "my part" is offered for closing.
+   */
+  proposalList?: boolean;
+  /** What the last send returned to Auctioneer; null before it is sent. */
+  proposalReturn?: AuctioneerProposalReturn | null;
+}
+
+export interface AuctioneerProposalReturn {
+  returnedAt?: string;
+  itemCount?: number;
+  /** True while the Proposal still waits for listed items from anyone; null when unknown. */
+  remainsInAssetInsight: boolean | null;
 }
 
 export interface AuctioneerSendDeliveryInput {
@@ -140,7 +155,26 @@ export function parseAuctioneerDelivery(value: unknown): AuctioneerDeliverySumma
     { response: { data: { message: value.error } } },
     'Auctioneer delivery needs attention. Refresh its status before retrying.'
   );
+  // owner 2026-10-28: optional, so a malformed value is dropped rather than
+  // hiding the whole delivery list. Only list work carries them.
+  if (value.proposalList === true) {
+    result.proposalList = true;
+    result.proposalReturn = parseProposalReturn(value.proposalReturn);
+  }
   return result;
+}
+
+function parseProposalReturn(value: unknown): AuctioneerProposalReturn | null {
+  if (!record(value)) return null;
+  return {
+    ...(typeof value.returnedAt === 'string' && Number.isFinite(Date.parse(value.returnedAt))
+      ? { returnedAt: value.returnedAt }
+      : {}),
+    ...(typeof value.itemCount === 'number' && Number.isSafeInteger(value.itemCount) && value.itemCount >= 0
+      ? { itemCount: value.itemCount }
+      : {}),
+    remainsInAssetInsight: typeof value.remainsInAssetInsight === 'boolean' ? value.remainsInAssetInsight : null,
+  };
 }
 
 export function deliveryMatchesReport(
@@ -208,6 +242,7 @@ class AuctioneerDeliveryService {
       if (input.destination === 'OpToDoBoard' && !note) throw deliveryError('Add an Operations To-Do note before sending.');
       if (note.length > 2000) throw deliveryError('The Operations To-Do note cannot exceed 2,000 characters.');
       if (input.completeContract != null && typeof input.completeContract !== 'boolean') throw deliveryError('Choose whether to close your part of the contract.');
+      if (input.completeContract === true && expected.proposalList === true) throw deliveryError('A Proposal list closes in Auctioneer by itself once every listed item is back. Send without closing it.');
       if (input.completeContract === true && expected.canCompleteContract !== true) throw deliveryError('Your account cannot close this contract. Send without closing it.');
       const body: AuctioneerSendDeliveryInput = {
         destination: input.destination,

@@ -282,3 +282,186 @@ it('allows newly verified event metadata for a legacy setup without guessing or 
     })
   ).toThrow(/not a fresh lot/);
 });
+
+// owner 2026-10-28: a lot without its own Schedule A line must name a Schedule A
+// item ticked "Several lots" before it is sent.
+describe('Schedule A item setup fields', () => {
+  const unknownLot = () => ({ ...fixture(), workItemId: 'next', clientSubmissionId: 'submission-next', kind: 'unknown', lots: [] });
+
+  it('defaults every new field for an older server that sends none of them', () => {
+    const parsed = parseAuctioneerSetup(fixture());
+    expect(parsed.requiresScheduleAItem).toBe(false);
+    expect(parsed.scheduleAChoices).toEqual([]);
+    expect(parsed.lots.map((lot) => lot.severalLots)).toEqual([false, false]);
+    expect(parsed.lots[0]).not.toHaveProperty('scheduleALineId');
+    expect(parsed.lots[0]).not.toHaveProperty('scheduleAItemTitle');
+    expect(parsed.lots[0]).toMatchObject({ sourceKey: 'source-one', lotId: 'lot-one' });
+  });
+
+  it('keeps the requirement, the choices in Schedule A order and each source lot\'s item', () => {
+    const parsed = parseAuctioneerSetup({
+      ...unknownLot(),
+      requiresScheduleAItem: true,
+      scheduleAChoices: [
+        { lineId: 'line-1', title: ' 2021 Ford F150 ', parentLotId: 'parent-1' },
+        { lineId: 'line-2', title: 'Misc Shop Tools', parentLotId: 'parent-2' },
+      ],
+    });
+    expect(parsed.requiresScheduleAItem).toBe(true);
+    expect(parsed.scheduleAChoices).toEqual([
+      { lineId: 'line-1', title: '2021 Ford F150', parentLotId: 'parent-1' },
+      { lineId: 'line-2', title: 'Misc Shop Tools', parentLotId: 'parent-2' },
+    ]);
+    const scheduleA = parseAuctioneerSetup({
+      ...fixture(),
+      lots: [
+        { sourceKey: 'source-one', severalLots: true, scheduleALineId: 'line-1', scheduleAItemTitle: '2021 Ford F150' },
+        { sourceKey: 'source-two', severalLots: 'yes', scheduleALineId: '', scheduleAItemTitle: 7 },
+      ],
+    });
+    expect(scheduleA.lots[0]).toEqual({ sourceKey: 'source-one', severalLots: true, scheduleALineId: 'line-1', scheduleAItemTitle: '2021 Ford F150' });
+    expect(scheduleA.lots[1]).toEqual({ sourceKey: 'source-two', severalLots: false });
+    // The successor check still accepts a fresh lot that carries the new fields.
+    expect(() => validateAuctioneerSuccessor(parseAuctioneerSetup(fixture()), parsed)).not.toThrow();
+  });
+
+  it('drops malformed or repeated choices instead of offering an item that cannot be sent', () => {
+    const parsed = parseAuctioneerSetup({
+      ...unknownLot(),
+      requiresScheduleAItem: true,
+      scheduleAChoices: [
+        null, 'line-0', {},
+        { lineId: '', title: 'No line', parentLotId: 'parent-a' },
+        { lineId: 'line-b', title: '   ', parentLotId: 'parent-b' },
+        { lineId: 'line-c', title: 'No parent lot', parentLotId: '' },
+        { lineId: 'line-d', title: 'Number parent', parentLotId: 42 },
+        { lineId: 'line-e', title: 'Kept', parentLotId: 'parent-e' },
+        { lineId: 'line-f', title: 'Same parent lot', parentLotId: 'parent-e' },
+      ],
+    });
+    expect(parsed.scheduleAChoices).toEqual([{ lineId: 'line-e', title: 'Kept', parentLotId: 'parent-e' }]);
+  });
+
+  it.each([undefined, null, 'true', 1, {}])('treats a requirement of %p as not required and a non-list as no choices', (value) => {
+    const parsed = parseAuctioneerSetup({ ...unknownLot(), requiresScheduleAItem: value, scheduleAChoices: value });
+    expect(parsed.requiresScheduleAItem).toBe(false);
+    expect(parsed.scheduleAChoices).toEqual([]);
+  });
+
+  it('reads the refreshed list on every setup request', async () => {
+    jest.mocked(api.get).mockResolvedValue({ data: { data: { ...unknownLot(), requiresScheduleAItem: true,
+      scheduleAChoices: [{ lineId: 'line-1', title: 'Misc Shop Tools', parentLotId: 'parent-1' }] } } });
+    const value = await auctioneerService.getSetup('next');
+    expect(value.requiresScheduleAItem).toBe(true);
+    expect(value.scheduleAChoices).toEqual([{ lineId: 'line-1', title: 'Misc Shop Tools', parentLotId: 'parent-1' }]);
+  });
+});
+
+// owner 2026-10-28: a Proposal worked item by item from its uploaded list.
+describe('Proposal list', () => {
+  const listSetup = (items: unknown) => ({
+    ...fixture(), workItemId: 'list-work', clientSubmissionId: 'submission-list', kind: 'unknown', lots: [],
+    proposalList: { items },
+  });
+  const listed = (lineId: string, state = 'outstanding', fields: Record<string, unknown> = {}) => ({
+    lineId, sourceKey: `proposal-line:${lineId}`, title: `Item ${lineId}`, state, ...fields,
+  });
+
+  it('keeps each listed item with its state and only the text fields it really has', () => {
+    const parsed = parseAuctioneerSetup(listSetup([
+      listed('L1', 'outstanding', { lotNumber: ' 12 ', title: ' 2019 CAT Forklift ', serialNumber: 'CAT-991', year: '2019', make: 'CAT', model: 'GP25', description: 'Propane' }),
+      listed('L2', 'returned', { serialNumber: 42, make: '' }),
+      listed('L3', 'not_found'),
+      listed('L4', 'in_other_report', { title: '   ' }),
+    ]));
+    expect(parsed.proposalList?.items).toEqual([
+      { lineId: 'L1', sourceKey: 'proposal-line:L1', title: '2019 CAT Forklift', lotNumber: '12', serialNumber: 'CAT-991', year: '2019', make: 'CAT', model: 'GP25', description: 'Propane', state: 'outstanding' },
+      { lineId: 'L2', sourceKey: 'proposal-line:L2', title: 'Item L2', state: 'returned' },
+      { lineId: 'L3', sourceKey: 'proposal-line:L3', title: 'Item L3', state: 'not_found' },
+      { lineId: 'L4', sourceKey: 'proposal-line:L4', title: 'Proposal item', state: 'in_other_report' },
+    ]);
+    // A list work item is still a fresh lots-free item for Create Lot & Continue.
+    expect(() => validateAuctioneerSuccessor(parseAuctioneerSetup(fixture()), parsed)).not.toThrow();
+  });
+
+  it('drops items that cannot be captured or returned, repeats, and reads an unknown state as not offered', () => {
+    const parsed = parseAuctioneerSetup(listSetup([
+      null, 'L0', {},
+      { sourceKey: 'proposal-line:X', title: 'No line', state: 'outstanding' },
+      { lineId: 'L-no-key', title: 'No key', state: 'outstanding' },
+      { lineId: '  ', sourceKey: 'proposal-line:blank', state: 'outstanding' },
+      listed('L1'),
+      listed('L1', 'outstanding', { title: 'Repeated line' }),
+      { ...listed('L9'), sourceKey: 'proposal-line:L1' },
+      listed('L5', 'archived'),
+      listed('L6', null as unknown as string),
+    ]));
+    expect(parsed.proposalList?.items).toEqual([
+      { lineId: 'L1', sourceKey: 'proposal-line:L1', title: 'Item L1', state: 'outstanding' },
+      { lineId: 'L5', sourceKey: 'proposal-line:L5', title: 'Item L5', state: 'returned' },
+      { lineId: 'L6', sourceKey: 'proposal-line:L6', title: 'Item L6', state: 'returned' },
+    ]);
+    expect(parseAuctioneerSetup({ ...listSetup([]), proposalList: { items: 'all' } }).proposalList).toEqual({ items: [] });
+  });
+
+  it.each([undefined, null, 'yes', ['L1'], 7])('treats a proposalList of %p as no list at all', (value) => {
+    const parsed = parseAuctioneerSetup({ ...listSetup([]), proposalList: value });
+    expect(parsed).not.toHaveProperty('proposalList');
+  });
+
+  it('adds nothing to a setup without a list', () => {
+    expect(parseAuctioneerSetup(fixture())).not.toHaveProperty('proposalList');
+  });
+
+  it('marks only a true proposalList on Incoming rows', async () => {
+    const row = { cycleKey: 'cycle', contractId: 'contract', contractNo: 'P-100', kind: 'unknown', lotCount: 3, status: 'available' };
+    jest.mocked(api.get).mockResolvedValue({ data: { data: [{ ...row, proposalList: true }, { ...row, cycleKey: 'other', proposalList: 'yes' }, { ...row, cycleKey: 'plain' }] } });
+    const [list, odd, plain] = await auctioneerService.getIncoming();
+    expect(list.proposalList).toBe(true);
+    expect(odd).not.toHaveProperty('proposalList');
+    expect(plain).not.toHaveProperty('proposalList');
+  });
+
+  it('returns listed items as not found with exactly the documented body and reads the refreshed setup', async () => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data: {
+      notFound: ['L1'], remainsInAssetInsight: true,
+      setup: listSetup([listed('L1', 'not_found'), listed('L2')]),
+    } } });
+    const result = await auctioneerService.markProposalItemsNotFound('list-work', [' L1 ']);
+    expect(api.post).toHaveBeenCalledWith('/auctioneer/work-items/list-work/proposal-items/not-found', { lineIds: ['L1'] });
+    expect(result.notFound).toEqual(['L1']);
+    expect(result.remainsInAssetInsight).toBe(true);
+    expect(result.setup.proposalList?.items.map((item) => item.state)).toEqual(['not_found', 'outstanding']);
+  });
+
+  it('reads a missing remainsInAssetInsight as unknown', async () => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data: { notFound: [], setup: listSetup([listed('L1', 'not_found')]) } } });
+    await expect(auctioneerService.markProposalItemsNotFound('list-work', ['L1'])).resolves.toMatchObject({ notFound: [], remainsInAssetInsight: null });
+  });
+
+  it.each([
+    [[]],
+    [['L1', 'L1']],
+    [['L1', '  ']],
+    [Array.from({ length: 501 }, (_, index) => `L${index}`)],
+  ])('refuses %p before contacting the server', async (lineIds) => {
+    await expect(auctioneerService.markProposalItemsNotFound('list-work', lineIds as string[])).rejects.toThrow('Choose the listed items');
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ success: false, data: {} }],
+    [{ success: true, data: { notFound: 'L1', setup: {} } }],
+    [{ success: true, data: { notFound: ['L1'], remainsInAssetInsight: 'yes', setup: {} } }],
+    [{ success: true, data: { notFound: ['L1'], setup: { ...fixture(), workItemId: 'someone-else' } } }],
+  ])('does not report success for an unconfirmed answer %#', async (body) => {
+    jest.mocked(api.post).mockResolvedValue({ data: body });
+    await expect(auctioneerService.markProposalItemsNotFound('list-work', ['L1'])).rejects.toThrow();
+  });
+
+  it('passes a server refusal through unchanged for the form to show', async () => {
+    const refusal = { response: { status: 409, data: { code: 'auctioneer_proposal_item_not_outstanding', message: 'This item was already returned.' } } };
+    jest.mocked(api.post).mockRejectedValue(refusal);
+    await expect(auctioneerService.markProposalItemsNotFound('list-work', ['L1'])).rejects.toBe(refusal);
+  });
+});

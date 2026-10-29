@@ -14,6 +14,12 @@ export type MixedAssetFallbackContext = {
    * line and the submission would be refused.
    */
   sourceParentKey?: string;
+  /**
+   * The Auctioneer lot of the Schedule A item this group was linked to (owner
+   * 2026-10-28). Like the parent key it names the item, not a lot, so every
+   * placeholder lot carries it unchanged.
+   */
+  scheduleAParentLotId?: string;
   currency: string;
   imageUrls: string[];
   mainImageIndexes: number[];
@@ -105,6 +111,9 @@ export function buildMixedAssetFallbackLots(
         ...(context.sourceParentKey
           ? { auctioneer_source_parent_key: context.sourceParentKey }
           : {}),
+        ...(context.scheduleAParentLotId
+          ? { schedule_a_parent_lot_id: context.scheduleAParentLotId }
+          : {}),
       },
     ];
   }
@@ -129,6 +138,9 @@ export function buildMixedAssetFallbackLots(
         : {}),
       ...(context.sourceParentKey
         ? { auctioneer_source_parent_key: context.sourceParentKey }
+        : {}),
+      ...(context.scheduleAParentLotId
+        ? { schedule_a_parent_lot_id: context.scheduleAParentLotId }
         : {}),
     };
   });

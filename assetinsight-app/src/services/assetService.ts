@@ -91,6 +91,9 @@ export interface AssetCreateDetails {
     source_key?: string;
     source_lot_id?: string;
     source_submission_id?: string;
+    // owner 2026-10-28: the chosen Schedule A item (its Auctioneer parent lot).
+    // createAssetReport copies each entry whole, so it reaches the server as set.
+    schedule_a_parent_lot_id?: string;
   }>;
 
   // Image enhancement (server-side: +40% saturation, +40% sharpness, +30% contrast)

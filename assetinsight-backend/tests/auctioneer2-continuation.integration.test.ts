@@ -10,11 +10,12 @@ vi.mock("dotenv", () => {
   return { default: { config }, config };
 });
 vi.mock("../src/utils/openaiClient.js", () => ({ default: {} }));
-const upstream = vi.hoisted(() => ({ contracts: vi.fn(), tasks: vi.fn() }));
+const upstream = vi.hoisted(() => ({ contracts: vi.fn(), tasks: vi.fn(), scheduleAItems: vi.fn() }));
 vi.mock("../src/service/auctioneer2Client.js", async (original) => ({
   ...await original<typeof import("../src/service/auctioneer2Client.js")>(),
   listIncomingContracts: upstream.contracts,
   listIncomingTasks: upstream.tasks,
+  getContractScheduleAItems: upstream.scheduleAItems,
 }));
 
 let mongo: MongoMemoryServer;
@@ -479,6 +480,33 @@ describe.sequential("Auctioneer report continuation", () => {
     expect(next.body.data.lots).toEqual([]);
     expect(new Set([work.clientSubmissionId, first.clientSubmissionId, next.body.data.clientSubmissionId]).size).toBe(3);
     expect(await model.countDocuments()).toBe(2);
+  });
+
+  it.each(["asset", "lotListing"] as const)("keeps a Schedule A contract's Several lots items on the %s successor and requires one per lot", async (type) => {
+    // Owner 2026-10-28: "Create Lot & Continue" on a Schedule A contract must
+    // not produce orphan lots; the successor offers the items ticked Several lots.
+    const { work, report } = await seed(type);
+    await WorkItem.collection.updateOne({ _id: work._id }, { $set: { "contract.hasScheduleA": true } });
+    upstream.scheduleAItems.mockResolvedValue({ contractId: "contract-1", hasScheduleA: true, items: [
+      { lineId: "line-ford", title: "2021 Ford F150", severalLots: false, parentLotId: "old-lot", lotCount: 1, sortOrder: 1 },
+      { lineId: "line-tools", title: "Misc Shop Tools", severalLots: true, parentLotId: "tools-lot", lotCount: 1, sortOrder: 2 },
+    ] });
+    const response = await continueRequest(work._id, report._id);
+    expect(response.status).toBe(201);
+    const tools = { lineId: "line-tools", title: "Misc Shop Tools", parentLotId: "tools-lot" };
+    expect(response.body.data).toMatchObject({ kind: "unknown", requiresScheduleAItem: true, scheduleAChoices: [tools], lots: [] });
+    expect((await WorkItem.findById(response.body.data.workItemId).lean())?.scheduleAChoices).toEqual([tools]);
+    // One unfiltered read serves both the Proposal-list check and the Several
+    // lots items; the per-user read (owner 2026-10-28) finds no list here.
+    expect(upstream.scheduleAItems.mock.calls.filter(([, options]) => !options?.userId)).toEqual([["contract-1"]]);
+
+    const { resolveAuctioneerReportContext } = await import("../src/service/auctioneerReportLinkService.js");
+    const without = { auctioneer_work_item_id: response.body.data.workItemId, mixed_lots: [{ mode: "single_lot", count: 1 }] };
+    await expect(resolveAuctioneerReportContext({ details: without, userId: ownerId, reportType: type }))
+      .rejects.toMatchObject({ statusCode: 409, code: "AUCTIONEER_SCHEDULE_A_ITEM_REQUIRED" });
+    const linked = { auctioneer_work_item_id: response.body.data.workItemId, mixed_lots: [{ mode: "single_lot", count: 1, schedule_a_parent_lot_id: "tools-lot" }] };
+    await resolveAuctioneerReportContext({ details: linked, userId: ownerId, reportType: type });
+    expect(linked.mixed_lots[0]).toMatchObject({ schedule_a_parent_lot_id: "tools-lot" });
   });
 
   it("retains continuation identity if an unused claim is released and reopened", async () => {

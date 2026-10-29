@@ -420,3 +420,60 @@ it('does not offer sending without a signed-in owner', async () => {
     screen.getByRole('button', { name: 'Send to Auctioneer' }).props.accessibilityState.disabled
   ).toBe(true);
 });
+
+// owner 2026-10-28: Schedule A refusals reach the person exactly as Auctioneer
+// 2.0 or the queue wrote them.
+it('shows a stored Schedule A delivery refusal unchanged', async () => {
+  const error =
+    'SCHEDULE_A_ITEM_NOT_SEVERAL_LOTS: The chosen Schedule A item is not marked Several lots in Auctioneer 2.0.';
+  await mount({
+    ...ready,
+    state: 'failed',
+    destination: 'LottingBoard',
+    completeContract: false,
+    error,
+  });
+  expect(screen.getByText(error)).toBeTruthy();
+});
+
+it('shows the queue refusal for a missing Schedule A item instead of a generic message', async () => {
+  const message = 'Choose which Schedule A item this lot belongs to.';
+  jest.mocked(auctioneerDeliveryService.sendDelivery).mockRejectedValue({
+    response: {
+      status: 409,
+      data: { success: false, code: 'AUCTIONEER_SCHEDULE_A_ITEM_REQUIRED', message },
+    },
+  });
+  await mount();
+  await open();
+  await confirm();
+  expect(screen.getByText(message)).toBeTruthy();
+  expect(screen.queryByText(/This delivery or contract has changed/)).toBeNull();
+});
+
+// owner 2026-10-28: Proposal list work is never closed from Asset Insight; the
+// Proposal leaves Auctioneer's queue once every listed item is back.
+describe('Proposal list delivery', () => {
+  const list: AuctioneerDeliverySummary = { ...ready, canCompleteContract: false, proposalList: true, proposalReturn: null };
+
+  it('offers no contract or part close and sends without closing, even if close were reported', async () => {
+    const odd = { ...list, canCompleteContract: true };
+    jest.mocked(auctioneerDeliveryService.getDelivery).mockResolvedValue(odd);
+    await mount(odd);
+    await open();
+    expect(screen.queryByRole('checkbox', { name: 'Close my part after sending' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Complete the contract after sending' })).toBeNull();
+    expect(screen.getByText(/This Proposal is not closed from here\. The Proposal stays open in Auctioneer until every listed item is back\./)).toBeTruthy();
+    await confirm();
+    expect(auctioneerDeliveryService.sendDelivery).toHaveBeenCalledWith(odd, { destination: 'LottingBoard', completeContract: false });
+  });
+
+  it.each([
+    [true, 'Sent to Auctioneer. The Proposal stays open in Auctioneer until every listed item is back.'],
+    [false, 'Sent to Auctioneer. Every listed item of this Proposal is back in Auctioneer.'],
+    [null, 'Sent to Auctioneer.'],
+  ])('says after sending whether the Proposal still waits (%p)', async (remainsInAssetInsight, text) => {
+    await mount({ ...list, state: 'sent', canSend: false, proposalReturn: { itemCount: 2, remainsInAssetInsight } });
+    expect(screen.getByText(text)).toBeTruthy();
+  });
+});

@@ -341,6 +341,117 @@ describe("AuctioneerService incoming", () => {
 });
 
 /*
+   Owner 2026-10-28: a successor work item on a Schedule A contract names the
+   items its lots may be sent against, and each Schedule A lot says whether it
+   may come back as several lots. Older servers send none of it.
+*/
+describe.each(["getSetup", "claim", "continueWorkItem"] as const)("%s Schedule A item fields", (operation) => {
+  beforeEach(() => {
+    vi.mocked(API.get).mockReset();
+    vi.mocked(API.post).mockReset();
+  });
+
+  async function readSetup(fields: Record<string, unknown>) {
+    const response = {
+      data: { success: true, data: {
+        workItemId: "work-1",
+        contractId: "contract-1",
+        contractNo: "CV-100",
+        ...fields,
+      } },
+    };
+    if (operation === "getSetup") {
+      vi.mocked(API.get).mockResolvedValueOnce(response);
+      return AuctioneerService.getSetup("work-1");
+    }
+    vi.mocked(API.post).mockResolvedValueOnce(response);
+    return operation === "claim"
+      ? AuctioneerService.claim("cycle-1", "asset")
+      : AuctioneerService.continueWorkItem("work-1", "report-accepted");
+  }
+
+  it("defaults every new field when an older server omits them", async () => {
+    const setup = await readSetup({
+      kind: "scheduleA",
+      lots: [{ sourceKey: "line-1", lot: { id: "lot-1", title: "2021 Ford F150" } }],
+    });
+
+    expect(setup.requiresScheduleAItem).toBe(false);
+    expect(setup.scheduleAChoices).toEqual([]);
+    expect(setup.lots).toHaveLength(1);
+    expect(setup.lots[0].severalLots).toBe(false);
+    expect(setup.lots[0]).not.toHaveProperty("scheduleALineId");
+    expect(setup.lots[0]).not.toHaveProperty("scheduleAItemTitle");
+  });
+
+  it("keeps the required flag and well-formed choices in server order", async () => {
+    const setup = await readSetup({
+      kind: "unknown",
+      requiresScheduleAItem: true,
+      scheduleAChoices: [
+        { lineId: " line-2 ", title: " Misc Shop Tools ", parentLotId: " lot-20 " },
+        { lineId: "line-1", title: "2021 Ford F150", parentLotId: "lot-10" },
+      ],
+      lots: [],
+    });
+
+    expect(setup.requiresScheduleAItem).toBe(true);
+    expect(setup.scheduleAChoices).toEqual([
+      { lineId: "line-2", title: "Misc Shop Tools", parentLotId: "lot-20" },
+      { lineId: "line-1", title: "2021 Ford F150", parentLotId: "lot-10" },
+    ]);
+  });
+
+  it("drops malformed and repeated choices instead of guessing", async () => {
+    const setup = await readSetup({
+      requiresScheduleAItem: true,
+      scheduleAChoices: [
+        null,
+        "lot-1",
+        { title: "No line", parentLotId: "lot-1" },
+        { lineId: "line-2", title: "  ", parentLotId: "lot-2" },
+        { lineId: "line-3", title: "No parent lot" },
+        { lineId: "line-4", title: "Numeric parent", parentLotId: 44 },
+        { lineId: { id: "line-5" }, title: "Object line", parentLotId: "lot-5" },
+        { lineId: "line-6", title: "Kept", parentLotId: "lot-6" },
+        { lineId: "line-7", title: "Same parent lot", parentLotId: "lot-6" },
+      ],
+    });
+
+    expect(setup.scheduleAChoices).toEqual([
+      { lineId: "line-6", title: "Kept", parentLotId: "lot-6" },
+    ]);
+  });
+
+  it.each([
+    { requiresScheduleAItem: "true", scheduleAChoices: { lineId: "line-1", title: "Item", parentLotId: "lot-1" } },
+    { requiresScheduleAItem: 1, scheduleAChoices: null },
+  ])("trusts only a boolean flag and an array of choices: %j", async (fields) => {
+    const setup = await readSetup(fields);
+
+    expect(setup.requiresScheduleAItem).toBe(false);
+    expect(setup.scheduleAChoices).toEqual([]);
+  });
+
+  it("reads Several lots and the item names from each lot, as given or wrapped", async () => {
+    const setup = await readSetup({
+      kind: "scheduleA",
+      lots: [
+        { sourceKey: "line-1", severalLots: true, scheduleALineId: " line-1 ", scheduleAItemTitle: " 2021 Ford F150 ", lot: { id: "lot-1" } },
+        { sourceKey: "line-2", lot: { id: "lot-2", severalLots: true, scheduleALineId: "line-2", scheduleAItemTitle: "Misc Shop Tools" } },
+        { sourceKey: "line-3", severalLots: "true", scheduleALineId: "  ", scheduleAItemTitle: 7, lot: { id: "lot-3" } },
+      ],
+    });
+
+    expect(setup.lots.map((lot) => lot.severalLots)).toEqual([true, true, false]);
+    expect(setup.lots[0]).toMatchObject({ scheduleALineId: "line-1", scheduleAItemTitle: "2021 Ford F150" });
+    expect(setup.lots[1]).toMatchObject({ scheduleALineId: "line-2", scheduleAItemTitle: "Misc Shop Tools" });
+    expect(setup.lots[2]).not.toHaveProperty("scheduleALineId");
+    expect(setup.lots[2]).not.toHaveProperty("scheduleAItemTitle");
+  });
+});
+
+/*
    Assigned users close their OWN part of a contract; Auctioneer completes it
    once every assigned person has closed theirs (owner, 2026-10-02).
 */

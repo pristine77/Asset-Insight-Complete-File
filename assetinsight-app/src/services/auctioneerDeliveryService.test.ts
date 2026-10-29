@@ -242,3 +242,56 @@ it('does not copy arbitrary transport messages even when they look like a short 
 it('preserves safe stored backend guidance while suppressing private diagnostics', () => {
   expect(parseAuctioneerDelivery(fixture({ error: 'The delivery must be reconciled before retrying.' })).error).toBe('The delivery must be reconciled before retrying.');
 });
+
+// owner 2026-10-28: Auctioneer 2.0 refuses a lot without a valid Schedule A item.
+// Its reason must reach the person exactly as written, not a generic message.
+it.each([
+  'SCHEDULE_A_ITEM_REQUIRED: Choose which Schedule A item this lot belongs to, then send it again.',
+  'SCHEDULE_A_ITEM_NOT_SEVERAL_LOTS: The chosen Schedule A item is not marked Several lots in Auctioneer 2.0. Ask the office to tick it.',
+])('keeps a stored Schedule A refusal unchanged: %s', (error) => {
+  expect(parseAuctioneerDelivery(fixture({ state: 'failed', error })).error).toBe(error);
+});
+
+it('keeps the queue refusal message when Send is refused for a missing Schedule A item', async () => {
+  const message = 'Choose which Schedule A item this lot belongs to.';
+  jest.mocked(api.post).mockRejectedValue({
+    response: { status: 409, data: { success: false, code: 'AUCTIONEER_SCHEDULE_A_ITEM_REQUIRED', message } },
+    message: 'Request failed with status code 409',
+  });
+  const error = await service.sendDelivery(fixture(), { destination: 'LottingBoard' }).catch((failure) => failure);
+  expect(error.message).toBe(message);
+  expect(auctioneerDeliveryErrorMessage(error)).toBe(message);
+});
+
+// owner 2026-10-28: a Proposal list is never closed from Asset Insight; it
+// leaves Auctioneer's queue once every listed item is back.
+describe('Proposal list deliveries', () => {
+  const list = (proposalReturn: unknown, fields: Record<string, unknown> = {}) =>
+    ({ ...fixture({ canCompleteContract: false }), proposalList: true, proposalReturn, ...fields }) as unknown as AuctioneerDeliverySummary;
+
+  it('keeps the list marker and what the last send returned', () => {
+    expect(parseAuctioneerDelivery(list({ returnedAt: '2026-10-28T15:00:00.000Z', itemCount: 3, remainsInAssetInsight: true })))
+      .toMatchObject({ proposalList: true, canCompleteContract: false,
+        proposalReturn: { returnedAt: '2026-10-28T15:00:00.000Z', itemCount: 3, remainsInAssetInsight: true } });
+    expect(parseAuctioneerDelivery(list(null)).proposalReturn).toBeNull();
+  });
+
+  it('drops malformed optional fields instead of hiding the delivery', () => {
+    expect(parseAuctioneerDelivery(list({ returnedAt: 'yesterday', itemCount: -1, remainsInAssetInsight: 'yes' })).proposalReturn)
+      .toEqual({ remainsInAssetInsight: null });
+    const plain = parseAuctioneerDelivery({ ...fixture(), proposalList: 'yes', proposalReturn: { remainsInAssetInsight: true } } as any);
+    expect(plain).not.toHaveProperty('proposalList');
+    expect(plain).not.toHaveProperty('proposalReturn');
+    expect(parseAuctioneerDelivery(fixture())).not.toHaveProperty('proposalList');
+  });
+
+  it('never asks Auctioneer to close a Proposal list, even if close were offered', async () => {
+    await expect(service.sendDelivery(list(null, { canCompleteContract: true }), { destination: 'LottingBoard', completeContract: true }))
+      .rejects.toThrow('closes in Auctioneer by itself');
+    expect(api.post).not.toHaveBeenCalled();
+    jest.mocked(api.post).mockResolvedValue(envelope({ ...list(null), state: 'queued' }));
+    await service.sendDelivery(list(null), { destination: 'LottingBoard' });
+    expect(api.post).toHaveBeenCalledWith('/auctioneer/deliveries/work%2F1/send',
+      { destination: 'LottingBoard', completeContract: false }, { skipAuthRefreshReplay: true });
+  });
+});

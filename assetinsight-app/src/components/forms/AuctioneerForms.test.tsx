@@ -17,6 +17,9 @@ import { pauseActiveUploads, setUploadOwner } from '../../services/uploadCancell
 import durableReportTransfer from '../../services/durableReportTransfer';
 import durableContinuationService from '../../services/durableContinuationService';
 import * as cameraTiming from '../camera/cameraDeadline';
+import NetInfo from '@react-native-community/netinfo';
+import { getSubmissionError } from '../../services/connectivityService';
+import { proposalItemLotId } from './proposalListPolicy';
 
 let mockOwner: string | null = 'owner';
 let mockLatestCamera: any;
@@ -74,7 +77,7 @@ jest.mock('../../services/api', () => ({ __esModule: true, default: { get: jest.
 jest.mock('../../services/auctioneerService', () => ({
   ...jest.requireActual('../../services/auctioneerService'),
   __esModule: true,
-  default: { getSetup: jest.fn(), continueWorkItem: jest.fn() },
+  default: { getSetup: jest.fn(), continueWorkItem: jest.fn(), markProposalItemsNotFound: jest.fn() },
 }));
 jest.mock('../../services/assetService', () => ({ __esModule: true, default: { createAssetReport: jest.fn() } }));
 jest.mock('../../services/lotListingService', () => ({ __esModule: true, default: { createLotListing: jest.fn() } }));
@@ -1552,4 +1555,289 @@ it('does not replace a missing requested draft with a blank ordinary form', asyn
   await waitFor(() => expect(screen.getByText(/requested saved draft is unavailable/)).toBeTruthy());
   expect(screen.queryByTestId('editable-work-item')).toBeNull();
   expect(screen.getByTestId('auctioneer-handoff-scroll')).toBeTruthy();
+});
+
+// owner 2026-10-28: a lot without its own Schedule A line (Create Lot & Continue
+// or Re-Open) is not sent until the appraiser chooses its Schedule A item, and
+// that one choice goes on every lot of the form.
+describe.each(['asset', 'lotListing'] as const)('%s Schedule A item choice', type => {
+  const Form = type === 'asset' ? AssetFormSheet : LotListingFormSheet;
+  const upload = type === 'asset' ? assetService.createAssetReport : lotListingService.createLotListing;
+  const choices = [
+    { lineId: 'line-1', title: '2021 Ford F150', parentLotId: 'parent-lot-1' },
+    { lineId: 'line-2', title: 'Misc Shop Tools', parentLotId: 'parent-lot-2' },
+  ];
+  const none = 'No Schedule A item on this contract is marked Several lots in Auctioneer 2.0. Ask the office to tick it on the contract, then try again.';
+  const choose = 'Choose which Schedule A item these lots belong to.';
+  function unknownSetup(fields: Partial<AuctioneerWorkItemSetup> = {}): AuctioneerWorkItemSetup {
+    return { ...setup(type), kind: 'unknown', lots: [], requiresScheduleAItem: true, scheduleAChoices: choices, ...fields };
+  }
+  async function mount(current: AuctioneerWorkItemSetup, fields: AutoSaveFormData = {}) {
+    jest.mocked(auctioneerService.getSetup).mockResolvedValue(current);
+    const saved = draft(type);
+    // A lot without a Schedule A line may hold several lots; a Schedule A setup keeps its one locked lot.
+    if (current.kind === 'unknown') saved.lots = [saved.lots[0], { ...saved.lots[0], id: 'second-lot', mainImages: [{ uri: 'file:///second.jpg', name: 'second.jpg', type: 'image/jpeg' }] }];
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...saved, formData: { ...saved.formData, ...fields } } as any);
+    // Uploads stay pending: these tests stop at what would be sent.
+    jest.mocked(upload).mockReturnValue(new Promise(() => {}));
+    await render(<Form visible auctioneer={current} draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(saved.lots.length));
+  }
+  const radio = (name: string) => screen.getByRole('radio', { name });
+  const sent = () => jest.mocked(upload).mock.calls[0][0];
+
+  it('blocks Create Lot & Close until an item is chosen, then sends it on every lot and saves it in the draft', async () => {
+    await mount(unknownSetup());
+    expect(screen.getByTestId('schedule-a-item-picker')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    expect(Alert.alert).toHaveBeenCalledWith('Schedule A item required', choose);
+    expect(upload).not.toHaveBeenCalled();
+    expect(screen.getByText(choose)).toBeTruthy();
+    await fireEvent.press(radio('Misc Shop Tools'));
+    expect(radio('Misc Shop Tools').props.accessibilityState.checked).toBe(true);
+    expect(radio('2021 Ford F150').props.accessibilityState.checked).toBe(false);
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    expect(sent().mixed_lots?.map(lot => lot.schedule_a_parent_lot_id)).toEqual(['parent-lot-2', 'parent-lot-2']);
+    const savedDraft = jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0];
+    expect(savedDraft.formData.scheduleAParentLotId).toBe('parent-lot-2');
+    expect(savedDraft.formData.auctioneerSnapshot?.scheduleAChoices).toEqual(choices);
+  });
+
+  it('also blocks Create Lot & Continue without an item', async () => {
+    await mount(unknownSetup());
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Continue' }));
+    expect(Alert.alert).toHaveBeenCalledWith('Schedule A item required', choose);
+    expect(upload).not.toHaveBeenCalled();
+    expect(auctioneerService.continueWorkItem).not.toHaveBeenCalled();
+  });
+
+  it('restores a saved item that is still offered', async () => {
+    await mount(unknownSetup(), { scheduleAParentLotId: 'parent-lot-1' });
+    await waitFor(() => expect(radio('2021 Ford F150').props.accessibilityState.checked).toBe(true));
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    expect(sent().mixed_lots?.map(lot => lot.schedule_a_parent_lot_id)).toEqual(['parent-lot-1', 'parent-lot-1']);
+  });
+
+  it('clears a saved item the refreshed setup no longer offers', async () => {
+    await mount(unknownSetup(), { scheduleAParentLotId: 'parent-lot-withdrawn' });
+    expect(choices.map(choice => radio(choice.title).props.accessibilityState.checked)).toEqual([false, false]);
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    expect(Alert.alert).toHaveBeenCalledWith('Schedule A item required', choose);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('explains when no item is marked Several lots, blocks Submit, and offers the list after Check again', async () => {
+    await mount(unknownSetup({ scheduleAChoices: [] }));
+    expect(screen.getByText(none)).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: '2021 Ford F150' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    expect(Alert.alert).toHaveBeenCalledWith('Schedule A item required', none);
+    expect(upload).not.toHaveBeenCalled();
+    jest.mocked(auctioneerService.getSetup).mockResolvedValueOnce(unknownSetup());
+    await fireEvent.press(screen.getByRole('button', { name: 'Check Schedule A items again' }));
+    await waitFor(() => expect(radio('Misc Shop Tools')).toBeTruthy());
+    expect(screen.queryByText(none)).toBeNull();
+    expect(auctioneerService.getSetup).toHaveBeenLastCalledWith('work-parent');
+  });
+
+  it('shows a plain reason when the list cannot be checked, and keeps the choice blocked', async () => {
+    await mount(unknownSetup({ scheduleAChoices: [] }));
+    jest.mocked(auctioneerService.getSetup).mockRejectedValueOnce({ response: { status: 503 }, message: 'Request failed with status code 503' });
+    await fireEvent.press(screen.getByRole('button', { name: 'Check Schedule A items again' }));
+    await waitFor(() => expect(screen.getByText(/could not connect to Auctioneer/)).toBeTruthy());
+    expect(screen.getByText(none)).toBeTruthy();
+  });
+
+  it.each([
+    ['a Schedule A lot', () => setup(type)],
+    ['a lot whose setup does not require an item', () => unknownSetup({ requiresScheduleAItem: false })],
+  ])('changes nothing for %s', async (_label, current) => {
+    await mount(current());
+    expect(screen.queryByTestId('schedule-a-item-picker')).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    sent().mixed_lots?.forEach(lot => expect(lot).not.toHaveProperty('schedule_a_parent_lot_id'));
+    const savedDraft = jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0];
+    expect(savedDraft.formData).not.toHaveProperty('scheduleAParentLotId');
+    expect(Alert.alert).not.toHaveBeenCalledWith('Schedule A item required', expect.anything());
+  });
+});
+
+// owner 2026-10-28: a Proposal worked item by item from its uploaded list.
+// Green = a listed item captured against its item (source_key), blue = a lot
+// the user added (no source_key), red = a listed item returned as Not found.
+describe.each(['asset', 'lotListing'] as const)('%s Proposal list', type => {
+  const Form = type === 'asset' ? AssetFormSheet : LotListingFormSheet;
+  const upload = type === 'asset' ? assetService.createAssetReport : lotListingService.createLotListing;
+  const items = [
+    { lineId: 'L1', sourceKey: 'proposal-line:L1', title: '2019 CAT Forklift', lotNumber: '12', serialNumber: 'CAT-991', state: 'outstanding' as const },
+    { lineId: 'L2', sourceKey: 'proposal-line:L2', title: 'Pallet racking', state: 'outstanding' as const },
+    { lineId: 'L3', sourceKey: 'proposal-line:L3', title: 'Shop press', state: 'returned' as const },
+    { lineId: 'L4', sourceKey: 'proposal-line:L4', title: 'Welder', state: 'not_found' as const },
+    { lineId: 'L5', sourceKey: 'proposal-line:L5', title: 'Air compressor', state: 'in_other_report' as const },
+  ];
+  const forklift = 'Lot 12 · 2019 CAT Forklift';
+  const L1 = proposalItemLotId('proposal-line:L1');
+  const L2 = proposalItemLotId('proposal-line:L2');
+  function listSetup(fields: Partial<AuctioneerWorkItemSetup> = {}): AuctioneerWorkItemSetup {
+    return { ...setup(type), kind: 'unknown', lots: [], requiresScheduleAItem: false, scheduleAChoices: [], proposalList: { items }, ...fields };
+  }
+  const photo = (name: string) => ({ uri: `file:///${name}.jpg`, name: `${name}.jpg`, type: 'image/jpeg' });
+  const savedLot = (id: string, photos: number, mode: 'single_lot' | 'per_item' = 'single_lot') => ({
+    id, mode, mainImages: Array.from({ length: photos }, (_, index) => photo(`${id}-${index}`)), extraImages: [], videoFiles: [], coverIndex: 0,
+  });
+  const lotIds = () => JSON.parse(screen.getByTestId('mock-restored-lots').props.children).map((lot: any) => lot.id);
+  const sent = () => jest.mocked(upload).mock.calls[0][0];
+  async function showLots() {
+    if (type === 'asset' && !screen.queryByTestId('mock-lot-count')) await fireEvent.press(screen.getByRole('tab', { name: 'Images' }));
+  }
+  async function mountNew(current = listSetup()) {
+    jest.mocked(auctioneerService.getSetup).mockResolvedValue(current);
+    jest.mocked(upload).mockReturnValue(new Promise(() => {}));
+    await render(<Form visible auctioneer={current} onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('auctioneer-create-actions')).toBeTruthy());
+    await showLots();
+  }
+  async function mountDraft(lots: ReturnType<typeof savedLot>[], current = listSetup()) {
+    jest.mocked(auctioneerService.getSetup).mockResolvedValue(current);
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft(type), lots } as any);
+    // Uploads stay pending: these tests stop at what would be sent.
+    jest.mocked(upload).mockReturnValue(new Promise(() => {}));
+    await render(<Form visible auctioneer={current} draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(AutoSaveService.getDraft).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('auctioneer-create-actions')).toBeTruthy());
+    // An Asset draft without lots reopens on Details.
+    if (!lots.length) await showLots();
+    await waitFor(() => expect(screen.getByTestId('mock-lot-count').props.children).toBe(lots.length));
+  }
+  const confirmAlert = async (title: string, button: string) => {
+    const call = jest.mocked(Alert.alert).mock.calls.filter(([heading]) => heading === title).at(-1)!;
+    await act(async () => { call[2]!.find(choice => choice.text === button)!.onPress?.(); });
+  };
+
+  it('starts a new form with one lot per outstanding item and shows the other items read-only', async () => {
+    await mountNew();
+    expect(screen.getByTestId('mock-lot-count').props.children).toBe(2);
+    expect(lotIds()).toEqual([L1, L2]);
+    const panel = within(screen.getByTestId('proposal-list-panel'));
+    expect(panel.getByText('2 to capture · 2 back in Auctioneer')).toBeTruthy();
+    expect(panel.getByText('S/N CAT-991')).toBeTruthy();
+    expect(panel.getByText('Returned')).toBeTruthy();
+    expect(panel.getByText('In another report')).toBeTruthy();
+    // Only outstanding items can be returned as not found.
+    expect(panel.getByRole('button', { name: `Not found: ${forklift}` })).toBeTruthy();
+    expect(panel.queryByRole('button', { name: 'Not found: Shop press' })).toBeNull();
+    expect(panel.queryByRole('button', { name: 'Not found: Welder' })).toBeNull();
+    expect(panel.queryByRole('button', { name: 'Not found: Air compressor' })).toBeNull();
+    expect(screen.getByText('Contract 93530.3-A · Proposal list')).toBeTruthy();
+  });
+
+  it('sends source_key on listed lots only, keeps them one Bundle lot, and saves the list with the draft', async () => {
+    await mountDraft([savedLot(L1, 2, 'per_item'), savedLot('lot-extra', 1, 'per_item')]);
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    const [listed, extra] = sent().mixed_lots!;
+    expect(listed).toMatchObject({ source_key: 'proposal-line:L1', mode: 'single_lot', count: 2 });
+    expect(extra).not.toHaveProperty('source_key');
+    expect(extra).toMatchObject({ mode: 'per_item', count: 1 });
+    sent().mixed_lots!.forEach(lot => expect(lot).not.toHaveProperty('schedule_a_parent_lot_id'));
+    const savedDraft = jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0];
+    expect(savedDraft.formData.auctioneerSnapshot?.proposalList?.items).toEqual(items);
+    expect(savedDraft.lots.map(lot => lot.id)).toEqual([L1, 'lot-extra']);
+  });
+
+  it('keeps a restored draft as saved and offers the listed items it lacks', async () => {
+    await mountDraft([savedLot('lot-extra', 1)]);
+    expect(lotIds()).toEqual(['lot-extra']);
+    const panel = within(screen.getByTestId('proposal-list-panel'));
+    await fireEvent.press(panel.getByRole('button', { name: 'Add Pallet racking to this form' }));
+    expect(lotIds()).toEqual(['lot-extra', L2]);
+    expect(panel.queryByRole('button', { name: 'Add Pallet racking to this form' })).toBeNull();
+    expect(panel.getAllByText('In this form')).toHaveLength(1);
+    await fireEvent.press(panel.getByRole('button', { name: `Add ${forklift} to this form` }));
+    expect(lotIds()).toEqual(['lot-extra', L2, L1]);
+  });
+
+  it('adds every missing listed item at once to an empty restored draft', async () => {
+    await mountDraft([]);
+    await fireEvent.press(screen.getByRole('button', { name: 'Add all 2 listed items to this form' }));
+    expect(lotIds()).toEqual([L1, L2]);
+  });
+
+  it('stops Submit for lots without photos and removes them only when asked', async () => {
+    await mountDraft([savedLot(L1, 1), savedLot(L2, 0)]);
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    expect(Alert.alert).toHaveBeenCalledWith('Lots without photos', expect.stringContaining('no photos yet: Pallet racking.'), expect.any(Array));
+    expect(upload).not.toHaveBeenCalled();
+    expect(lotIds()).toEqual([L1, L2]);
+    await confirmAlert('Lots without photos', 'Remove them');
+    expect(lotIds()).toEqual([L1]);
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    expect(sent().mixed_lots!.map(lot => lot.source_key)).toEqual(['proposal-line:L1']);
+  });
+
+  it('returns an item as not found after confirmation and removes its lot', async () => {
+    await mountDraft([savedLot(L1, 2), savedLot('lot-extra', 1)]);
+    jest.mocked(auctioneerService.markProposalItemsNotFound).mockResolvedValue({
+      notFound: ['L1'], remainsInAssetInsight: true,
+      setup: listSetup({ proposalList: { items: items.map(item => item.lineId === 'L1' ? { ...item, state: 'not_found' as const } : item) } }),
+    });
+    await fireEvent.press(screen.getByRole('button', { name: `Not found: ${forklift}` }));
+    expect(Alert.alert).toHaveBeenCalledWith('Not found',
+      `Return ${forklift} to Auctioneer as not found? It will not be captured. The 2 photos and videos taken for it in this form will be removed.`,
+      expect.any(Array));
+    expect(auctioneerService.markProposalItemsNotFound).not.toHaveBeenCalled();
+    await confirmAlert('Not found', 'Return as not found');
+    await waitFor(() => expect(lotIds()).toEqual(['lot-extra']));
+    expect(auctioneerService.markProposalItemsNotFound).toHaveBeenCalledWith('work-parent', ['L1']);
+    const panel = within(screen.getByTestId('proposal-list-panel'));
+    expect(panel.getByText(`${forklift} was returned as not found.`)).toBeTruthy();
+    expect(panel.queryByRole('button', { name: `Not found: ${forklift}` })).toBeNull();
+    expect(panel.getByText('1 to capture · 3 back in Auctioneer')).toBeTruthy();
+  });
+
+  it('does not queue Not found without a connection', async () => {
+    await mountDraft([savedLot(L1, 1)]);
+    jest.mocked(NetInfo.fetch).mockResolvedValueOnce({ isConnected: false, isInternetReachable: false } as any);
+    await fireEvent.press(screen.getByRole('button', { name: `Not found: ${forklift}` }));
+    await confirmAlert('Not found', 'Return as not found');
+    await waitFor(() => expect(screen.getByText(/needs a connection/)).toBeTruthy());
+    expect(auctioneerService.markProposalItemsNotFound).not.toHaveBeenCalled();
+    expect(lotIds()).toEqual([L1]);
+  });
+
+  it('shows the server refusal and keeps the lot', async () => {
+    const message = 'This item was already returned, or is in a report you submitted. It cannot also be returned as not found.';
+    await mountDraft([savedLot(L1, 1)]);
+    jest.mocked(auctioneerService.markProposalItemsNotFound).mockRejectedValue({
+      response: { status: 409, data: { code: 'auctioneer_proposal_item_not_outstanding', message } },
+    });
+    await fireEvent.press(screen.getByRole('button', { name: `Not found: ${forklift}` }));
+    await confirmAlert('Not found', 'Return as not found');
+    await waitFor(() => expect(screen.getByText(message)).toBeTruthy());
+    expect(lotIds()).toEqual([L1]);
+  });
+
+  it('shows the server message and keeps the draft when a listed item is refused on submit', async () => {
+    const message = 'One of the listed Proposal items in this form is no longer assigned to you, or appears twice. Reopen the Proposal from Incoming and try again.';
+    jest.mocked(OfflineQueueService.getSubmissionError).mockImplementation(error => getSubmissionError(error));
+    await mountDraft([savedLot(L1, 1)]);
+    jest.mocked(upload).mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 409'), {
+      response: { status: 409, data: { code: 'AUCTIONEER_PROPOSAL_ITEM_INVALID', message } },
+    }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith(expect.any(String), message));
+    expect(OfflineCaptureStore.setSubmissionState).toHaveBeenCalledWith('local-parent', 'paused', undefined, expect.any(String));
+    expect(lotIds()).toEqual([L1]);
+  });
+
+  it('changes nothing on a lots-free work item without a list', async () => {
+    await mountNew(listSetup({ proposalList: undefined }));
+    expect(screen.queryByTestId('proposal-list-panel')).toBeNull();
+    expect(screen.getByTestId('mock-lot-count').props.children).toBe(0);
+    expect(screen.queryByText('Contract 93530.3-A · Proposal list')).toBeNull();
+  });
 });

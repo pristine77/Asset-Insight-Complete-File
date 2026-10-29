@@ -16,6 +16,7 @@ import {
   getAuctioneerWorkItemSetup,
   listAuctioneerDeliveries,
   listAuctioneerIncoming,
+  markAuctioneerProposalItemsNotFound,
   queueAuctioneerDelivery,
   reconcileAuctioneerDelivery,
   releaseAuctioneerClaim,
@@ -165,6 +166,20 @@ export async function continueQueuedAuctioneerWork(req: AuthRequest, res: Respon
     const result = await continueQueuedAuctioneerUpload(req.params.id, req);
     return res.status(result.created ? 201 : 200).json({ success: true, data: { reservation: result.reservation, setup: result.setup } });
   } catch (error) { return sendIntegrationError(res, error); }
+}
+
+/**
+ * Returns listed Proposal items the signed-in user could not find (owner
+ * 2026-10-28). The user comes from the session; the body names the items.
+ */
+export async function markAuctioneerProposalItemsNotFoundController(req: AuthRequest, res: Response) {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const data = await markAuctioneerProposalItemsNotFound(req.params.id, requireUserId(req), req.body);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return sendIntegrationError(res, error);
+  }
 }
 
 export async function deleteAuctioneerClaim(req: AuthRequest, res: Response) {

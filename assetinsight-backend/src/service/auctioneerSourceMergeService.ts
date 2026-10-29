@@ -7,6 +7,7 @@
 import { Types } from "mongoose";
 import AuctioneerWorkItem from "../models/auctioneerWorkItem.model.js";
 import { mergeAuctioneerSourceLot } from "./auctioneer2PayloadMapper.js";
+import { isProposalListWorkItem, proposalItemSourceKey } from "./auctioneerProposalList.js";
 
 function clean(value: unknown): string {
   return String(value ?? "").trim();
@@ -27,7 +28,7 @@ export async function mergeCanonicalAuctioneerSourceLots(input: {
     linkedReportId: new Types.ObjectId(reportId),
     linkedReportModel,
   })
-    .select("_id kind snapshot.lots")
+    .select("_id kind snapshot.lots proposalList")
     .lean();
   if (!item) return input.lots;
 
@@ -37,6 +38,33 @@ export async function mergeCanonicalAuctioneerSourceLots(input: {
   const byKey = new Map(
     sourceLots.map((source: any) => [clean(source?.sourceKey), source])
   );
+  /*
+     A Proposal worked from its list (owner 2026-10-28) keeps its items on the
+     work item, not in the snapshot. A lot naming one is filled from it the way
+     a Schedule A line fills its lot — title, serial, year, make, model where
+     the analysis left them blank. Every other lot is an item that was not on
+     the list and is never matched by position to a listed one.
+  */
+  if (isProposalListWorkItem(item)) {
+    const listed = new Map(
+      (item.proposalList?.items || []).map((entry) => [proposalItemSourceKey(entry.lineId), entry])
+    );
+    return input.lots.map((lot, index) => {
+      const requestedKey = clean(lot?.auctioneer_source_key);
+      const entry = listed.get(requestedKey);
+      if (!entry) {
+        return mergeAuctioneerSourceLot(lot, {}, requestedKey || `${String(item._id)}:unknown:${index + 1}`);
+      }
+      return mergeAuctioneerSourceLot(lot, {
+        title: entry.title,
+        description: entry.description,
+        year: entry.year,
+        make: entry.make,
+        model: entry.model,
+        serialNumber: entry.serialNumber,
+      }, requestedKey);
+    });
+  }
 
   return input.lots.map((lot, index) => {
     const requestedKey = clean(lot?.auctioneer_source_key);

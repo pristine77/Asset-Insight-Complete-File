@@ -49,6 +49,18 @@ export function describeBackgroundUpload(entry: BackgroundUploadEntry): string {
 function backgroundError(error: unknown) {
   return reportTransferErrorMessage(error, "submit").replace("Your current form and selected media have not been cleared. Keep this page open.", "This saved report and its original media are kept on this browser.");
 }
+/**
+ * Auctioneer work items upload in the background too (owner, 2026-10-29), so
+ * their refusals reach this line. Every AUCTIONEER_* answer — a Schedule A item
+ * still to choose, a lot mapping or listed Proposal item that no longer
+ * matches, no lot, a work item released, sent, claimed by someone else or
+ * already linked — comes back unchanged on a Resume of the same frozen upload.
+ * Only the form (or Incoming) can change it. Not all of them are 409s, so the
+ * plain conflict test alone would offer a Resume that can never succeed.
+ */
+export function auctioneerRefusalNeedsForm(error: unknown): boolean {
+  return reportTransferErrorData(error).code.startsWith("AUCTIONEER_");
+}
 
 /** One serialized transfer line per tab. Browser closing stops transport, not recovery. */
 export function createBackgroundUploadManager() {
@@ -152,7 +164,9 @@ export function createBackgroundUploadManager() {
     } catch (error) {
       if (!current()) return;
       if (controller.signal.aborted) { hold(job, "paused", PAUSED_MESSAGE); return; }
-      const needsForm = reportTransferErrorData(error).status === 409 || Boolean(job.needsFormDecision?.(error));
+      // Checked here, not only in the forms: a job rebuilt by Finish upload after
+      // a reload carries no needsFormDecision of its own.
+      const needsForm = reportTransferErrorData(error).status === 409 || auctioneerRefusalNeedsForm(error) || Boolean(job.needsFormDecision?.(error));
       if (needsForm) {
         foreground.add(draftKeyFor(job.kind, job.scopeId));
         try { await markResumableNeedsForm(job.ownerId, job.kind, job.scopeId, job.clientSubmissionId, { isCurrent: current }); } catch {}
@@ -169,6 +183,7 @@ export function createBackgroundUploadManager() {
     const job = [active, ...queue, ...held].find((item): item is Job => Boolean(item) && draftKeyFor(item!.kind, item!.scopeId) === key && (!clientSubmissionId || item!.clientSubmissionId === clientSubmissionId));
     return job ? toEntry(job) : null;
   };
+  const isForegroundRequired = (kind: FormDraftKind, scopeId?: string) => (!ownerSession || isAuthSessionCurrent(ownerSession)) && foreground.has(draftKeyFor(kind, scopeId));
   function clear(nextOwner: string | null) {
     generation++; ownerId = nextOwner; ownerSession = nextOwner ? captureAuthSession() : null;
     for (const job of [active, ...queue, ...held]) job?.controller?.abort();
@@ -214,7 +229,20 @@ export function createBackgroundUploadManager() {
       if (job.status === "queued") { hold(job, "paused", PAUSED_MESSAGE); return; }
       job.pauseRequested = true; job.controller?.abort(); notify();
     },
-    isForegroundRequired: (kind: FormDraftKind, scopeId?: string) => (!ownerSession || isAuthSessionCurrent(ownerSession)) && foreground.has(draftKeyFor(kind, scopeId)),
+    isForegroundRequired,
+    /**
+     * Whether a Submit of this exact draft identity must run inline. The tab's
+     * own mark is lost on reload; the frozen attempt's needsForm mark is not.
+     * Without reading it, a draft reopened after a reload would be handed off
+     * again and refused by its own saved copy ("already saved") instead of
+     * showing the question it was sent back for. A read failure answers no:
+     * the hand-off needs the same storage and reports the failure itself.
+     */
+    async requiresFormSubmission(owner: string, kind: FormDraftKind, scopeId: string | undefined, clientSubmissionId: string, options?: { signal?: AbortSignal }): Promise<boolean> {
+      if (isForegroundRequired(kind, scopeId)) return true;
+      if (!owner || !clientSubmissionId) return false;
+      try { return (await getResumableUpload(owner, kind, scopeId, clientSubmissionId, options))?.needsForm === true; } catch { return false; }
+    },
     markForegroundReview(kind: FormDraftKind, scopeId?: string) { foreground.add(draftKeyFor(kind, scopeId)); notify(); },
     clearForegroundRequirement(kind: FormDraftKind, scopeId?: string) { foreground.delete(draftKeyFor(kind, scopeId)); },
     resume(jobId: string) {

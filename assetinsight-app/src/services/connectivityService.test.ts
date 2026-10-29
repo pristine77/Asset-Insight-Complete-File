@@ -21,6 +21,14 @@ it('retains actionable validation text from the server', () => {
   expect(getSubmissionError({ response: { status: 400, data: { message: 'Lot 3 needs at least one photo.' } } }).message).toBe('Lot 3 needs at least one photo.');
 });
 
+// owner 2026-10-28: the server refuses a Schedule A lot without its item; the
+// person must read that reason, not a generic upload failure.
+it('shows the server reason when a report is refused for a missing Schedule A item', () => {
+  const message = 'Choose which Schedule A item this lot belongs to.';
+  const feedback = getSubmissionError({ response: { status: 409, data: { code: 'AUCTIONEER_SCHEDULE_A_ITEM_REQUIRED', message } }, message: 'Request failed with status code 409' });
+  expect(feedback.message).toBe(message);
+});
+
 it('retains an actual lot number that happens to equal an HTTP status', () => {
   const message = 'Lot number 409 is already assigned within this event.';
   expect(getSubmissionError({ response: { status: 409, data: { message } } }).message).toBe(message);

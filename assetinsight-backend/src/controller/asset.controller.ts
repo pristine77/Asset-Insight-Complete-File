@@ -87,9 +87,11 @@ import {
   shouldEnterAssetApprovalQueue,
 } from "../utils/assetApprovalThreshold.js";
 import {
+  applyPreviewScheduleAItemRule,
   auctioneerContextErrorBody,
   linkAuctioneerReport,
   resolveAuctioneerReportContext,
+  restoreScheduleAItemLinks,
 } from "../service/auctioneerReportLinkService.js";
 import { preserveAssetProposalValuationPreviewState } from "../utils/assetProposalValuationPreviewState.js";
 import { saveAssetReportWithProtectedPreviewData } from "../service/assetPreviewDataPersistenceService.js";
@@ -161,7 +163,9 @@ const getExpectedMixedImageCount = (details: any): number => {
 const preserveCrDisclaimers = (nextPreviewData: any, previousPreviewData: any) => {
   if (!nextPreviewData || typeof nextPreviewData !== "object") return nextPreviewData;
   return preserveAssetProposalValuationPreviewState({
-    ...nextPreviewData,
+    // Owner 2026-10-28: like the disclaimers below, a lot's Schedule A item
+    // link is saved state a client may not send back; never drop it.
+    ...restoreScheduleAItemLinks(nextPreviewData, previousPreviewData),
     ...(!nextPreviewData.cr_disclaimers && previousPreviewData?.cr_disclaimers
       ? { cr_disclaimers: previousPreviewData.cr_disclaimers }
       : {}),
@@ -1638,16 +1642,22 @@ export const updatePreviewData = async (req: AuthRequest, res: Response) => {
       ? JSON.parse(JSON.stringify(report.preview_data))
       : {};
 
-    // Update preview data
-    report.preview_data = preserveCrDisclaimers(
-      normalizePreviewDataAuctioneerSpecs(
-        normalizeReviewedPreviewLotsForBusinessRules(lotNumberResult.data, {
-          preserveDescription: true,
-          previousPreviewData,
-        })
+    // Update preview data. Owner 2026-10-28: on a Schedule A contract's extra
+    // work every lot keeps (or gets) its Schedule A item; a lot left without
+    // one is refused with the same 409 as the original submission.
+    report.preview_data = await applyPreviewScheduleAItemRule({
+      workItemId: (report as any).auctioneerWorkItem,
+      previewData: preserveCrDisclaimers(
+        normalizePreviewDataAuctioneerSpecs(
+          normalizeReviewedPreviewLotsForBusinessRules(lotNumberResult.data, {
+            preserveDescription: true,
+            previousPreviewData,
+          })
+        ),
+        previousPreviewData
       ),
-      previousPreviewData
-    );
+      previousPreviewData,
+    });
     const mergeConflicts = (report as any).is_merged_report
       ? findMergedLotConflicts(
           Array.isArray((report.preview_data as any)?.lots)
@@ -1812,15 +1822,21 @@ export const uploadPreviewLotImages = async (req: AuthRequest, res: Response) =>
       return res.status(400).json({ message: lotNumberResult.message });
     }
 
-    const normalizedPreviewData = preserveCrDisclaimers(
-      normalizePreviewDataAuctioneerSpecs(
-        normalizeReviewedPreviewLotsForBusinessRules(lotNumberResult.data, {
-          preserveDescription: true,
-          previousPreviewData,
-        })
+    // Checked before any photo is stored, so a refused edit (owner 2026-10-28:
+    // a lot without its Schedule A item) leaves nothing behind in storage.
+    const normalizedPreviewData = await applyPreviewScheduleAItemRule({
+      workItemId: (report as any).auctioneerWorkItem,
+      previewData: preserveCrDisclaimers(
+        normalizePreviewDataAuctioneerSpecs(
+          normalizeReviewedPreviewLotsForBusinessRules(lotNumberResult.data, {
+            preserveDescription: true,
+            previousPreviewData,
+          })
+        ),
+        previousPreviewData
       ),
-      previousPreviewData
-    );
+      previousPreviewData,
+    });
     const existingPhotoLimitMessage = getPreviewLotPhotoLimitMessage(
       normalizedPreviewData
     );

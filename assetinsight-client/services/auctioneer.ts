@@ -56,6 +56,8 @@ export type AuctioneerIncomingItem = AuctioneerContractReopenMetadata & {
   claimedBy?: AuctioneerPersonRef | string | null;
   claimedByMe?: boolean;
   selectedReportType?: AuctioneerReportType;
+  /** A Proposal worked from its list (owner 2026-10-28); lotCount is the user's items to capture. */
+  proposalList?: boolean;
 };
 
 export type AuctioneerSourceLot = {
@@ -74,6 +76,28 @@ export type AuctioneerSourceLot = {
   conditionReport?: string;
   services?: string[];
   sourcePhotoCount?: number;
+  /**
+   * The office ticked "Several lots" on this Schedule A item in Auctioneer 2.0:
+   * it comes back as more than one lot, so the appraiser may split it here.
+   * Auctioneer refuses extra lots split off an item that is not ticked (owner
+   * 2026-10-28). normalizeSetup always sets it; false when the server omits it.
+   */
+  severalLots?: boolean;
+  /** The Schedule A line this lot was made from, when Auctioneer names it. */
+  scheduleALineId?: string;
+  /** That Schedule A line's item title, e.g. "2021 Ford F150". */
+  scheduleAItemTitle?: string;
+};
+
+/**
+ * A Schedule A item the lots of a successor ("unknown") work item can be sent
+ * against: one the office ticked "Several lots" that already has an Auctioneer
+ * lot. parentLotId is that lot, and is what a submission sends back.
+ */
+export type AuctioneerScheduleAChoice = {
+  lineId: string;
+  title: string;
+  parentLotId: string;
 };
 
 export type AuctioneerWorkItemSetup = {
@@ -99,6 +123,47 @@ export type AuctioneerWorkItemSetup = {
     categories?: string;
   };
   lots: AuctioneerSourceLot[];
+  /*
+     Owner 2026-10-28: lots made on a Schedule A contract beyond the lines it
+     lists ("Create Lot & Continue", a Re-Open) arrive on an "unknown" work item
+     with no lines, and used to reach Auctioneer orphaned. When this is true the
+     appraiser must choose which Schedule A item the form's lots belong to, from
+     scheduleAChoices (server order, refreshed on every setup request), before
+     anything is sent.
+
+     normalizeSetup always sets both. They stay optional because a setup can
+     also reach a form from a report-form handoff written before this change;
+     readers treat a missing value as false / no choices.
+  */
+  requiresScheduleAItem?: boolean;
+  scheduleAChoices?: AuctioneerScheduleAChoice[];
+  /**
+   * Present only on a Proposal worked from its list (owner 2026-10-28): the
+   * items the office pushed to this user, each with the source key a lot
+   * carries to capture it. The form starts with one lot per "outstanding"
+   * item; lots without a listed key go back as items that were not listed.
+   */
+  proposalList?: { items: AuctioneerProposalItem[] };
+};
+
+/** Where one of the user's listed Proposal items stands. */
+export type AuctioneerProposalItemState =
+  | "outstanding"
+  | "in_other_report"
+  | "returned"
+  | "not_found";
+
+export type AuctioneerProposalItem = {
+  lineId: string;
+  sourceKey: string;
+  title: string;
+  lotNumber?: string;
+  serialNumber?: string;
+  year?: string;
+  make?: string;
+  model?: string;
+  description?: string;
+  state: AuctioneerProposalItemState;
 };
 
 export type AuctioneerDeliveryState =
@@ -373,6 +438,7 @@ function normalizeIncomingItem(value: unknown): AuctioneerIncomingItem {
         item.report_type ??
         workItem.reportType
     ),
+    ...(item.proposalList === true ? { proposalList: true } : {}),
   };
 }
 
@@ -425,7 +491,80 @@ function normalizeLot(value: unknown, index: number): AuctioneerSourceLot {
       .filter(Boolean),
     sourcePhotoCount:
       Number(lot.sourcePhotoCount ?? lot.source_photo_count) || undefined,
+    // Only an explicit true unlocks splitting; older servers omit the flag.
+    severalLots: (task.severalLots ?? lot.severalLots) === true,
+    ...optionalText("scheduleALineId", task.scheduleALineId ?? lot.scheduleALineId),
+    ...optionalText("scheduleAItemTitle", task.scheduleAItemTitle ?? lot.scheduleAItemTitle),
   };
+}
+
+/** A trimmed, non-blank string under `key`, or nothing at all. */
+function optionalText<K extends string>(key: K, value: unknown): Partial<Record<K, string>> {
+  return typeof value === "string" && value.trim()
+    ? ({ [key]: value.trim() } as Record<K, string>)
+    : {};
+}
+
+/*
+   Choices are offered to the appraiser and one is sent back as
+   schedule_a_parent_lot_id, so an entry missing any of its three strings is
+   dropped rather than guessed at. A repeated parentLotId would be two options
+   with the same value, so only its first entry is kept. Server order is kept.
+*/
+function normalizeScheduleAChoices(value: unknown): AuctioneerScheduleAChoice[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const choices: AuctioneerScheduleAChoice[] = [];
+  for (const entry of value) {
+    const choice = asRecord(entry);
+    const { lineId, title, parentLotId } = {
+      ...optionalText("lineId", choice.lineId),
+      ...optionalText("title", choice.title),
+      ...optionalText("parentLotId", choice.parentLotId),
+    };
+    if (!lineId || !title || !parentLotId || seen.has(parentLotId)) continue;
+    seen.add(parentLotId);
+    choices.push({ lineId, title, parentLotId });
+  }
+  return choices;
+}
+
+const PROPOSAL_ITEM_STATES = new Set<AuctioneerProposalItemState>([
+  "outstanding", "in_other_report", "returned", "not_found",
+]);
+
+/**
+ * The listed items, checked rather than trusted: an item without its line or
+ * key cannot be captured or returned and is dropped, a repeat is dropped, and
+ * a state this client does not know is read as "returned" — never offered for
+ * capture, because capturing it could replace a return made elsewhere.
+ */
+function normalizeProposalList(value: unknown): AuctioneerWorkItemSetup["proposalList"] {
+  const raw = asRecord(value);
+  if (!Array.isArray(raw.items)) return undefined;
+  const seen = new Set<string>();
+  const items: AuctioneerProposalItem[] = [];
+  for (const entry of raw.items) {
+    const item = asRecord(entry);
+    const lineId = textValue(item.lineId);
+    const sourceKey = textValue(item.sourceKey);
+    if (!lineId || !sourceKey || seen.has(lineId)) continue;
+    seen.add(lineId);
+    const state = textValue(item.state) as AuctioneerProposalItemState;
+    items.push({
+      lineId,
+      sourceKey,
+      title: textValue(item.title) || "Proposal item",
+      ...optionalText("lotNumber", typeof item.lotNumber === "number" ? String(item.lotNumber) : item.lotNumber),
+      ...optionalText("serialNumber", item.serialNumber),
+      ...optionalText("year", typeof item.year === "number" ? String(item.year) : item.year),
+      ...optionalText("make", item.make),
+      ...optionalText("model", item.model),
+      ...optionalText("description", item.description),
+      state: PROPOSAL_ITEM_STATES.has(state) ? state : "returned",
+    });
+  }
+  return { items };
 }
 
 function normalizeSetup(value: unknown): AuctioneerWorkItemSetup {
@@ -529,6 +668,11 @@ function normalizeSetup(value: unknown): AuctioneerWorkItemSetup {
         undefined,
     },
     lots: lotValues.map(normalizeLot),
+    requiresScheduleAItem: raw.requiresScheduleAItem === true,
+    scheduleAChoices: normalizeScheduleAChoices(raw.scheduleAChoices),
+    ...(raw.proposalList !== undefined && normalizeProposalList(raw.proposalList)
+      ? { proposalList: normalizeProposalList(raw.proposalList) }
+      : {}),
   };
 }
 
@@ -699,6 +843,31 @@ export const AuctioneerService = {
       { reportId }
     );
     return normalizeSetup(response.data);
+  },
+  /**
+   * Returns listed Proposal items the appraiser could not find to Auctioneer
+   * at once, as not found (owner 2026-10-28). Not replayed automatically: the
+   * server answers a repeat harmlessly, but the person decides to repeat it.
+   */
+  async markProposalItemsNotFound(
+    workItemId: string,
+    lineIds: string[]
+  ): Promise<{ notFound: string[]; remainsInAssetInsight: boolean | null; setup: AuctioneerWorkItemSetup }> {
+    const response = await API.post(
+      `/auctioneer/work-items/${encodeURIComponent(workItemId)}/proposal-items/not-found`,
+      { lineIds },
+      { _retry: true, timeout: 30_000 } as RetriableAxiosConfig
+    );
+    const raw = asRecord(unwrap(response.data));
+    if (asRecord(response.data).success !== true || !Array.isArray(raw.notFound)) {
+      throw new Error("Auctioneer did not confirm the not-found items. Refresh the Proposal before trying again.");
+    }
+    return {
+      notFound: raw.notFound.filter((lineId): lineId is string => typeof lineId === "string"),
+      remainsInAssetInsight:
+        typeof raw.remainsInAssetInsight === "boolean" ? raw.remainsInAssetInsight : null,
+      setup: normalizeSetup(raw.setup),
+    };
   },
 
   async releaseClaim(workItemId: string) {

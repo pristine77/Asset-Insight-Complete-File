@@ -13,6 +13,7 @@ import {
   reopenAuctioneerContractPartController,
   getAuctioneerSetup,
   getAuctioneerStatus,
+  markAuctioneerProposalItemsNotFoundController,
   reconcileAuctioneerDeliveryController,
   sendAuctioneerDelivery,
 } from "../controller/auctioneer2.controller.js";
@@ -62,6 +63,8 @@ router.get("/work-items/:id/setup", getAuctioneerSetup);
 router.post("/work-items/:id/continue", continueAuctioneerWork);
 router.post("/work-items/:id/continue-upload", continueQueuedAuctioneerWork);
 router.delete("/work-items/:id/claim", deleteAuctioneerClaim);
+// A Proposal list's items the user could not find go back as not found (owner 2026-10-28).
+router.post("/work-items/:id/proposal-items/not-found", markAuctioneerProposalItemsNotFoundController);
 router.get("/deliveries", getAuctioneerDeliveries);
 router.get("/deliveries/:id", getAuctioneerDelivery);
 router.post("/deliveries/:id/send", sendAuctioneerDelivery);

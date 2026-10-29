@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuctioneerWorkItemSetup } from "@/services/auctioneer";
 import type { ReportDraftRecord } from "@/services/reportDrafts";
 import AssetForm from "./AssetForm";
@@ -49,9 +49,25 @@ vi.mock("@/services/backgroundUploadManager", () => ({
   backgroundUploads: {
     enqueue: mocks.enqueue,
     isForegroundRequired: mocks.isForegroundRequired,
+    // One switch for both marks (this tab's, and a saved upload's after reload).
+    requiresFormSubmission: async (_ownerId: string, kind: string, scopeId?: string) =>
+      Boolean(mocks.isForegroundRequired(kind, scopeId)),
     clearForegroundRequirement: vi.fn(),
   },
 }));
+
+/**
+ * Lets the mocked line start each handed-off upload, as the real one does
+ * right after hand-off, so a test can read what reaches AssetService.create.
+ */
+function runEnqueuedUploads() {
+  mocks.enqueue.mockImplementation(async (request: BackgroundUploadRequest) => {
+    setTimeout(() => {
+      void Promise.resolve(request.upload(() => undefined, new AbortController().signal)).catch(() => undefined);
+    }, 0);
+    return "background-job";
+  });
+}
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.routerPush }),
@@ -540,6 +556,7 @@ describe("AssetForm manual save and submission workflow", () => {
 
   it("prefills a fresh continuation with edited details without reusing the previous submission", async () => {
     const auctioneer = makeAuctioneerSetup("unknown");
+    runEnqueuedUploads();
     render(<AssetForm auctioneer={auctioneer} continuationDetails={{ clientName: "Edited client", location: "Edited yard", currency: "USD", appraisalPurpose: "Continued inspection", bankPhotosEnabled: true }} />);
     expect(screen.getByLabelText(/Client name/i)).toHaveValue("Edited client");
     expect(screen.getByLabelText(/Inspection location/i)).toHaveValue("Edited yard");
@@ -548,6 +565,65 @@ describe("AssetForm manual save and submission workflow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create report" }));
     await waitFor(() => expect(mocks.createAsset).toHaveBeenCalledOnce());
     expect(mocks.createAsset.mock.calls[0][0]).toMatchObject({ client_submission_id: auctioneer.clientSubmissionId, client_name: "Edited client", location: "Edited yard", currency: "USD" });
+  });
+
+  /*
+     Owner 2026-10-29: "i thought the job works in the background and not hold
+     up the screen". Create Lot & Close on an Auctioneer work item hands its
+     upload to the line like any report; the payload names the work item.
+  */
+  it("hands Create Lot & Close for an Auctioneer work item to the background and frees the screen", async () => {
+    const persistence = deferred<string>();
+    const onAcceptedAndContinue = vi.fn();
+    const onSuccess = vi.fn();
+    const auctioneer = makeAuctioneerSetup("scheduleA");
+    mocks.enqueue.mockReturnValueOnce(persistence.promise);
+    mocks.createAsset.mockResolvedValueOnce({ reportId: "accepted-in-background", jobId: "accepted-job", status: "processing" });
+    render(<AssetForm auctioneer={auctioneer} onAcceptedAndContinue={onAcceptedAndContinue} onSuccess={onSuccess} />);
+    addTestMedia();
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot & Close" }));
+
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    const request = mocks.enqueue.mock.calls[0][0] as BackgroundUploadRequest;
+    expect(request).toMatchObject({
+      ownerId: "user-asset-workflow", kind: "asset", endpoint: "/asset", title: auctioneer.contract.contractNo,
+      scopeId: auctioneer.clientSubmissionId, clientSubmissionId: auctioneer.clientSubmissionId,
+    });
+    expect(request.details).toMatchObject({
+      auctioneer_work_item_id: auctioneer.workItemId,
+      client_submission_id: auctioneer.clientSubmissionId,
+      contract_no: auctioneer.contract.contractNo,
+    });
+    // A review copy of this saved upload must reopen against the same work item.
+    expect(request.draftSnapshot).toMatchObject({ formData: { auctioneerWorkItemId: auctioneer.workItemId, clientSubmissionId: auctioneer.clientSubmissionId } });
+    expect(mocks.createAsset).not.toHaveBeenCalled();
+
+    await act(async () => persistence.resolve("background-job"));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("while this tab stays open")));
+    expect(screen.queryByRole("dialog", { name: "Uploading your report" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Lot & Close" })).toBeEnabled();
+    expect(request.signal?.aborted).toBe(false);
+    expect(onAcceptedAndContinue).not.toHaveBeenCalled();
+    expect(mocks.deleteDraftByClientId).not.toHaveBeenCalled();
+
+    // The line sends exactly the payload the inline path would have sent.
+    await act(async () => { await request.upload(vi.fn(), new AbortController().signal); });
+    expect(mocks.createAsset).toHaveBeenCalledOnce();
+    expect(mocks.createAsset.mock.calls[0][0]).toBe(request.details);
+    expect(onAcceptedAndContinue).not.toHaveBeenCalled();
+  });
+
+  it("keeps an Auctioneer work item's form open when it cannot be handed off", async () => {
+    const onSuccess = vi.fn();
+    mocks.enqueue.mockRejectedValueOnce(new Error("Browser storage is full. Free space and retry this same report."));
+    render(<AssetForm auctioneer={makeAuctioneerSetup()} onAcceptedAndContinue={vi.fn()} onSuccess={onSuccess} />);
+    addTestMedia();
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot & Close" }));
+    await screen.findByText(/Browser storage is full/);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(mocks.createAsset).not.toHaveBeenCalled();
+    expect(screen.getByTestId("selected-asset-media")).toHaveTextContent("asset-photo.jpg");
+    expect(screen.getByLabelText(/Contract number/i)).toHaveValue("IMPORTED-100");
   });
 
   it.each(["unknown", "scheduleA"] as const)(
@@ -636,6 +712,7 @@ describe("AssetForm manual save and submission workflow", () => {
       const onSuccess = vi.fn();
       mocks.createAsset.mockReturnValue(pending.promise);
       mocks.upsertWithMedia.mockReturnValue(pending.promise);
+      runEnqueuedUploads();
       render(<AssetForm auctioneer={makeAuctioneerSetup()} onAcceptedAndContinue={onAcceptedAndContinue} onSuccess={onSuccess} />);
       addTestMedia();
       const actions = {
@@ -657,6 +734,8 @@ describe("AssetForm manual save and submission workflow", () => {
         await waitFor(() => expect(mocks.createAsset).toHaveBeenCalledOnce());
         expect(mocks.upsertWithMedia).not.toHaveBeenCalled();
       }
+      // Close hands off to the upload line (owner, 2026-10-29); Continue stays inline.
+      expect(mocks.enqueue).toHaveBeenCalledTimes(first === "normal" ? 1 : 0);
       await act(async () => pending.resolve({ _id: "saved-draft", media: [], reportId: "accepted-single-flight", jobId: "accepted-job", status: "processing" }));
       if (first === "continue") {
         await waitFor(() => expect(onAcceptedAndContinue).toHaveBeenCalledExactlyOnceWith("accepted-single-flight", expect.objectContaining({ contractNo: "IMPORTED-100" })));
@@ -725,18 +804,155 @@ describe("AssetForm manual save and submission workflow", () => {
     mocks.restoreLots.mockResolvedValueOnce(lots);
     mocks.deleteScopedDraft.mockClear();
     mocks.createAsset.mockResolvedValueOnce({ reportId: "successor-accepted", jobId: "accepted-job", status: "processing" });
+    runEnqueuedUploads();
     render(<AssetForm auctioneer={next} resumeDraft={resumeDraft} onSuccess={onSuccess} />);
     await waitFor(() => expect(screen.getByTestId("selected-asset-media")).toHaveTextContent("asset-photo.jpg"));
     fireEvent.click(screen.getByRole("button", { name: "Create report" }));
     await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
 
+    // The saved draft's identity is the upload's: the line keeps its media under it.
+    expect(mocks.enqueue.mock.calls[0][0]).toMatchObject({ scopeId: next.clientSubmissionId, clientSubmissionId: next.clientSubmissionId });
+    await waitFor(() => expect(mocks.createAsset).toHaveBeenCalledOnce());
     expect(mocks.createAsset.mock.calls[0][0]).toMatchObject({
       auctioneer_work_item_id: next.workItemId,
       client_submission_id: next.clientSubmissionId,
       contract_no: previous.contract.contractNo,
     });
-    expect(mocks.deleteDraftByClientId).toHaveBeenCalledExactlyOnceWith(next.clientSubmissionId, "asset");
-    expect(mocks.deleteScopedDraft).toHaveBeenCalledExactlyOnceWith("user-asset-workflow", "asset", next.clientSubmissionId);
+    // A handed-off upload never deletes its draft; the server does on acceptance.
+    expect(mocks.deleteDraftByClientId).not.toHaveBeenCalled();
+    expect(mocks.deleteScopedDraft).not.toHaveBeenCalled();
+  });
+
+  /*
+     Owner 2026-10-28: a successor work item on a Schedule A contract sends
+     nothing until the appraiser chooses the item its lots belong to; the one
+     choice covers every lot in the form.
+  */
+  describe("Schedule A item choice", () => {
+    const CHOOSE = "Choose which Schedule A item these lots belong to.";
+    const choices = [
+      { lineId: "line-1", title: "2021 Ford F150", parentLotId: "lot-10" },
+      { lineId: "line-2", title: "Misc Shop Tools", parentLotId: "lot-20" },
+    ];
+    const requiringSetup = (scheduleAChoices = choices): AuctioneerWorkItemSetup => ({
+      ...makeAuctioneerSetup("unknown"),
+      requiresScheduleAItem: true,
+      scheduleAChoices,
+    });
+    const picker = () => screen.getByRole("combobox", { name: /Schedule A item/i });
+    // A refused submit scrolls to the field, which jsdom does not implement.
+    // Kept for the whole block: the form scrolls on a timer after the refusal.
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    beforeAll(() => {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+    });
+    afterAll(() => {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: originalScrollIntoView });
+      } else {
+        delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    });
+
+    it("blocks the upload until an item is chosen, then sends it on every lot", async () => {
+      mocks.createAsset.mockResolvedValueOnce({ reportId: "schedule-a-report", jobId: "accepted-job", status: "processing" });
+      runEnqueuedUploads();
+      render(<AssetForm auctioneer={requiringSetup()} />);
+      expect(within(picker()).getAllByRole("option").map((option) => option.textContent)).toEqual([
+        "Choose a Schedule A item", "2021 Ford F150", "Misc Shop Tools",
+      ]);
+      fireEvent.click(screen.getByRole("button", { name: "Add sparse lot videos" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+      expect(await screen.findAllByText(CHOOSE)).not.toHaveLength(0);
+      await waitFor(() => expect(picker()).toHaveFocus());
+      expect(picker()).toHaveAttribute("aria-invalid", "true");
+      expect(mocks.createAsset).not.toHaveBeenCalled();
+
+      fireEvent.change(picker(), { target: { value: "lot-20" } });
+      expect(screen.queryByText(CHOOSE)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+      await waitFor(() => expect(mocks.createAsset).toHaveBeenCalledOnce());
+      const details = mocks.createAsset.mock.calls[0][0];
+      expect(details.mixed_lots).toHaveLength(4);
+      expect(details.mixed_lots.map((lot: any) => lot.schedule_a_parent_lot_id)).toEqual(["lot-20", "lot-20", "lot-20", "lot-20"]);
+    });
+
+    it("explains in place of the picker when no item is ticked Several lots", async () => {
+      render(<AssetForm auctioneer={requiringSetup([])} />);
+      const explanation = "No Schedule A item on this contract is marked Several lots in Auctioneer 2.0. Ask the office to tick it on the contract, then try again.";
+      expect(screen.getByText(explanation)).toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: /Schedule A item/i })).not.toBeInTheDocument();
+      addTestMedia();
+
+      fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+      await waitFor(() => expect(screen.getAllByText(explanation).length).toBeGreaterThan(1));
+      await waitFor(() => expect(document.getElementById("asset-scheduleAItem")).toHaveFocus());
+      expect(mocks.createAsset).not.toHaveBeenCalled();
+    });
+
+    it("shows the server's refusal when Auctioneer still lacks the item", async () => {
+      const refusal = "Choose which Schedule A item this lot belongs to.";
+      mocks.createAsset.mockRejectedValueOnce({
+        response: { status: 409, data: { code: "AUCTIONEER_SCHEDULE_A_ITEM_REQUIRED", message: refusal } },
+      });
+      // A background attempt was sent back with this refusal, so the reopened
+      // draft submits inline where the picker can answer it (owner, 2026-10-29).
+      mocks.isForegroundRequired.mockReturnValue(true);
+      render(<AssetForm auctioneer={requiringSetup()} />);
+      addTestMedia();
+      fireEvent.change(picker(), { target: { value: "lot-10" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+
+      await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(refusal));
+      expect(screen.getAllByText(refusal).length).toBeGreaterThan(0);
+      expect(picker()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByTestId("selected-asset-media")).toHaveTextContent("asset-photo.jpg");
+    });
+
+    it("keeps the choice in the draft and drops it when the refreshed setup no longer offers it", async () => {
+      mocks.upsertWithMedia.mockResolvedValueOnce({ _id: "schedule-a-draft", media: [] });
+      const first = render(<AssetForm auctioneer={requiringSetup()} />);
+      addTestMedia();
+      fireEvent.change(picker(), { target: { value: "lot-20" } });
+      fireEvent.click(screen.getByRole("button", { name: /Save draft/i }));
+      await waitFor(() => expect(mocks.upsertWithMedia).toHaveBeenCalledOnce());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Saving your draft" })).not.toBeInTheDocument());
+      const [saved, lots] = mocks.upsertWithMedia.mock.calls[0];
+      expect(saved.formData.scheduleAParentLotId).toBe("lot-20");
+      first.unmount();
+
+      const resumeDraft: ReportDraftRecord = {
+        ...makeAssetResumeDraft(makeAuctioneerSetup().contract.location),
+        clientDraftId: saved.clientDraftId,
+        contractNo: saved.contractNo,
+        revision: saved.revision,
+        formData: saved.formData,
+        lots,
+      };
+      mocks.restoreLots.mockResolvedValue(lots);
+      const reopened = render(<AssetForm auctioneer={requiringSetup()} resumeDraft={resumeDraft} />);
+      await waitFor(() => expect(picker()).toHaveValue("lot-20"));
+      reopened.unmount();
+
+      render(<AssetForm auctioneer={requiringSetup([choices[0]])} resumeDraft={resumeDraft} />);
+      await waitFor(() => expect(screen.getByTestId("selected-asset-media")).toHaveTextContent("asset-photo.jpg"));
+      expect(picker()).toHaveValue("");
+      fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+      expect(await screen.findAllByText(CHOOSE)).not.toHaveLength(0);
+      expect(mocks.createAsset).not.toHaveBeenCalled();
+    });
+
+    it("changes nothing on a work item that does not ask for an item", async () => {
+      mocks.createAsset.mockResolvedValueOnce({ reportId: "plain-report", jobId: "accepted-job", status: "processing" });
+      runEnqueuedUploads();
+      render(<AssetForm auctioneer={{ ...makeAuctioneerSetup("unknown"), requiresScheduleAItem: false, scheduleAChoices: choices }} />);
+      expect(screen.queryByRole("combobox", { name: /Schedule A item/i })).not.toBeInTheDocument();
+      addTestMedia();
+      fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+      await waitFor(() => expect(mocks.createAsset).toHaveBeenCalledOnce());
+      expect(mocks.createAsset.mock.calls[0][0].mixed_lots[0]).not.toHaveProperty("schedule_a_parent_lot_id");
+    });
   });
 
   it("defaults new Asset reports to no watermark and allows explicit opt-in", async () => {

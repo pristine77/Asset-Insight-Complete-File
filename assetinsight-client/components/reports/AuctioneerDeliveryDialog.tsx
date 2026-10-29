@@ -151,7 +151,12 @@ export default function AuctioneerDeliveryDialog({
      This used to be a note saying the contract "may remain open", with no way
      to say you were done; the box is that way.
   */
-  const closesOwnPart = delivery?.contractCompletionScope === "user";
+  // A Proposal list is never closed from here (owner 2026-10-28): it leaves
+  // Asset Insight once every listed item is back, and the server says so with
+  // canCompleteContract false while still naming the user's scope.
+  const closesOwnPart =
+    delivery?.contractCompletionScope === "user" &&
+    delivery.canCompleteContract !== false;
 
   const handleSend = async () => {
     if (!delivery || busy) return;

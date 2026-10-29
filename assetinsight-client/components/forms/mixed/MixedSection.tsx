@@ -366,10 +366,14 @@ export default function MixedSection({
 
        locked is deliberately false: the lot Auctioneer sent stays undeletable,
        one the appraiser created is theirs to discard.
+
+       Owner 2026-10-28: only a line the office ticked "Several lots" may be
+       split; Auctioneer refuses extra lots split off any other. The split
+       inherits the tick, so a split of a split answers for the original line.
     */
     const parent = sourceMappedLots ? lotsRef.current[activeIdx]?.source : undefined;
     const parentKey = parent?.parentKey || parent?.key;
-    if (sourceMappedLots && !parentKey) return;
+    if (sourceMappedLots && (!parentKey || parent?.severalLots !== true)) return;
     const source: MixedLot["source"] | undefined = parentKey
       ? {
           key: `${parentKey}:split:${id}`,
@@ -378,6 +382,7 @@ export default function MixedSection({
           submissionId: parent?.submissionId,
           label: parent?.label ? `${parent.label} — added lot` : "Added lot",
           locked: false,
+          severalLots: true,
         }
       : undefined;
     const next: MixedLot[] = [
@@ -1743,6 +1748,23 @@ export default function MixedSection({
   const lotLabel = (lot: MixedLot, index: number) =>
     lot.source?.label ||
     (lot.source?.lotNumber ? `Lot ${lot.source.lotNumber}` : `Lot ${index + 1}`);
+  /*
+     Owner 2026-10-28: on a Schedule A form only a line ticked "Several lots"
+     in Auctioneer 2.0 can take more lots, so the add button follows the lot
+     being worked on, and those lines carry a tag saying so. The tag marks the
+     line itself, not the lots added beneath it.
+  */
+  const canAddLot = !sourceMappedLots || activeLot?.source?.severalLots === true;
+  const isSeveralLotsLine = (lot: MixedLot) =>
+    sourceMappedLots && lot.source?.severalLots === true && !lot.source.parentKey;
+  const severalLotsTag = (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full border border-[var(--app-border)] bg-[var(--app-panel)] px-2 py-0.5 text-[11px] font-semibold leading-4 text-[var(--app-text)]"
+      title="Ticked Several lots in Auctioneer 2.0: this line can come back as more than one lot."
+    >
+      Several lots
+    </span>
+  );
   return (
     <div className="@container min-w-0 space-y-4 overflow-x-hidden text-[var(--app-text)]">
       <div className="flex min-w-0 flex-col gap-3 @min-[560px]:flex-row @min-[560px]:items-center @min-[560px]:justify-between">
@@ -1759,20 +1781,24 @@ export default function MixedSection({
           it is another lot beneath the line being worked on. It used to read
           "Source lot mapping locked", which described the mapping accurately
           and told the reader nothing about what they could do instead.
+          On a Schedule A form it shows only for a "Several lots" line
+          (canAddLot, owner 2026-10-28).
         */}
-        <button
-          type="button"
-          onClick={createLot}
-          title={
-            sourceMappedLots
-              ? "Add another lot beneath this Schedule A line. It is sent back against the same line."
-              : "Add another lot to this contract."
-          }
-          className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--app-text)] px-4 py-2.5 text-sm font-semibold text-[var(--app-panel)] transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 @min-[560px]:w-auto"
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          {sourceMappedLots ? "Add lot to this line" : "New lot"}
-        </button>
+        {canAddLot ? (
+          <button
+            type="button"
+            onClick={createLot}
+            title={
+              sourceMappedLots
+                ? "Add another lot beneath this Schedule A line. It is sent back against the same line."
+                : "Add another lot to this contract."
+            }
+            className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--app-text)] px-4 py-2.5 text-sm font-semibold text-[var(--app-panel)] transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 @min-[560px]:w-auto"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            {sourceMappedLots ? "Add lot to this line" : "New lot"}
+          </button>
+        ) : null}
       </div>
 
       <input
@@ -1877,7 +1903,10 @@ export default function MixedSection({
                       }`}
                     >
                       <span className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-[var(--app-text)]">{lotLabel(lot, index)}</span>
+                        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="text-sm font-semibold text-[var(--app-text)]">{lotLabel(lot, index)}</span>
+                          {isSeveralLotsLine(lot) ? severalLotsTag : null}
+                        </span>
                         <span className="text-[11px] tabular-nums text-[var(--app-text-muted)]">{getLotPhotoCount(lot)}</span>
                       </span>
                       <span className="mt-0.5 block truncate text-xs text-[var(--app-text-muted)]">{getModeLabel(lot.mode)}</span>
@@ -1896,7 +1925,10 @@ export default function MixedSection({
               >
                 <div className="flex min-w-0 flex-col gap-3 border-b border-[var(--app-border)] pb-4 @min-[560px]:flex-row @min-[560px]:items-start @min-[560px]:justify-between">
                   <div className="min-w-0">
-                    <h4 className="text-base font-semibold text-[var(--app-text)]">{lotLabel(activeLot, activeIdx)}</h4>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <h4 className="text-base font-semibold text-[var(--app-text)]">{lotLabel(activeLot, activeIdx)}</h4>
+                      {isSeveralLotsLine(activeLot) ? severalLotsTag : null}
+                    </div>
                     {activeLot.source?.title || activeLot.source?.description ? (
                       <p className="mt-1 line-clamp-2 text-xs text-[var(--app-text-muted)]">
                         {[activeLot.source.title, activeLot.source.description]
@@ -1951,6 +1983,8 @@ export default function MixedSection({
                       const checked = activeLot.mode === option.value;
                       const disabled = Boolean(
                         sourceMappedLots ||
+                          // A listed Proposal item is one lot (owner 2026-10-28).
+                          activeLot.source?.listed === true ||
                           (activeLot.mode &&
                             !checked &&
                             activeLot.files.length > 0)

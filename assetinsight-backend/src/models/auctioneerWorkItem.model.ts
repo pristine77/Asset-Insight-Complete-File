@@ -54,9 +54,53 @@ export interface IAuctioneerSourceLot {
   model?: string;
   year?: string | number;
   conditionReport?: string;
+  /** The Auctioneer Schedule A line this lot was created for, when it has one. */
+  scheduleALineId?: string;
+  /**
+   * That line's Schedule A item is ticked "Several lots" in Auctioneer: it may
+   * come back as more than one lot (owner 2026-10-28). Missing on older
+   * snapshots; read it as false.
+   */
+  severalLots?: boolean;
+  scheduleAItemTitle?: string;
   services?: Array<Record<string, unknown>>;
   sourcePhotos?: Array<Record<string, unknown>>;
   raw?: Record<string, unknown>;
+}
+
+/**
+ * A Schedule A item a lot on this contract may be linked to (owner
+ * 2026-10-28): ticked "Several lots" and already holding an Auctioneer lot,
+ * which is named as scheduleAParentRef when the extra lot is created.
+ */
+export interface IAuctioneerScheduleAChoice {
+  lineId: string;
+  title: string;
+  parentLotId: string;
+}
+
+/**
+ * One item of a Proposal's list that the office pushed to this work item's
+ * user (owner 2026-10-28). The user works each item and returns it to
+ * Auctioneer against its lineId; nothing here becomes an Auctioneer lot.
+ */
+export interface IAuctioneerProposalItem {
+  lineId: string;
+  title: string;
+  lotNumber?: string;
+  serialNumber?: string;
+  year?: string;
+  make?: string;
+  model?: string;
+  description?: string;
+  /** Auctioneer already holds a return for it (captured, or not found). */
+  returned: boolean;
+}
+
+/** A listed item this user returned to Auctioneer as not found. */
+export interface IAuctioneerProposalNotFound {
+  lineId: string;
+  returnedAt: Date;
 }
 
 export interface IAuctioneerDeliveryLotCheckpoint {
@@ -124,6 +168,12 @@ export interface IAuctioneerDelivery {
   contractCompletedAt?: Date;
   /** Whose part that close was, and Auctioneer's answer (assigned work only). */
   contractClose?: IAuctioneerContractClose;
+  /**
+   * A Proposal list's items went back to Auctioneer in one review-items call
+   * (owner 2026-10-28), and whether the Proposal stayed in the Asset Insight
+   * queue afterwards: it leaves only once every listed item is back.
+   */
+  proposalReturn?: { returnedAt: Date; itemCount: number; remainsInAssetInsight: boolean };
   reconciliation?: {
     required: boolean;
     sourceKey?: string;
@@ -160,6 +210,29 @@ export interface IAuctioneerWorkItem extends Document {
   linkedReportModel?: "AssetReport" | "LotListing";
   linkedReportId?: Types.ObjectId;
   eventIdentityRecovery?: { eventId: string; source: "saved_snapshot" | "assigned_contract" | "contract_lots"; resolvedAt: Date };
+  /**
+   * The contract's choosable Schedule A items, for a work item whose lots must
+   * name one (see auctioneerScheduleAItemLink). Unlike the snapshot this is
+   * refreshed from Auctioneer, because the office may tick "Several lots"
+   * after the work item was created.
+   */
+  scheduleAChoices?: IAuctioneerScheduleAChoice[];
+  /**
+   * Present only on a Proposal worked item by item (owner 2026-10-28): the
+   * list's items pushed to this user. Its presence is what makes the work
+   * item return its lots through review-items instead of creating lots.
+   * Refreshed from Auctioneer, like scheduleAChoices, because the office can
+   * push more items after the claim.
+   */
+  proposalList?: { items: IAuctioneerProposalItem[]; refreshedAt: Date };
+  /**
+   * The listed items this work item's last submitted report captured, so a
+   * "Create Lot & Continue" successor does not offer them a second time
+   * while that report is still on its way to Auctioneer.
+   */
+  proposalCapturedLineIds?: string[];
+  /** Listed items this work item returned to Auctioneer as not found. */
+  proposalNotFound?: IAuctioneerProposalNotFound[];
   status: AuctioneerWorkItemStatus;
   delivery: IAuctioneerDelivery;
   createdAt: Date;
@@ -200,9 +273,55 @@ const SourceLotSchema = new Schema<IAuctioneerSourceLot>(
     model: { type: String },
     year: { type: Schema.Types.Mixed },
     conditionReport: { type: String },
+    scheduleALineId: { type: String },
+    // No schema default: snapshot.lots is immutable, and a default applied
+    // when an older snapshot is loaded must never become a write to it.
+    // normalizeAuctioneer2Lot always stores a boolean for new snapshots.
+    severalLots: { type: Boolean },
+    scheduleAItemTitle: { type: String },
     services: { type: [Schema.Types.Mixed], default: undefined },
     sourcePhotos: { type: [Schema.Types.Mixed], default: undefined },
     raw: { type: Schema.Types.Mixed },
+  },
+  { _id: false }
+);
+
+const ScheduleAChoiceSchema = new Schema<IAuctioneerScheduleAChoice>(
+  {
+    lineId: { type: String, required: true },
+    title: { type: String, required: true },
+    parentLotId: { type: String, required: true },
+  },
+  { _id: false }
+);
+
+const ProposalItemSchema = new Schema<IAuctioneerProposalItem>(
+  {
+    lineId: { type: String, required: true },
+    title: { type: String, required: true },
+    lotNumber: { type: String },
+    serialNumber: { type: String },
+    year: { type: String },
+    make: { type: String },
+    model: { type: String },
+    description: { type: String },
+    returned: { type: Boolean, required: true },
+  },
+  { _id: false }
+);
+
+const ProposalListSchema = new Schema(
+  {
+    items: { type: [ProposalItemSchema], default: [] },
+    refreshedAt: { type: Date, required: true },
+  },
+  { _id: false }
+);
+
+const ProposalNotFoundSchema = new Schema<IAuctioneerProposalNotFound>(
+  {
+    lineId: { type: String, required: true },
+    returnedAt: { type: Date, required: true },
   },
   { _id: false }
 );
@@ -326,6 +445,11 @@ const AuctioneerWorkItemSchema = new Schema<IAuctioneerWorkItem>(
     queuedContinuation: { type: Schema.Types.Mixed, select: false },
     linkedReportModel: { type: String, enum: ["AssetReport", "LotListing"] },
     linkedReportId: { type: Schema.Types.ObjectId },
+    scheduleAChoices: { type: [ScheduleAChoiceSchema], default: undefined },
+    // No defaults: absence is what marks an ordinary (non-list) work item.
+    proposalList: { type: ProposalListSchema, default: undefined },
+    proposalCapturedLineIds: { type: [String], default: undefined },
+    proposalNotFound: { type: [ProposalNotFoundSchema], default: undefined },
     status: {
       type: String,
       enum: ["claimed", "report_created", "abandoned", "sent"],
@@ -362,6 +486,14 @@ const AuctioneerWorkItemSchema = new Schema<IAuctioneerWorkItem>(
       lots: { type: [DeliveryLotCheckpointSchema], default: [] },
       contractCompletedAt: { type: Date },
       contractClose: { type: ContractCloseSchema, default: undefined },
+      proposalReturn: {
+        type: new Schema({
+          returnedAt: { type: Date, required: true },
+          itemCount: { type: Number, required: true },
+          remainsInAssetInsight: { type: Boolean, required: true },
+        }, { _id: false }),
+        default: undefined,
+      },
       reconciliation: { type: ReconciliationSchema, default: { required: false } },
     },
   },

@@ -8,6 +8,8 @@ import lotListingService, {
 } from './lotListingService';
 import AutoSaveService from './autoSaveService';
 import OfflineCaptureStore from './offlineCaptureStore';
+import { scheduleAItemLotField } from './scheduleAItemLotField';
+import { proposalItemLotField } from './proposalItemLotField';
 import { pauseActiveUploads, createUploadOperation, isUploadFinalizing, type UploadOperation } from './uploadCancellation';
 import { LocalMediaStore } from './localMediaStore';
 import {
@@ -646,7 +648,11 @@ export const OfflineQueueService = {
     const id = `asset-offline-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const persisted = await persistAssetLots(lots, id, options);
 
-    const mixedLots = persisted.lots.map((lot) => ({
+    const mixedLots = persisted.lots.map((lot, index) => ({
+      // Keep the Schedule A item chosen for this lot (owner 2026-10-28).
+      ...scheduleAItemLotField(details.mixed_lots?.[index]?.schedule_a_parent_lot_id),
+      // Keep the listed Proposal item this lot captures (owner 2026-10-28).
+      ...proposalItemLotField(details.mixed_lots?.[index]?.source_key),
       count: (lot.files ?? []).length,
       extra_count: (lot.extraFiles ?? []).length,
       cover_index: lot.coverIndex || 0,
@@ -687,7 +693,11 @@ export const OfflineQueueService = {
     const id = `lotlisting-offline-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const persisted = await persistLotListingLots(lots, id, options);
 
-    const mixedLots = persisted.lots.map((lot) => ({
+    const mixedLots = persisted.lots.map((lot, index) => ({
+      // Keep the Schedule A item chosen for this lot (owner 2026-10-28).
+      ...scheduleAItemLotField(details.mixed_lots?.[index]?.schedule_a_parent_lot_id),
+      // Keep the listed Proposal item this lot captures (owner 2026-10-28).
+      ...proposalItemLotField(details.mixed_lots?.[index]?.source_key),
       count: (lot.files ?? []).length,
       extra_count: (lot.extraFiles ?? []).length,
       cover_index: lot.coverIndex || 0,

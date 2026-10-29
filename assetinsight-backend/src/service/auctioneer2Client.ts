@@ -235,6 +235,40 @@ function safeUpstreamValidation(
     );
   }
 
+  /*
+     Owner 2026-10-28: on a contract with a Schedule A, Auctioneer refuses a
+     new lot that does not name its Schedule A item, and one that names an
+     item not ticked "Several lots". Both are actionable by people, so the
+     delivery error says what to do rather than echoing the provider.
+  */
+  if (status === 409 && codes.has("SCHEDULE_A_ITEM_REQUIRED")) {
+    return new Auctioneer2ClientError(
+      "SCHEDULE_A_ITEM_REQUIRED: Auctioneer 2.0 needs to know which Schedule A item this lot belongs to. Choose the Schedule A item for the lot, then send again.",
+      { statusCode: 409, code: "SCHEDULE_A_ITEM_REQUIRED", upstreamStatus: status }
+    );
+  }
+  if (status === 409 && codes.has("SCHEDULE_A_ITEM_NOT_SEVERAL_LOTS")) {
+    return new Auctioneer2ClientError(
+      "SCHEDULE_A_ITEM_NOT_SEVERAL_LOTS: The Schedule A item chosen for this lot is not marked Several lots in Auctioneer 2.0. Ask the office to tick Several lots on that item, then retry sending.",
+      { statusCode: 409, code: "SCHEDULE_A_ITEM_NOT_SEVERAL_LOTS", upstreamStatus: status }
+    );
+  }
+
+  /*
+     Owner 2026-10-28: a returned Proposal item must name a listed item that
+     was pushed to the user returning it. Auctioneer's sentence quotes the
+     item's title, which is customer data, so only the meaning crosses here.
+  */
+  if (
+    status === 400 &&
+    messages.some((message) => /scheduleALineId|was not pushed|pushed to this Asset Insight user/.test(message))
+  ) {
+    return new Auctioneer2ClientError(
+      "PROPOSAL_ITEM_NOT_PUSHED: Auctioneer 2.0 no longer has one of these Proposal items pushed to you. Refresh the Proposal, or ask the office to push the item to you again, then retry sending.",
+      { statusCode: 409, code: "PROPOSAL_ITEM_NOT_PUSHED", upstreamStatus: status }
+    );
+  }
+
   if (status === 409 && codes.has("CONTRACT_ALREADY_COMPLETED")) {
     return new Auctioneer2ClientError(
       "CONTRACT_ALREADY_COMPLETED: The auction contract has already been completed. Ask the auction team to review its status before retrying.",
@@ -582,6 +616,208 @@ export async function getContractLots(contractId: string): Promise<Auctioneer2Re
     await auctioneer2Request(`/contracts/${encodeURIComponent(contractId)}/lots`),
     ["lots", "items", "results"]
   );
+}
+
+/** One item of a contract's Schedule A, as GET /contracts/:id/schedule-a-items lists it. */
+export type Auctioneer2ScheduleAItem = {
+  lineId: string;
+  title: string;
+  /** Ticked "Several lots": the item may come back as more than one lot. */
+  severalLots: boolean;
+  /** The Auctioneer lot extra lots of this item name as scheduleAParentRef. */
+  parentLotId: string | null;
+  lotCount: number;
+  sortOrder: number;
+  /*
+     A Proposal's list only (owner 2026-10-28): what the item is, whose it is,
+     and whether it has come back. Present only when Auctioneer sends them.
+  */
+  lotNumber?: string;
+  serialNumber?: string;
+  year?: string;
+  make?: string;
+  model?: string;
+  description?: string;
+  assetInsightUserId?: string;
+  sentToAssetInsight?: boolean;
+  /** Returned captured (green). */
+  returned?: boolean;
+  /** Returned as not found (red), when Auctioneer reports it. */
+  notFound?: boolean;
+};
+
+export type Auctioneer2ScheduleAItems = {
+  contractId: string;
+  hasScheduleA: boolean;
+  items: Auctioneer2ScheduleAItem[];
+};
+
+/**
+ * The contract's Schedule A items, in Schedule A order (owner 2026-10-28).
+ *
+ * The envelope is checked rather than trusted: success must be true, a
+ * contractId that names another contract is refused, and hasScheduleA must be
+ * a boolean. An item without a line id cannot be chosen and is dropped; ids
+ * are kept as strings so a numeric id never reaches a client as a number.
+ *
+ * With options.userId, a Proposal's list is narrowed by Auctioneer to the
+ * items pushed to that Asset Insight user (owner 2026-10-28). An item naming
+ * another user is refused rather than shown: the filter is an authorization
+ * boundary, not a presentation detail.
+ */
+export async function getContractScheduleAItems(
+  contractId: string,
+  options: { userId?: string } = {}
+): Promise<Auctioneer2ScheduleAItems> {
+  const normalizedContractId = String(contractId || "").trim();
+  const userId = String(options.userId || "").trim();
+  const invalid = () =>
+    new Auctioneer2ClientError("Auctioneer 2.0 returned an invalid Schedule A item list.", {
+      statusCode: 502,
+      code: "auctioneer2_invalid_response",
+    });
+  if (!normalizedContractId) throw invalid();
+  const query = userId ? `?${new URLSearchParams({ userId })}` : "";
+  const raw = await auctioneer2Request<unknown>(
+    `/contracts/${encodeURIComponent(normalizedContractId)}/schedule-a-items${query}`,
+    {},
+    { expectedStatuses: [200] }
+  );
+  // Documented shape is flat; a { success, data: {...} } envelope is accepted
+  // like the other reads accept it.
+  const payload = isRecord(raw) && !Array.isArray(raw.items) && isRecord(raw.data) ? raw.data : raw;
+  if (
+    !isRecord(raw) || raw.success !== true || !isRecord(payload) || payload.success === false ||
+    typeof payload.hasScheduleA !== "boolean" || !Array.isArray(payload.items) ||
+    (payload.contractId !== undefined && String(payload.contractId).trim() !== normalizedContractId)
+  ) throw invalid();
+  const text = (value: unknown) =>
+    typeof value === "string" ? value.trim() : typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+  const optionalText = <K extends string>(key: K, value: unknown) => {
+    const cleaned = text(value);
+    return cleaned ? ({ [key]: cleaned } as Record<K, string>) : {};
+  };
+  const records = payload.items.filter(isRecord);
+  if (userId && records.some((item) =>
+    item.assetInsightUserId != null && text(item.assetInsightUserId).toLowerCase() !== userId.toLowerCase()
+  )) {
+    throw new Auctioneer2ClientError(
+      "Auctioneer 2.0 returned Proposal items pushed to a different Asset Insight user.",
+      { statusCode: 502, code: "auctioneer2_invalid_response" }
+    );
+  }
+  const items = records
+    .map((item, index) => {
+      const sortOrder = Number(item.sortOrder);
+      const lotCount = Number(item.lotCount);
+      return {
+        lineId: text(item.lineId),
+        title: text(item.title),
+        severalLots: item.severalLots === true,
+        parentLotId: text(item.parentLotId) || null,
+        lotCount: Number.isFinite(lotCount) && lotCount >= 0 ? lotCount : 0,
+        sortOrder: Number.isFinite(sortOrder) ? sortOrder : index,
+        ...optionalText("lotNumber", item.lotNumber),
+        ...optionalText("serialNumber", item.serialNumber),
+        ...optionalText("year", item.year),
+        ...optionalText("make", item.make),
+        ...optionalText("model", item.model),
+        ...optionalText("description", item.description),
+        ...optionalText("assetInsightUserId", item.assetInsightUserId),
+        ...(typeof item.sentToAssetInsight === "boolean" ? { sentToAssetInsight: item.sentToAssetInsight } : {}),
+        ...(typeof item.returned === "boolean" ? { returned: item.returned } : {}),
+        ...(typeof item.notFound === "boolean" ? { notFound: item.notFound } : {}),
+        index,
+      };
+    })
+    .filter((item) => item.lineId)
+    // Auctioneer already lists them in order; a stable sort only guards a
+    // deployment that does not.
+    .sort((first, second) => first.sortOrder - second.sortOrder || first.index - second.index)
+    .map(({ index: _index, ...item }) => item);
+  return { contractId: normalizedContractId, hasScheduleA: payload.hasScheduleA, items };
+}
+
+/** One returned Proposal item, as POST /proposals/:contractId/review-items takes it. */
+export type Auctioneer2ProposalReviewItem = {
+  /** Asset Insight's own reference; a later return with the same one replaces it. */
+  proposalItemRef: string;
+  /** The listed item this completes; absent for an item that was not on the list. */
+  scheduleALineId?: string;
+  /** A listed item the user could not find (owner 2026-10-28, red). */
+  notFound?: true;
+  description?: string;
+  year?: string;
+  make?: string;
+  model?: string;
+  serialNumber?: string;
+  hours?: string;
+  category?: string;
+  conditionReport?: string;
+  photos?: string[];
+};
+
+export type Auctioneer2ProposalReviewReturn = {
+  contractId: string;
+  reviewItemCount: number;
+  /** The Proposal is still in the Asset Insight queue (some listed item is not back). */
+  remainsInAssetInsight: boolean;
+};
+
+/**
+ * Returns Proposal items to Auctioneer for the office's review (owner
+ * 2026-10-28). Nothing here creates an Auctioneer lot: the office approves the
+ * returned list, and only then does the contract run the Schedule A flow.
+ *
+ * Auctioneer replaces an item returned again under the same proposalItemRef,
+ * so a lost response is safe to repeat while the Proposal is still open. A
+ * repeat after the last item closed the Proposal is refused with
+ * CONTRACT_ALREADY_COMPLETED, which the caller has to reconcile.
+ */
+export async function returnProposalReviewItems(
+  contractId: string,
+  input: {
+    completedBy: string;
+    completedByUserId: string;
+    items: Auctioneer2ProposalReviewItem[];
+  }
+): Promise<Auctioneer2ProposalReviewReturn> {
+  const normalizedContractId = String(contractId || "").trim();
+  const userId = String(input.completedByUserId || "").trim();
+  if (!normalizedContractId || !userId || input.items.length < 1 || input.items.length > 500) {
+    throw new Auctioneer2ClientError(
+      "A Proposal, an Asset Insight user and 1 to 500 items are required to return Proposal items.",
+      { statusCode: 500, code: "auctioneer2_proposal_return_invalid" }
+    );
+  }
+  const response = await auctioneer2Request<unknown>(
+    `/proposals/${encodeURIComponent(normalizedContractId)}/review-items`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        completedBy: String(input.completedBy || "").trim() || `Asset Insight user ${userId}`,
+        completedByUserId: userId,
+        items: input.items,
+      }),
+    },
+    { expectedStatuses: [200, 201], ambiguousWriteOnNetworkFailure: true }
+  );
+  if (
+    !isRecord(response) || response.success !== true ||
+    (response.contractId !== undefined && String(response.contractId).trim() !== normalizedContractId) ||
+    typeof response.remainsInAssetInsight !== "boolean"
+  ) {
+    throw new Auctioneer2ClientError(
+      "Auctioneer 2.0 returned an invalid response while receiving the Proposal items.",
+      { statusCode: 502, code: "auctioneer2_invalid_response", ambiguousWrite: true }
+    );
+  }
+  const count = Number(response.reviewItemCount);
+  return {
+    contractId: normalizedContractId,
+    reviewItemCount: Number.isInteger(count) && count >= 0 ? count : input.items.length,
+    remainsInAssetInsight: response.remainsInAssetInsight,
+  };
 }
 
 export async function getLot(lotId: string): Promise<Auctioneer2Record> {

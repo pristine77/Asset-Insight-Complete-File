@@ -170,6 +170,9 @@ function auctioneerDeliveryPresentation(
 function canCloseContractPart(delivery?: AuctioneerDeliverySummary) {
   return Boolean(
     delivery &&
+      // A Proposal list ends itself once every listed item is back (owner
+      // 2026-10-28); the server refuses a close and reports this as false.
+      delivery.canCompleteContract !== false &&
       delivery.contractCompletionScope === "user" &&
       delivery.state === "sent" &&
       delivery.contractId &&

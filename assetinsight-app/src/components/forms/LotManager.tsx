@@ -43,6 +43,15 @@ interface LotManagerProps {
   embedded?: boolean; // The listing form already owns the vertical scroll/keyboard viewport.
   lockedStructure?: boolean; // Schedule A preserves its upstream lot order and grouping.
   sourceLabels?: string[];
+  // A short tag beside each source lot's label, e.g. "Several lots" for a
+  // Schedule A item that may get more lots (owner 2026-10-28).
+  sourceTags?: (string | undefined)[];
+  // A second line under each lot's label, e.g. a listed item's serial number.
+  sourceDetails?: (string | undefined)[];
+  // owner 2026-10-28: lots that capture a listed Proposal item. Each stays one
+  // Bundle lot (the mode is locked), and removing one from the form leaves the
+  // item to capture in Auctioneer.
+  listedItemLots?: boolean[];
 }
 
 const MAX_ASSET_LOT_PHOTOS = 200;
@@ -79,6 +88,9 @@ const LotManager = ({
   embedded = false,
   lockedStructure = false,
   sourceLabels,
+  sourceTags,
+  sourceDetails,
+  listedItemLots,
 }: LotManagerProps) => {
   const [expandedLot, setExpandedLot] = useState<number | null>(
     activeLotIdx >= 0 ? activeLotIdx : null
@@ -230,7 +242,7 @@ const LotManager = ({
   };
 
   const setLotMode = (idx: number, mode: LotMode) => {
-    if (lockedStructure) return;
+    if (lockedStructure || listedItemLots?.[idx]) return;
     setLots((prev) => {
       const updated = [...prev];
       const lot = updated[idx];
@@ -244,7 +256,10 @@ const LotManager = ({
   };
 
   const removeLot = (idx: number) => {
-    Alert.alert('Delete Lot', `Are you sure you want to delete Lot ${idx + 1}?`, [
+    const listedLabel = listedItemLots?.[idx] ? sourceLabels?.[idx] || `Lot ${idx + 1}` : undefined;
+    Alert.alert('Delete Lot', listedLabel
+      ? `Remove ${listedLabel} from this form? It stays to capture in Auctioneer, and you can add it back from Proposal items.`
+      : `Are you sure you want to delete Lot ${idx + 1}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -444,6 +459,9 @@ const LotManager = ({
     const isActive = activeLotIdx === idx;
     const modeInfo = lot.mode ? MODE_INFO[lot.mode] : null;
     const lotLabel = sourceLabels?.[idx] || `Lot ${lot.lotNumber || idx + 1}`;
+    const lotTag = sourceTags?.[idx];
+    const lotDetail = sourceDetails?.[idx];
+    const modeLocked = lockedStructure || Boolean(listedItemLots?.[idx]);
 
     return (
       <View key={lot.id} style={[styles.lotCard, isActive && styles.lotCardActive]}>
@@ -461,7 +479,11 @@ const LotManager = ({
               </Text>
             </View>
             <View>
-              <Text style={styles.lotTitle}>{lotLabel}</Text>
+              <View style={styles.lotTitleRow}>
+                <Text style={styles.lotTitle}>{lotLabel}</Text>
+                {lotTag ? <Text style={styles.lotTag}>{lotTag}</Text> : null}
+              </View>
+              {lotDetail ? <Text style={styles.lotSubtitle}>{lotDetail}</Text> : null}
               <Text style={styles.lotSubtitle}>
                 {lot.files.length} image{lot.files.length !== 1 ? 's' : ''}
                 {lot.videoFile ? ' • 1 video' : ''}
@@ -481,7 +503,7 @@ const LotManager = ({
         {isExpanded && (
           <View style={styles.lotContent}>
             {/* Mode Selection */}
-            <Text style={styles.modeLabel}>{lockedStructure ? 'Schedule A · Bundle grouping is locked' : 'Select Mode:'}</Text>
+            <Text style={styles.modeLabel}>{lockedStructure ? 'Schedule A · Bundle grouping is locked' : modeLocked ? 'Listed item · one lot, Bundle grouping is locked' : 'Select Mode:'}</Text>
             <View style={styles.modeGrid}>
               {(Object.keys(MODE_INFO) as LotMode[]).map((mode) => {
                 const info = MODE_INFO[mode];
@@ -489,7 +511,7 @@ const LotManager = ({
                 return (
                   <TouchableOpacity
                     key={mode}
-                    disabled={lockedStructure}
+                    disabled={modeLocked}
                     style={[
                       styles.modeBtn,
                       isSelected && { backgroundColor: info.color + '20', borderColor: info.color },
@@ -957,6 +979,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1F2937',
     letterSpacing: -0.3,
+  },
+  lotTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  lotTag: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1D4ED8',
+    backgroundColor: '#DBEAFE',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    overflow: 'hidden',
   },
   lotSubtitle: {
     fontSize: 12,

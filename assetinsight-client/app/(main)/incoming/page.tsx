@@ -29,6 +29,7 @@ import AuctioneerService, {
 import { navigateToReportForm } from "@/services/reportFormNavigation";
 import AuctioneerReopenAction from "@/components/reports/AuctioneerReopenAction";
 import { captureAuthSession } from "@/lib/auth-storage";
+import { formatCalendarDate } from "@/lib/calendarDate";
 import styles from "./Incoming.module.css";
 
 type IncomingData = {
@@ -36,12 +37,6 @@ type IncomingData = {
   warning: string | null;
   integrationAvailable: boolean;
 };
-
-const DATE = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
 
 function messageFor(error: unknown, fallback: string) {
   const candidate = error as {
@@ -59,10 +54,10 @@ function messageFor(error: unknown, fallback: string) {
   );
 }
 
+// A sale's day as the day it names, not shifted by the viewer's time zone
+// (owner, 2026-10-29: the 30 Oct Winnipeg sale showed as 29 Oct; lib/calendarDate.ts).
 function displayDate(value?: string) {
-  if (!value) return "Not supplied";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : DATE.format(parsed);
+  return formatCalendarDate(value);
 }
 
 function ownerLabel(item: AuctioneerIncomingItem) {
@@ -594,7 +589,7 @@ export default function IncomingPage() {
                         <td data-label="Assigned lots">
                           {item.lotCount}{" "}
                           <span className={styles.contractMeta}>
-                            {item.kind === "scheduleA" ? "Schedule A" : "Unknown"}
+                            {item.proposalList ? "Proposal list" : item.kind === "scheduleA" ? "Schedule A" : "Unknown"}
                           </span>
                         </td>
                         <td data-label="Status">
@@ -721,10 +716,15 @@ export default function IncomingPage() {
                       <span>Assigned scope</span>
                     </dt>
                     <dd className={styles.detailValue}>
-                      {selected.lotCount} assigned lots ·{" "}
-                      {selected.kind === "scheduleA"
-                        ? "Schedule A"
-                        : "Unknown lots"}
+                      {/* Owner 2026-10-28: a Proposal list counts the user's own items still to capture. */}
+                      {selected.proposalList
+                        ? `${selected.lotCount} listed item${selected.lotCount === 1 ? "" : "s"} to capture · Proposal list`
+                        : <>
+                            {selected.lotCount} assigned lots ·{" "}
+                            {selected.kind === "scheduleA"
+                              ? "Schedule A"
+                              : "Unknown lots"}
+                          </>}
                     </dd>
                   </div>
                 </dl>

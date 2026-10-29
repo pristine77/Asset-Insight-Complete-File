@@ -22,15 +22,25 @@ import {
   closeContractPartForUser,
   completeConditionReport,
   completeContractTask,
+  getContractScheduleAItems,
   getLot,
   markArrived,
   patchLot,
   pushToAssetInsight,
+  returnProposalReviewItems,
   submitLot,
   uploadLotPhotos,
   setLotVideo,
+  type Auctioneer2ProposalReviewItem,
   type Auctioneer2Record,
 } from "./auctioneer2Client.js";
+import {
+  isProposalListWorkItem,
+  proposalExtraItemRef,
+  proposalListedItemRef,
+  proposalLotLineIds,
+  proposalReturnDescription,
+} from "./auctioneerProposalList.js";
 import { assertAuctioneerContractCaptureRevision, assertNoQueuedContinuationUpload, beginAuctioneerContractClose, confirmAuctioneerContractClose, withAuctioneerContractOperation } from "./auctioneerContractCloseService.js";
 import {
   buildAuctioneerConditionReport,
@@ -44,6 +54,7 @@ import { createLotPhotoResolver, firstReportImageManifest } from "../utils/lotPh
 import { AuctioneerDeliveryError, deliveryErrorDiagnostic } from "./auctioneer2DeliveryError.js";
 import { frozenAuctioneerVideo } from "./auctioneer2VideoPolicy.js";
 import { resolveScheduleAMapping } from "./auctioneerScheduleAMapping.js";
+import { requiresScheduleAItem, scheduleAParentLotId } from "./auctioneerScheduleAItemLink.js";
 import { assertAuctioneerVideoReceipt } from "./auctioneer2VideoManifest.js";
 
 /*
@@ -728,6 +739,28 @@ async function deliverUnknownLot(input: {
       );
     }
 
+    /*
+       Present only for a lot split out of a Schedule A line. It names the
+       PARENT LOT in Auctioneer — source.lotId, the same id the patch path
+       uses — and Auctioneer copies that lot's commission onto both the new
+       Schedule A line and the new lot, so the consignor is charged the rate
+       they signed for.
+
+       Owner 2026-10-28: a lot captured on a Schedule A contract's extra
+       (unknown) work names its Schedule A item the same way, through the
+       parent lot the appraiser chose (schedule_a_parent_lot_id). Send has
+       already refused a lot without a valid one; Auctioneer refuses it too.
+       A link is never sent for work that does not require one.
+
+       Absent for a genuinely new Unknown lot on a contract with no Schedule
+       A, which has no line to inherit from and takes the contract's terms.
+    */
+    const scheduleAParentRef =
+      (clean((lot as any)?.auctioneer_source_parent_key) && source?.lotId
+        ? clean(source.lotId)
+        : "") ||
+      (requiresScheduleAItem(workItem) ? scheduleAParentLotId(lot) : "");
+
     checkpoint.status = "processing";
     checkpoint.step = "submitting";
     checkpoint.lastError = undefined;
@@ -742,19 +775,7 @@ async function deliverUnknownLot(input: {
             contractId: workItem.contract.id,
             eventId,
             contractLotRef: `${workItem.clientSubmissionId}:${lotIndex + 1}`,
-            /*
-               Present only for a lot split out of a Schedule A line. It names
-               the PARENT LOT in Auctioneer — source.lotId, the same id the
-               patch path uses — and Auctioneer copies that lot's commission
-               onto both the new Schedule A line and the new lot, so the
-               consignor is charged the rate they signed for.
-
-               Absent for a genuinely new Unknown lot, which has no line to
-               inherit from and takes the contract's own terms.
-            */
-            ...(clean((lot as any)?.auctioneer_source_parent_key) && source?.lotId
-              ? { scheduleAParentRef: source.lotId }
-              : {}),
+            ...(scheduleAParentRef ? { scheduleAParentRef } : {}),
             destination,
             opTaskDescription,
             submittedBy: completedBy,
@@ -1079,6 +1100,137 @@ async function closeContractAfterDelivery(
   });
 }
 
+/*
+   ── RETURNING A PROPOSAL LIST (owner 2026-10-28) ──────────────────────────
+
+   Every lot of the approved report goes back in ONE review-items call:
+     - a lot carrying a listed item's source key returns against that item
+       (scheduleALineId) — the owner's green;
+     - any other lot is an item that was not on the list and returns without
+       one — blue.
+   Red items (not found) were returned when the user marked them, outside any
+   report. One call, not one per lot, because Auctioneer closes the Proposal
+   the moment its last listed item is back: a report's own extras must land
+   with its listed items, not after them.
+
+   Retry safety: Auctioneer replaces an item returned again under the same
+   proposalItemRef, so repeating the call after a lost response is harmless
+   while the Proposal is open. If that lost call was the one that completed
+   the list, the repeat is refused as CONTRACT_ALREADY_COMPLETED; the
+   delivery then counts as sent only when Auctioneer's list shows this
+   report's listed items back. Photos are sent as the report's stored image
+   addresses, as Auctioneer shows them on the returned item.
+*/
+async function returnProposalListLots(input: {
+  workItem: IAuctioneerWorkItem;
+  report: any;
+  manifest: any;
+  lots: any[];
+  completedBy: string;
+}): Promise<void> {
+  const { workItem, report, manifest, lots, completedBy } = input;
+  const checkpoints = workItem.delivery.lots;
+  if (checkpoints.length > 0 && checkpoints.every((checkpoint) => checkpoint.status === "sent")) return;
+  const userId = clean(workItem.assignmentUserId);
+  if (!userId || userId !== clean(workItem.claimedBy)) {
+    throw new AuctioneerDeliveryError(
+      "Only the user these Proposal items were pushed to can return them."
+    );
+  }
+  const contractId = clean(workItem.contract.id);
+  const listed = new Map((workItem.proposalList?.items || []).map((item) => [item.lineId, item]));
+  const lineIds = proposalLotLineIds(lots);
+  const seen = new Set<string>();
+  const items: Auctioneer2ProposalReviewItem[] = lots.map((lot, index) => {
+    const lineId = lineIds[index];
+    const entry = lineId ? listed.get(lineId) : undefined;
+    if (lineId && (!entry || seen.has(lineId))) {
+      throw new AuctioneerDeliveryError(
+        `Lot ${index + 1} names a listed Proposal item that is no longer pushed to you, or that another lot already returns. Correct the report's lots, then send again.`
+      );
+    }
+    if (lineId) seen.add(lineId);
+    const patch = buildAuctioneerKnownLotPatch(lot, undefined, { useSourceFallbacks: false });
+    const optional = (key: keyof Auctioneer2ProposalReviewItem, value: unknown) =>
+      clean(value) ? { [key]: clean(value) } : {};
+    return {
+      proposalItemRef: lineId
+        ? proposalListedItemRef(contractId, lineId)
+        : proposalExtraItemRef(workItem.clientSubmissionId, index),
+      ...(lineId ? { scheduleALineId: lineId } : {}),
+      description: proposalReturnDescription(patch.description, entry?.title, `Item ${index + 1}`),
+      ...optional("year", patch.year),
+      ...optional("make", patch.make),
+      ...optional("model", patch.model),
+      ...optional("serialNumber", patch.serialNumber),
+      ...optional("hours", patch.hours),
+      ...optional("category", patch.categories),
+      ...optional("conditionReport", patch.conditionReport),
+      photos: approvedPhotoUrls(report, manifest, lot, index),
+    } as Auctioneer2ProposalReviewItem;
+  });
+  if (!items.length) {
+    throw new AuctioneerDeliveryError("The approved report does not contain any items to return.");
+  }
+
+  const attemptedBefore = checkpoints.some((checkpoint) => checkpoint.step === "returning");
+  for (const checkpoint of checkpoints) {
+    checkpoint.status = "processing";
+    checkpoint.step = "returning";
+    checkpoint.lastError = undefined;
+  }
+  await persistDelivery(workItem);
+
+  // Auctioneer takes at most 500 items per call. Items that were not listed go
+  // first, so the call that completes the list is never followed by another.
+  const ordered = [
+    ...items.filter((item) => !item.scheduleALineId),
+    ...items.filter((item) => item.scheduleALineId),
+  ];
+  let itemCount = 0;
+  let remainsInAssetInsight = true;
+  try {
+    for (let start = 0; start < ordered.length; start += 500) {
+      const outcome = await returnProposalReviewItems(contractId, {
+        completedBy,
+        completedByUserId: userId,
+        items: ordered.slice(start, start + 500),
+      });
+      itemCount += outcome.reviewItemCount;
+      remainsInAssetInsight = outcome.remainsInAssetInsight;
+    }
+  } catch (error) {
+    const listedLineIds = [...seen];
+    const landedEarlier =
+      attemptedBefore &&
+      error instanceof Auctioneer2ClientError &&
+      error.code === "CONTRACT_ALREADY_COMPLETED" &&
+      listedLineIds.length > 0 &&
+      (await getContractScheduleAItems(contractId, { userId })
+        .then(({ items: current }) => listedLineIds.every((lineId) =>
+          current.some((item) => item.lineId === lineId && item.returned === true)))
+        .catch(() => false));
+    if (!landedEarlier) {
+      for (const checkpoint of checkpoints) checkpoint.status = "pending";
+      if (error instanceof Auctioneer2ClientError && error.code === "CONTRACT_ALREADY_COMPLETED") {
+        throw new AuctioneerDeliveryError(
+          "Auctioneer has already closed this Proposal, so these items were not returned. Ask the office to check the Proposal before sending again."
+        );
+      }
+      throw error;
+    }
+    itemCount = items.length;
+    remainsInAssetInsight = false;
+  }
+  for (const checkpoint of checkpoints) {
+    checkpoint.status = "sent";
+    checkpoint.step = "returned";
+    checkpoint.lastError = undefined;
+  }
+  workItem.delivery.proposalReturn = { returnedAt: new Date(), itemCount, remainsInAssetInsight };
+  await persistDelivery(workItem);
+}
+
 /**
  * Executes a persisted delivery manifest. Every successful upstream step is
  * checkpointed before the next call, so an explicit retry resumes only the
@@ -1181,7 +1333,14 @@ export async function runAuctioneerDeliveryJob(
     await persistDelivery(workItem);
     const completedBy = await completedByFor(workItem);
 
-    for (let index = 0; index < lots.length; index += 1) {
+    // Owner 2026-10-28: a Proposal worked from its list returns its items for
+    // review; it creates no lot and never closes the contract.
+    if (isProposalListWorkItem(workItem)) {
+      activeCheckpoint = undefined;
+      await returnProposalListLots({ workItem, report, manifest, lots, completedBy });
+    }
+
+    for (let index = 0; index < lots.length && !isProposalListWorkItem(workItem); index += 1) {
       const checkpoint = workItem.delivery.lots[index];
       activeCheckpoint = checkpoint;
       if (checkpoint.status === "sent") continue;
@@ -1235,7 +1394,7 @@ export async function runAuctioneerDeliveryJob(
     const completeContract =
       manifest.completeContract === true ||
       workItem.delivery.completeContract === true;
-    if (completeContract && !workItem.delivery.contractCompletedAt) {
+    if (completeContract && !workItem.delivery.contractCompletedAt && !isProposalListWorkItem(workItem)) {
       // Every lot is checkpointed as sent by now and nothing below resends one,
       // so a failure from here is the contract close, not the last lot.
       activeCheckpoint = undefined;

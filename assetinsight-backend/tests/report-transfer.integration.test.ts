@@ -6,8 +6,10 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ head: vi.fn(), upload: vi.fn(), remove: vi.fn(), sign: vi.fn(), email: vi.fn(), push: vi.fn(), assetQueue: vi.fn(), lotQueue: vi.fn(), contracts: vi.fn(), tasks: vi.fn(), close: vi.fn() }));
-vi.mock("../src/service/auctioneer2Client.js", async original => ({ ...(await original<any>()), listIncomingContracts: mocks.contracts, listIncomingTasks: mocks.tasks, closeContractPartForUser: mocks.close }));
+const mocks = vi.hoisted(() => ({ head: vi.fn(), upload: vi.fn(), remove: vi.fn(), sign: vi.fn(), email: vi.fn(), push: vi.fn(), assetQueue: vi.fn(), lotQueue: vi.fn(), contracts: vi.fn(), tasks: vi.fn(), close: vi.fn(),
+  // No Proposal lists in these cases (owner 2026-10-28): the older single-user Proposal flow.
+  scheduleAItems: vi.fn(async (contractId: string) => ({ contractId, hasScheduleA: false, items: [] })) }));
+vi.mock("../src/service/auctioneer2Client.js", async original => ({ ...(await original<any>()), listIncomingContracts: mocks.contracts, listIncomingTasks: mocks.tasks, closeContractPartForUser: mocks.close, getContractScheduleAItems: mocks.scheduleAItems }));
 vi.mock("dotenv", () => ({ config: () => ({ parsed: {} }), default: { config: () => ({ parsed: {} }) } }));
 vi.mock("../src/utils/sendVerificationEmail.js", () => ({ sendTransactionalEmail: mocks.email, sendEmail: mocks.email, sendVerificationCode: vi.fn(), sendPasswordResetCode: vi.fn(), sendPasswordResetLink: vi.fn(), sendDeviceDecisionEmail: vi.fn() }));
 vi.mock("../src/utils/expoPush.js", () => ({ buildPushMessages: () => [], sendExpoPushNotifications: mocks.push }));
