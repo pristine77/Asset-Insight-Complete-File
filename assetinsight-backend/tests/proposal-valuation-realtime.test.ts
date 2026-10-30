@@ -7,6 +7,7 @@ import {
   disconnectProposalValuationUserIp,
   openProposalValuationEventStream,
   resetProposalValuationEventHubForTests,
+  shutdownProposalValuationEventStreams,
 } from "../src/service/proposalValuationRealtimeService.js";
 import { registerAndRevalidateProposalValuationEventStream } from "../src/controller/assetProposalValuation.controller.js";
 import { ProposalValuationError } from "../src/service/proposalValuationService.js";
@@ -53,6 +54,58 @@ afterEach(() => {
 });
 
 describe("Proposal Valuation live revision stream", () => {
+  it("ends every registered stream and clears timers idempotently for shutdown", () => {
+    vi.useFakeTimers();
+    const first = mockStream();
+    const second = mockStream();
+    const firstHandle = openProposalValuationEventStream({ ...first, reportId: "shutdown-1", userId: "user-1", currentRevision: 1 });
+    const secondHandle = openProposalValuationEventStream({ ...second, reportId: "shutdown-2", userId: "user-2", currentRevision: 2 });
+    const firstEnd = vi.spyOn(first.res, "end");
+    const secondEnd = vi.spyOn(second.res, "end");
+    expect(vi.getTimerCount()).toBe(4);
+
+    shutdownProposalValuationEventStreams();
+    shutdownProposalValuationEventStreams();
+
+    expect(firstEnd).toHaveBeenCalledTimes(1);
+    expect(secondEnd).toHaveBeenCalledTimes(1);
+    expect(firstHandle!.isClosed()).toBe(true);
+    expect(secondHandle!.isClosed()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("refuses a stream that finishes authorizing after shutdown began", () => {
+    vi.useFakeTimers();
+    shutdownProposalValuationEventStreams();
+    const late = mockStream();
+
+    const handle = openProposalValuationEventStream({ ...late, reportId: "shutdown-late", userId: "user-late", currentRevision: 3 });
+
+    expect(handle).toBeNull();
+    expect(late.res.statusCode).toBe(503);
+    expect(late.res.headers.get("retry-after")).toBe("1");
+    expect(late.res.body).toMatchObject({ code: "PV_EVENTS_RESTARTING" });
+    expect(late.res.chunks).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cleans a broken stream without preventing other streams from ending", () => {
+    vi.useFakeTimers();
+    const broken = mockStream();
+    const healthy = mockStream();
+    const brokenHandle = openProposalValuationEventStream({ ...broken, reportId: "shutdown-broken", userId: "user-1", currentRevision: 1 });
+    openProposalValuationEventStream({ ...healthy, reportId: "shutdown-healthy", userId: "user-2", currentRevision: 1 });
+    broken.res.end = vi.fn(() => { throw new Error("Broken response"); });
+    broken.res.destroy = vi.fn();
+
+    expect(() => shutdownProposalValuationEventStreams()).not.toThrow();
+
+    expect(broken.res.destroy).toHaveBeenCalledTimes(1);
+    expect(brokenHandle!.isClosed()).toBe(true);
+    expect(healthy.res.writableEnded).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("closes or resyncs mutations that land in the authorization/register gap", async () => {
     let resolveRevalidation!: (workspace: any) => void;
     const revalidation = new Promise<any>((resolve) => {

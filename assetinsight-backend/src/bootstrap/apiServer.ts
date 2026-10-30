@@ -15,6 +15,7 @@ import { startReportRestartRecovery } from "../service/reportRestartRecoveryServ
 import { assertValidR2StorageConfiguration } from "../utils/r2Storage/r2Upload.js";
 import { recoverReportActivity } from "../service/reportActivityService.js";
 import { recoverReportTransferNotifications } from "../service/reportTransferNotificationService.js";
+import { shutdownProposalValuationEventStreams } from "../service/proposalValuationRealtimeService.js";
 
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 25_000;
 
@@ -66,7 +67,13 @@ function configureConnectionTimeouts(
   server.headersTimeout = 66_000;
 }
 
-function registerGracefulShutdown(server: Server): void {
+export function registerGracefulShutdown(
+  server: Server,
+  runtime: {
+    once: (signal: NodeJS.Signals, listener: () => void) => unknown;
+    exit: (code: number) => unknown;
+  } = process
+): void {
   let shuttingDown = false;
 
   const shutdown = (signal: NodeJS.Signals) => {
@@ -77,7 +84,7 @@ function registerGracefulShutdown(server: Server): void {
     const forceExit = setTimeout(() => {
       console.error("[Server] Graceful shutdown timed out; closing connections");
       server.closeAllConnections();
-      process.exit(1);
+      runtime.exit(1);
     }, GRACEFUL_SHUTDOWN_TIMEOUT_MS);
     forceExit.unref();
 
@@ -89,13 +96,16 @@ function registerGracefulShutdown(server: Server): void {
         })
         .finally(() => {
           clearTimeout(forceExit);
-          process.exit(closeError ? 1 : 0);
+          runtime.exit(closeError ? 1 : 0);
         });
     });
+    // Stop accepting first, then end only registered SSE hints. Ordinary
+    // requests retain their response and database connection until they finish.
+    shutdownProposalValuationEventStreams();
   };
 
-  process.once("SIGINT", () => shutdown("SIGINT"));
-  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  runtime.once("SIGINT", () => shutdown("SIGINT"));
+  runtime.once("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 /**

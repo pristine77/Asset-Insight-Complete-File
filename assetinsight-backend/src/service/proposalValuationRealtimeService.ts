@@ -36,6 +36,38 @@ export type ProposalValuationEventStreamHandle = {
 
 const rooms = new Map<string, Set<ProposalValuationConnection>>();
 let connectionCount = 0;
+let draining = false;
+
+function cleanupConnection(
+  reportId: string,
+  room: Set<ProposalValuationConnection>,
+  connection: ProposalValuationConnection
+) {
+  if (connection.closed) return;
+  connection.closed = true;
+  clearInterval(connection.heartbeat);
+  clearTimeout(connection.expires);
+  room.delete(connection);
+  connectionCount = Math.max(0, connectionCount - 1);
+  if (room.size === 0) rooms.delete(reportId);
+}
+
+/** End live hints so a server restart can drain ordinary HTTP work promptly. */
+export function shutdownProposalValuationEventStreams(): void {
+  draining = true;
+  for (const [reportId, room] of Array.from(rooms.entries())) {
+    for (const connection of Array.from(room)) {
+      try {
+        if (!connection.response.writableEnded) connection.response.end();
+      } catch {
+        // A broken stream must not keep the listener, or other streams, open.
+        try { connection.response.destroy?.(); } catch {}
+      } finally {
+        cleanupConnection(reportId, room, connection);
+      }
+    }
+  }
+}
 
 function writeEvent(
   response: Response,
@@ -61,6 +93,17 @@ export function openProposalValuationEventStream(input: {
   userId: string;
   currentRevision: number;
 }): ProposalValuationEventStreamHandle | null {
+  // A request that was still authorizing when shutdown began must not create
+  // a new long-lived response after the existing streams have been ended.
+  if (draining) {
+    input.res.setHeader("Cache-Control", "no-store");
+    input.res.setHeader("Retry-After", "1");
+    input.res.status(503).json({
+      code: "PV_EVENTS_RESTARTING",
+      message: "Live updates will reconnect after the server restarts.",
+    });
+    return null;
+  }
   const room = rooms.get(input.reportId) || new Set<ProposalValuationConnection>();
   const userConnections = Array.from(room).filter(
     (connection) => connection.userId === input.userId && !connection.closed
@@ -160,13 +203,7 @@ export function openProposalValuationEventStream(input: {
   }
 
   const cleanup = () => {
-    if (connection.closed) return;
-    connection.closed = true;
-    clearInterval(connection.heartbeat);
-    clearTimeout(connection.expires);
-    room.delete(connection);
-    connectionCount = Math.max(0, connectionCount - 1);
-    if (room.size === 0) rooms.delete(input.reportId);
+    cleanupConnection(input.reportId, room, connection);
   };
   input.req.once("close", cleanup);
   input.res.once("close", cleanup);
@@ -341,13 +378,8 @@ export function disconnectProposalValuationUserIp(
 }
 
 export function resetProposalValuationEventHubForTests() {
-  for (const room of rooms.values()) {
-    for (const connection of room) {
-      clearInterval(connection.heartbeat);
-      clearTimeout(connection.expires);
-      if (!connection.response.writableEnded) connection.response.end();
-    }
-  }
+  shutdownProposalValuationEventStreams();
   rooms.clear();
   connectionCount = 0;
+  draining = false;
 }
