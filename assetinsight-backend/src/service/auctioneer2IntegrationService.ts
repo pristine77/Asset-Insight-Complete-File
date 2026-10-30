@@ -6,7 +6,7 @@
  */
 import { createHash } from "crypto";
 import { buildAuctioneerVideoManifest } from "./auctioneer2VideoManifest.js";
-import { assertAuctioneerContractSendOpen, assertAuctioneerContractCaptureRevision, getAuctioneerContractCaptureState, assertNoQueuedContinuationUpload, beginAuctioneerContractClose, confirmAuctioneerContractClose, withAuctioneerContractOperation } from "./auctioneerContractCloseService.js";
+import { assertAuctioneerContractSendOpen, assertAuctioneerContractCaptureRevision, getAuctioneerContractCaptureState, assertNoQueuedContinuationUpload, beginAuctioneerContractClose, confirmAuctioneerContractClose, withAuctioneerContractOperation, auctioneerContractStateId, carryUnsentCaptureIntoCurrentOpening, getAuctioneerContractCaptureStates, reportedCaptureRevision } from "./auctioneerContractCloseService.js";
 import AuctioneerContractClose from "../models/auctioneerContractClose.model.js";
 import type { ReportSubmissionAdmissionLease } from "./reportSubmissionAdmissionService.js";
 import { Types } from "mongoose";
@@ -3014,10 +3014,19 @@ function effectiveDeliveryState(
   return stored;
 }
 
+/**
+ * `captureState` is the contract's capture state for the work item's user, when
+ * read: a never-sent capture from an earlier opening then reports the current
+ * opening it carries into on send (reportedCaptureRevision).
+ */
 function publicDeliverySummary(
   workItem: IAuctioneerWorkItem | any,
-  report: Record<string, any> | null
+  report: Record<string, any> | null,
+  captureState?: { status?: string | null; accessRevision?: string | number | null } | null
 ) {
+  const accessRevision = captureState === undefined
+    ? workItem.contractAccessRevision
+    : reportedCaptureRevision(workItem, captureState);
   const readiness = linkedReportEligibility(workItem.selectedReportType, report);
   const state = effectiveDeliveryState(workItem, readiness.eligible);
   /*
@@ -3037,7 +3046,7 @@ function publicDeliverySummary(
     reportType: workItem.selectedReportType,
     // Needed by "Close my part of this contract", which is contract-scoped.
     contractId: workItem.contract.id,
-    ...(workItem.contractAccessRevision !== undefined ? { accessRevision: workItem.contractAccessRevision } : {}),
+    ...(accessRevision !== undefined && accessRevision !== null ? { accessRevision } : {}),
     contractNo: workItem.contract.contractNo,
     state,
     canSend:
@@ -3102,9 +3111,16 @@ export async function listAuctioneerDeliveries(userId: string) {
   })
     .sort({ updatedAt: -1 })
     .lean();
-  const reports = await Promise.all(workItems.map((workItem) => loadLinkedReport(workItem)));
+  const [reports, states] = await Promise.all([
+    Promise.all(workItems.map((workItem) => loadLinkedReport(workItem))),
+    getAuctioneerContractCaptureStates(workItems.map((workItem) => ({ contractId: workItem.contract.id, userId }))),
+  ]);
   return workItems.map((workItem, index) =>
-    publicDeliverySummary(workItem, reports[index] as Record<string, any> | null)
+    publicDeliverySummary(
+      workItem,
+      reports[index] as Record<string, any> | null,
+      states.get(auctioneerContractStateId(workItem.contract.id, userId)) ?? null
+    )
   );
 }
 
@@ -3119,8 +3135,11 @@ export async function getAuctioneerDeliverySummary(workItemId: string, userId: s
   if (!workItem || !workItem.linkedReportId) {
     throw new Auctioneer2ServiceError("Delivery not found.", 404, "delivery_not_found");
   }
-  const report = (await loadLinkedReport(workItem)) as Record<string, any> | null;
-  return publicDeliverySummary(workItem, report);
+  const [report, captureState] = await Promise.all([
+    loadLinkedReport(workItem) as Promise<Record<string, any> | null>,
+    getAuctioneerContractCaptureState(workItem.contract.id, userId),
+  ]);
+  return publicDeliverySummary(workItem, report, captureState ?? null);
 }
 
 function validateDestination(
@@ -3183,7 +3202,7 @@ async function queueAuctioneerDeliveryLocked(
   if (!Types.ObjectId.isValid(workItemId)) {
     throw new Auctioneer2ServiceError("Delivery not found.", 404, "delivery_not_found");
   }
-  const initial = await AuctioneerWorkItem.findOne({
+  let initial = await AuctioneerWorkItem.findOne({
     _id: workItemId,
     claimedBy: userId,
   });
@@ -3230,6 +3249,16 @@ async function queueAuctioneerDeliveryLocked(
       409,
       "delivery_needs_reconciliation"
     );
+  }
+  // A capture made before the contract was re-opened, and never sent, moves
+  // into the current opening here instead of being refused (owner,
+  // 2026-10-29; carryUnsentCaptureIntoCurrentOpening). Read back so every
+  // check below, and the delivery itself, sees the opening it now belongs to.
+  if (await carryUnsentCaptureIntoCurrentOpening(initial, userId)) {
+    initial = await AuctioneerWorkItem.findOne({ _id: workItemId, claimedBy: userId });
+    if (!initial || !initial.linkedReportId) {
+      throw new Auctioneer2ServiceError("Delivery not found.", 404, "delivery_not_found");
+    }
   }
   const retryingCloseOnly = initial.delivery.status === "failed" &&
     initial.delivery.completeContract === true && initial.delivery.lots.length > 0 &&

@@ -432,4 +432,55 @@ describe.sequential("Auctioneer per-user contract Re-Open", () => {
     expect(await Work.findById(old._id).lean()).toEqual(historical);
     expect(upstream.submitLot).not.toHaveBeenCalled();
   });
+
+  /*
+   * Owner, 2026-10-29 (contract 825684): a capture made before the Re-Open and
+   * never sent was stranded — "This capture belongs to an earlier opening" — so
+   * the appraiser had to capture the lot again. It now carries into the current
+   * opening when sent. A capture that was sent stays fenced (the test above).
+   */
+  it("carries a never-sent capture from before the Re-Open into the current opening when it is sent", async () => {
+    const owner = await user("carry-unsent");
+    // Made before the part was closed and never sent; no opening number yet, as on 825684.
+    const unsent = await work(owner._id, { status: "report_created",
+      delivery: { status: "ready", completeContract: false, attempts: 0, lots: [], reconciliation: { required: false } } });
+    const report = await readyReport(owner._id);
+    await Work.updateOne({ _id: unsent._id }, { $set: { linkedReportId: report._id, linkedReportModel: "AssetReport" } });
+    await Asset.updateOne({ _id: report._id }, { $set: { auctioneerWorkItem: unsent._id, client_submission_id: unsent.clientSubmissionId } });
+    await closed(owner._id);
+    expect((await post(owner._id)).status).toBe(200);
+
+    // Reports already shows it in the current opening, so the phone app's check of the reply holds.
+    const listed = (await integration.listAuctioneerDeliveries(String(owner._id))).find(row => row.workItemId === String(unsent._id));
+    expect(listed).toMatchObject({ accessRevision: 42, canSend: true, state: "ready" });
+    expect(await integration.getAuctioneerDeliverySummary(String(unsent._id), String(owner._id))).toMatchObject({ accessRevision: 42 });
+
+    const sent = await integration.queueAuctioneerDelivery(String(unsent._id), String(owner._id), { destination: "LottingBoard" });
+    expect(sent).toMatchObject({ workItemId: String(unsent._id), accessRevision: 42, state: "queued" });
+    const carried = await Work.findById(unsent._id).lean();
+    expect(carried).toMatchObject({ contractAccessRevision: 42, carriedFromAccessRevision: null, delivery: { status: "queued" } });
+    expect(carried?.carriedIntoOpeningAt).toBeInstanceOf(Date);
+  });
+
+  it("carries only never-sent captures of the contract's own user, and only while the contract is open again", async () => {
+    const { captureCarriesIntoCurrentOpening } = await import("../src/service/auctioneerContractCloseService.js");
+    const owner = new mongoose.Types.ObjectId();
+    const unsent = { claimedBy: owner, assignmentUserId: owner, contractAccessRevision: 41, status: "report_created",
+      delivery: { status: "ready", attempts: 0, lots: [] } };
+    const open = { status: "open", accessRevision: 42 };
+    expect(captureCarriesIntoCurrentOpening(unsent, open)).toBe(true);
+    expect(captureCarriesIntoCurrentOpening({ ...unsent, contractAccessRevision: undefined }, open)).toBe(true);
+    // Already in the current opening: nothing to carry.
+    expect(captureCarriesIntoCurrentOpening({ ...unsent, contractAccessRevision: 42 }, open)).toBe(false);
+    // Sent, or ever attempted: Auctioneer may hold a copy, so it stays fenced.
+    expect(captureCarriesIntoCurrentOpening({ ...unsent, delivery: { status: "failed", attempts: 1, lots: [] } }, open)).toBe(false);
+    expect(captureCarriesIntoCurrentOpening({ ...unsent, delivery: { status: "ready", attempts: 0, lots: [{}] } }, open)).toBe(false);
+    expect(captureCarriesIntoCurrentOpening({ ...unsent, status: "sent" }, open)).toBe(false);
+    // The contract closed again, or its Re-Open not yet confirmed.
+    expect(captureCarriesIntoCurrentOpening(unsent, { status: "confirmed", accessRevision: 42 })).toBe(false);
+    expect(captureCarriesIntoCurrentOpening(unsent, { status: "reopen_pending", accessRevision: 42 })).toBe(false);
+    expect(captureCarriesIntoCurrentOpening(unsent, null)).toBe(false);
+    // Somebody else's assigned work.
+    expect(captureCarriesIntoCurrentOpening({ ...unsent, assignmentUserId: new mongoose.Types.ObjectId() }, open)).toBe(false);
+  });
 });

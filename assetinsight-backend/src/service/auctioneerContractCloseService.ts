@@ -47,6 +47,102 @@ export async function assertAuctioneerContractCaptureRevision(contractId: string
   return state;
 }
 
+/*
+ * Carrying a never-sent capture into the current opening (owner, 2026-10-29,
+ * contract 825684: "yes, build it").
+ *
+ * A Re-Open starts a new opening of the contract for its user, and the check
+ * above refuses a capture made in an earlier one. That fence exists so a lot
+ * does not reach Auctioneer twice. A capture that never left Asset Insight has
+ * no copy in Auctioneer to duplicate, so it was only being stranded: its report
+ * and photos stayed in the app and the appraiser had to capture the lot again.
+ * Such a capture now moves into the current opening when its user sends it.
+ * Anything that was sent, or started sending, stays fenced; Auctioneer still
+ * checks each lot (contract, Schedule A item) when the delivery lands.
+ */
+const NEVER_SENT_DELIVERY_STATES = ["not_ready", "ready"];
+
+type CarryCandidate = {
+  claimedBy?: unknown;
+  assignmentUserId?: unknown;
+  contractAccessRevision?: string | number | null;
+  status?: string;
+  delivery?: {
+    status?: string;
+    attempts?: number;
+    lots?: unknown[];
+    queuedAt?: Date | null;
+    contractCompletedAt?: Date | null;
+  };
+};
+type CaptureState = { status?: string | null; accessRevision?: string | number | null } | null | undefined;
+
+/**
+ * Whether this capture would carry into the contract's current opening: the
+ * contract is open again for its user in a later opening, the capture is the
+ * user's own, and it was never sent (no attempt, nothing queued, no lot).
+ */
+export function captureCarriesIntoCurrentOpening(workItem: CarryCandidate | null | undefined, state: CaptureState): boolean {
+  if (!workItem || !state) return false;
+  if (state.status !== "open" || state.accessRevision === undefined || state.accessRevision === null) return false;
+  if (state.accessRevision === workItem.contractAccessRevision) return false;
+  if (workItem.assignmentUserId && String(workItem.assignmentUserId) !== String(workItem.claimedBy)) return false;
+  if (!["claimed", "report_created"].includes(String(workItem.status))) return false;
+  const delivery = workItem.delivery;
+  return NEVER_SENT_DELIVERY_STATES.includes(String(delivery?.status ?? "not_ready")) &&
+    Number(delivery?.attempts ?? 0) === 0 &&
+    !delivery?.lots?.length &&
+    !delivery?.queuedAt &&
+    !delivery?.contractCompletedAt;
+}
+
+/**
+ * The opening a capture reports to Asset Insight's screens: the current one
+ * when it would carry there. The phone app checks that a send's reply names
+ * the opening it sent from, so a carried capture shows the current opening
+ * from the moment Reports loads, not only once it has moved.
+ */
+export function reportedCaptureRevision(workItem: CarryCandidate, state: CaptureState) {
+  return captureCarriesIntoCurrentOpening(workItem, state) ? state!.accessRevision! : workItem.contractAccessRevision;
+}
+
+/** The capture states of many (contract, user) pairs in one read, keyed by auctioneerContractStateId. */
+export async function getAuctioneerContractCaptureStates(pairs: ReadonlyArray<{ contractId: string; userId: string }>) {
+  const ids = [...new Set(pairs.map(pair => identity(pair.contractId, pair.userId)))];
+  if (!ids.length) return new Map<string, any>();
+  const rows = await AuctioneerContractClose.find({ _id: { $in: ids } }).lean();
+  return new Map<string, any>(rows.map(row => [String(row._id), row]));
+}
+
+/**
+ * Moves a never-sent capture into the contract's current opening, inside the
+ * contract-operation lease. True when it moved. The update repeats every
+ * condition, so a capture that started sending meanwhile is never moved.
+ */
+export async function carryUnsentCaptureIntoCurrentOpening(
+  workItem: CarryCandidate & { _id: unknown; contract: { id: string } },
+  userId: string,
+): Promise<boolean> {
+  const state = await getAuctioneerContractCaptureState(workItem.contract.id, userId);
+  if (String(workItem.claimedBy) !== userId || !captureCarriesIntoCurrentOpening(workItem, state)) return false;
+  const from = workItem.contractAccessRevision ?? null;
+  const result = await AuctioneerWorkItem.updateOne({
+    _id: String(workItem._id),
+    claimedBy: String(workItem.claimedBy),
+    // null also matches a capture made before openings were numbered.
+    contractAccessRevision: from,
+    status: { $in: ["claimed", "report_created"] },
+    "delivery.status": { $in: NEVER_SENT_DELIVERY_STATES },
+    "delivery.lots.0": { $exists: false },
+    "delivery.queuedAt": null,
+    "delivery.contractCompletedAt": null,
+    $or: [{ "delivery.attempts": { $exists: false } }, { "delivery.attempts": 0 }],
+  }, {
+    $set: { contractAccessRevision: state!.accessRevision, carriedFromAccessRevision: from, carriedIntoOpeningAt: new Date() },
+  }, { overwriteImmutable: true });
+  return result.modifiedCount === 1;
+}
+
 export async function assertAuctioneerContractSendOpen(contractId: string, userId: string, revision?: string | number) {
   const close = await assertAuctioneerContractCaptureRevision(contractId, userId, revision);
   if (close?.status === "open") return;

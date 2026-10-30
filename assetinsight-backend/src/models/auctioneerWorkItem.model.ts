@@ -191,6 +191,14 @@ export interface IAuctioneerWorkItem extends Document {
   activeContractKey?: string;
   assignmentUserId?: Types.ObjectId;
   contractAccessRevision?: string | number;
+  /**
+   * A capture made before its contract was re-opened, never sent, and carried
+   * into the current opening when it was sent (owner 2026-10-29; see
+   * carryUnsentCaptureIntoCurrentOpening). The opening it was made in — null
+   * when that was before openings were numbered — and when it moved.
+   */
+  carriedFromAccessRevision?: string | number | null;
+  carriedIntoOpeningAt?: Date;
   contract: IAuctioneerContractSnapshot;
   kind: AuctioneerWorkItemKind;
   snapshot: {
@@ -435,7 +443,11 @@ const AuctioneerWorkItemSchema = new Schema<IAuctioneerWorkItem>(
       immutable: true,
     },
     clientSubmissionId: { type: String, required: true, immutable: true },
+    // Immutable except for one deliberate move: a never-sent capture carried
+    // into the current opening (auctioneerContractCloseService.ts).
     contractAccessRevision: { type: Schema.Types.Mixed, immutable: true },
+    carriedFromAccessRevision: { type: Schema.Types.Mixed },
+    carriedIntoOpeningAt: { type: Date },
     continuationOfWorkItemId: {
       type: Schema.Types.ObjectId,
       ref: "AuctioneerWorkItem",
