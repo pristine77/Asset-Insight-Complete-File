@@ -86,6 +86,7 @@ export default function PictureWindow({
   // The latest position, for saving when a drag ends.
   const positionRef = useRef<Position | null>(null);
   const setPosition = useCallback((next: Position) => {
+    if (positionRef.current?.x === next.x && positionRef.current?.y === next.y) return;
     positionRef.current = next;
     setPositionState(next);
   }, []);
@@ -98,13 +99,22 @@ export default function PictureWindow({
     setPosition(onScreen(start, panel));
   }, [panelRef, setPosition]);
 
-  // A smaller browser window must not leave it off screen.
+  // Native corner resizing does not emit window.resize. Observe the panel too,
+  // using its current measured size and position; left/top-only changes do not
+  // resize the observed box, and setPosition ignores an unchanged result.
   useEffect(() => {
+    let active = true;
     const keepOnScreen = () => {
-      if (positionRef.current) setPosition(onScreen(positionRef.current, panelRef.current));
+      if (active && positionRef.current) setPosition(onScreen(positionRef.current, panelRef.current));
     };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(keepOnScreen);
+    if (panelRef.current) observer?.observe(panelRef.current);
     window.addEventListener("resize", keepOnScreen);
-    return () => window.removeEventListener("resize", keepOnScreen);
+    return () => {
+      active = false;
+      observer?.disconnect();
+      window.removeEventListener("resize", keepOnScreen);
+    };
   }, [panelRef, setPosition]);
 
   // Keep the current picture's thumbnail in view as Previous / Next move on.
@@ -170,10 +180,18 @@ export default function PictureWindow({
       onKeyDown={onKeyDown}
       aria-label={`Pictures for ${label}`}
       inert={blocked || undefined}
-      style={position ? { left: position.x, top: position.y } : { right: 16, top: DEFAULT_TOP, visibility: "hidden" }}
+      style={position ? {
+        left: position.x,
+        top: position.y,
+        // Limit native resizing from its existing anchor instead of moving that
+        // anchor under the pointer. CSS viewport units also track a smaller
+        // browser when clamping does not need to change left/top.
+        maxWidth: `calc(100vw - ${position.x + EDGE}px)`,
+        maxHeight: `calc(100dvh - ${position.y + EDGE}px)`,
+      } : { right: 16, top: DEFAULT_TOP, visibility: "hidden" }}
       // `resize` gives the bottom-right corner its resize handle; the size
       // limits keep it usable and on screen.
-      className="fixed z-[110] flex h-[min(620px,calc(100dvh-180px))] min-h-64 w-[440px] min-w-72 max-w-[calc(100vw-16px)] max-h-[calc(100dvh-16px)] resize flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] shadow-[var(--app-shadow-modal)] outline-none"
+      className="fixed z-[110] flex h-[min(620px,calc(100dvh-180px))] min-h-[min(16rem,calc(100dvh-16px))] w-[440px] min-w-72 max-w-[calc(100vw-16px)] max-h-[calc(100dvh-16px)] resize flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] shadow-[var(--app-shadow-modal)] outline-none"
     >
       <header
         onPointerDown={startDrag}
