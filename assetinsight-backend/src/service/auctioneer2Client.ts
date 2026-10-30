@@ -780,6 +780,12 @@ export async function returnProposalReviewItems(
     completedBy: string;
     completedByUserId: string;
     items: Auctioneer2ProposalReviewItem[];
+    /**
+     * A Proposal without a list (one user) stays in the Asset Insight queue
+     * when true; its absence closes it. A list Proposal ignores it: it closes
+     * once every listed item is back.
+     */
+    moreLotsExpected?: boolean;
   }
 ): Promise<Auctioneer2ProposalReviewReturn> {
   const normalizedContractId = String(contractId || "").trim();
@@ -798,6 +804,7 @@ export async function returnProposalReviewItems(
         completedBy: String(input.completedBy || "").trim() || `Asset Insight user ${userId}`,
         completedByUserId: userId,
         items: input.items,
+        ...(input.moreLotsExpected === true ? { moreLotsExpected: true } : {}),
       }),
     },
     { expectedStatuses: [200, 201], ambiguousWriteOnNetworkFailure: true }

@@ -42,6 +42,7 @@ import {
   proposalReturnDescription,
 } from "./auctioneerProposalList.js";
 import { assertAuctioneerContractCaptureRevision, assertNoQueuedContinuationUpload, beginAuctioneerContractClose, confirmAuctioneerContractClose, withAuctioneerContractOperation } from "./auctioneerContractCloseService.js";
+import { AUCTIONEER2_INCOMING_CONTRACT_STATUS } from "./auctioneer2Client.js";
 import {
   buildAuctioneerConditionReport,
   buildAuctioneerKnownLotPatch,
@@ -698,6 +699,26 @@ async function requireUnknownLotReconciliation(
   throw new AuctioneerDeliveryError(reason);
 }
 
+/**
+ * Auctioneer answered a lot submitted on its own by holding it for the
+ * Proposal's review (BUG-501, 202 with no lot). The runner then returns the
+ * report's lots together through review-items instead; the held lot is
+ * replaced there, under the same reference.
+ */
+class ProposalHeldForReview extends Error {}
+
+/**
+ * A Proposal's work: worked from its list, or the older single-user flow
+ * (owner 2026-10-29). Recognised by the status Auctioneer gave the contract
+ * when it was claimed, which a Re-Open or a Create Lot & Continue capture
+ * carries too.
+ */
+function isProposalWorkItem(workItem: IAuctioneerWorkItem): boolean {
+  if (isProposalListWorkItem(workItem)) return true;
+  const status = clean((workItem.snapshot?.contract as Record<string, unknown> | undefined)?.status);
+  return status.toLowerCase() === AUCTIONEER2_INCOMING_CONTRACT_STATUS.toLowerCase();
+}
+
 async function deliverUnknownLot(input: {
   workItem: IAuctioneerWorkItem;
   checkpoint: IAuctioneerDeliveryLotCheckpoint;
@@ -783,7 +804,14 @@ async function deliverUnknownLot(input: {
         ),
         "creating an Unknown Lot"
       );
+      if (response.proposalReview === true) {
+        checkpoint.status = "pending";
+        checkpoint.step = "pending";
+        await persistDelivery(workItem);
+        throw new ProposalHeldForReview();
+      }
     } catch (error) {
+      if (error instanceof ProposalHeldForReview) throw error;
       if (
         error instanceof Auctioneer2ClientError &&
         error.ambiguousWrite
@@ -1101,7 +1129,18 @@ async function closeContractAfterDelivery(
 }
 
 /*
-   ── RETURNING A PROPOSAL LIST (owner 2026-10-28) ──────────────────────────
+   ── RETURNING A PROPOSAL (owner 2026-10-28; older flow 2026-10-29) ───────
+
+   A Proposal without a list (one user, an empty Proposal) used to send its
+   lots one by one through /lots/submit. Since Auctioneer holds those for the
+   Proposal's review (BUG-501) it answers with no lot, which this treated as
+   an uncertain write: the first lot arrived and the rest never left (owner,
+   2026-10-29: "3 - 6 lots done ... only one lot arrive back to the
+   proposal"). Its lots now go back the way a list Proposal's do, as items
+   that were not on a list, with moreLotsExpected so the Proposal stays in
+   the queue; Close my part closes it as for any contract. A lot already held
+   under /lots/submit is replaced, not duplicated: proposalExtraItemRef is the
+   reference that call received.
 
    Every lot of the approved report goes back in ONE review-items call:
      - a lot carrying a listed item's source key returns against that item
@@ -1121,7 +1160,7 @@ async function closeContractAfterDelivery(
    report's listed items back. Photos are sent as the report's stored image
    addresses, as Auctioneer shows them on the returned item.
 */
-async function returnProposalListLots(input: {
+async function returnProposalLots(input: {
   workItem: IAuctioneerWorkItem;
   report: any;
   manifest: any;
@@ -1129,6 +1168,7 @@ async function returnProposalListLots(input: {
   completedBy: string;
 }): Promise<void> {
   const { workItem, report, manifest, lots, completedBy } = input;
+  const listMode = isProposalListWorkItem(workItem);
   const checkpoints = workItem.delivery.lots;
   if (checkpoints.length > 0 && checkpoints.every((checkpoint) => checkpoint.status === "sent")) return;
   const userId = clean(workItem.assignmentUserId);
@@ -1139,7 +1179,8 @@ async function returnProposalListLots(input: {
   }
   const contractId = clean(workItem.contract.id);
   const listed = new Map((workItem.proposalList?.items || []).map((item) => [item.lineId, item]));
-  const lineIds = proposalLotLineIds(lots);
+  // Without a list every lot is an item added in Asset Insight.
+  const lineIds = listMode ? proposalLotLineIds(lots) : lots.map(() => undefined);
   const seen = new Set<string>();
   const items: Auctioneer2ProposalReviewItem[] = lots.map((lot, index) => {
     const lineId = lineIds[index];
@@ -1195,6 +1236,8 @@ async function returnProposalListLots(input: {
         completedBy,
         completedByUserId: userId,
         items: ordered.slice(start, start + 500),
+        // The older flow stays open for more lots; Close my part closes it.
+        ...(listMode ? {} : { moreLotsExpected: true }),
       });
       itemCount += outcome.reviewItemCount;
       remainsInAssetInsight = outcome.remainsInAssetInsight;
@@ -1333,14 +1376,17 @@ export async function runAuctioneerDeliveryJob(
     await persistDelivery(workItem);
     const completedBy = await completedByFor(workItem);
 
-    // Owner 2026-10-28: a Proposal worked from its list returns its items for
-    // review; it creates no lot and never closes the contract.
-    if (isProposalListWorkItem(workItem)) {
+    // A Proposal returns its items for review and creates no lot (owner
+    // 2026-10-28, list; 2026-10-29, the older flow). A list Proposal never
+    // closes the contract; the older flow closes it with Close my part below.
+    let returnedForReview = false;
+    if (isProposalWorkItem(workItem)) {
       activeCheckpoint = undefined;
-      await returnProposalListLots({ workItem, report, manifest, lots, completedBy });
+      await returnProposalLots({ workItem, report, manifest, lots, completedBy });
+      returnedForReview = true;
     }
 
-    for (let index = 0; index < lots.length && !isProposalListWorkItem(workItem); index += 1) {
+    for (let index = 0; index < lots.length && !returnedForReview; index += 1) {
       const checkpoint = workItem.delivery.lots[index];
       activeCheckpoint = checkpoint;
       if (checkpoint.status === "sent") continue;
@@ -1376,18 +1422,27 @@ export async function runAuctioneerDeliveryJob(
           completedBy,
         });
       } else {
-        await deliverUnknownLot({
-          workItem,
-          checkpoint,
-          report,
-          manifest,
-          lot: lots[index],
-          source,
-          lotIndex: index,
-          destination,
-          opTaskDescription: opTaskDescription || undefined,
-          completedBy,
-        });
+        try {
+          await deliverUnknownLot({
+            workItem,
+            checkpoint,
+            report,
+            manifest,
+            lot: lots[index],
+            source,
+            lotIndex: index,
+            destination,
+            opTaskDescription: opTaskDescription || undefined,
+            completedBy,
+          });
+        } catch (error) {
+          if (!(error instanceof ProposalHeldForReview)) throw error;
+          // Auctioneer held the lot for a Proposal's review: send them all
+          // there together, with their photos.
+          activeCheckpoint = undefined;
+          await returnProposalLots({ workItem, report, manifest, lots, completedBy });
+          returnedForReview = true;
+        }
       }
     }
 

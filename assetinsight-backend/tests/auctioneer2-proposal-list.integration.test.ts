@@ -313,3 +313,100 @@ describe.sequential("A Proposal worked item by item (owner 2026-10-28)", () => {
     expect((await Work.findById(result.setup.workItemId).lean())?.proposalList?.items).toHaveLength(2);
   });
 });
+
+/*
+   Owner 2026-10-29: a US Proposal without a list came back with one lot of
+   the 3 to 6 captured. Its lots went one by one through /lots/submit, which
+   Auctioneer now holds for the Proposal's review with no lot (BUG-501); the
+   missing lot read as an uncertain write and stopped the send after lot 1.
+*/
+describe.sequential("A Proposal without a list returns all its lots for review (owner 2026-10-29)", () => {
+  const threeLots = [
+    { lot_id: "lot-001", title: "Tractor", serial_number: "SN-1", year: "2019", image_indexes: [0] },
+    { lot_id: "lot-002", title: "Baler", image_indexes: [1] },
+    { lot_id: "lot-003", title: "Rake", image_indexes: [0, 1] },
+  ];
+  async function claimOlder() {
+    list = [];
+    upstream.listIncomingContracts.mockResolvedValue([proposal({ assignedUserId: ownerId, hasScheduleA: false })]);
+    upstream.getContractLots.mockResolvedValue([]);
+    const [row] = await integration.listAuctioneerIncoming(true, ownerId);
+    expect(row).not.toHaveProperty("proposalList");
+    return integration.claimAuctioneerIncoming(row.cycleKey, ownerId, "asset");
+  }
+
+  it("sends every lot in one review-items call with its photos, creates no lot and keeps the Proposal open", async () => {
+    const claimed = await claimOlder();
+    await linkedReport(claimed.workItemId, threeLots);
+    const queued = await integration.queueAuctioneerDelivery(claimed.workItemId, ownerId, { destination: "LottingBoard" });
+    expect(queued).toMatchObject({ canCompleteContract: true });
+    await delivery.runAuctioneerDeliveryJob(claimed.workItemId);
+
+    expect(upstream.submitLot).not.toHaveBeenCalled();
+    expect(upstream.closeContractPartForUser).not.toHaveBeenCalled();
+    expect(upstream.returnProposalReviewItems).toHaveBeenCalledTimes(1);
+    const [contractId, input] = upstream.returnProposalReviewItems.mock.calls[0];
+    expect(contractId).toBe(CONTRACT);
+    expect(input).toMatchObject({ completedByUserId: ownerId, moreLotsExpected: true });
+    const work = await Work.findById(claimed.workItemId).lean();
+    // The same references /lots/submit used, so a lot already held there is replaced.
+    expect(input.items.map((item: any) => item.proposalItemRef)).toEqual([1, 2, 3].map((n) => `${work!.clientSubmissionId}:${n}`));
+    expect(input.items).toEqual([
+      expect.objectContaining({ description: "Tractor", serialNumber: "SN-1", year: "2019", photos: ["https://assetinsight.test/p/1.jpg"] }),
+      expect.objectContaining({ description: "Baler", photos: ["https://assetinsight.test/p/2.jpg"] }),
+      expect.objectContaining({ description: "Rake", photos: ["https://assetinsight.test/p/1.jpg", "https://assetinsight.test/p/2.jpg"] }),
+    ]);
+    expect(input.items.some((item: any) => "scheduleALineId" in item)).toBe(false);
+    expect(work).toMatchObject({ status: "sent", delivery: { status: "sent", proposalReturn: { itemCount: 3 } } });
+  });
+
+  it("closes the Proposal with Close my part once its lots are back", async () => {
+    const claimed = await claimOlder();
+    await linkedReport(claimed.workItemId, threeLots);
+    upstream.closeContractPartForUser.mockImplementation(async (id: string, body: { completedByUserId: string }) => ({
+      contractId: id, userId: body.completedByUserId, userStatus: "completed", taskCompleted: true, alreadyCompleted: false }));
+    await integration.queueAuctioneerDelivery(claimed.workItemId, ownerId, { destination: "LottingBoard", completeContract: true });
+    await delivery.runAuctioneerDeliveryJob(claimed.workItemId);
+    expect(upstream.returnProposalReviewItems).toHaveBeenCalledTimes(1);
+    expect(upstream.closeContractPartForUser).toHaveBeenCalledTimes(1);
+    expect(upstream.returnProposalReviewItems.mock.invocationCallOrder[0])
+      .toBeLessThan(upstream.closeContractPartForUser.mock.invocationCallOrder[0]);
+    expect(await Work.findById(claimed.workItemId).lean()).toMatchObject({ delivery: { status: "sent", contractClose: { taskCompleted: true } } });
+  });
+
+  it("finishes a send that stopped after Auctioneer held its first lot, once it is released as no lot created", async () => {
+    const claimed = await claimOlder();
+    await linkedReport(claimed.workItemId, threeLots);
+    await integration.queueAuctioneerDelivery(claimed.workItemId, ownerId, { destination: "LottingBoard" });
+    // What the deployed sender left behind: lot 1 held, the send parked for reconciliation.
+    const reason = "Auctioneer accepted the Unknown Lot request without returning a lot ID. Reconcile it before retrying.";
+    const work = await Work.findById(claimed.workItemId);
+    const checkpoints = threeLots.map((lot, index) => ({ sourceKey: `${claimed.workItemId}:unknown:${index + 1}`, status: index === 0 ? "needs_reconciliation" : "pending", step: index === 0 ? "submitting" : undefined }));
+    await Work.updateOne({ _id: work!._id }, { $set: { "delivery.status": "needs_reconciliation", "delivery.lots": checkpoints,
+      "delivery.reconciliation": { required: true, sourceKey: checkpoints[0].sourceKey, reason, requestedAt: new Date() } } });
+
+    await integration.reconcileAuctioneerDelivery(claimed.workItemId, ownerId, { sourceKey: checkpoints[0].sourceKey, confirmNotCreated: true });
+    await integration.queueAuctioneerDelivery(claimed.workItemId, ownerId, { destination: "LottingBoard" });
+    await delivery.runAuctioneerDeliveryJob(claimed.workItemId);
+    expect(upstream.submitLot).not.toHaveBeenCalled();
+    const [, input] = upstream.returnProposalReviewItems.mock.calls[0];
+    expect(input.items).toHaveLength(3);
+    expect(input.items[0].proposalItemRef).toBe(`${work!.clientSubmissionId}:1`);
+    expect(await Work.findById(claimed.workItemId).lean()).toMatchObject({ delivery: { status: "sent" } });
+  });
+
+  it("switches to review-items if Auctioneer holds a lot it was not told was a Proposal's", async () => {
+    const claimed = await claimOlder();
+    await linkedReport(claimed.workItemId, threeLots);
+    // A capture whose saved contract does not say Proposal (should not happen; the net for it).
+    // The snapshot is immutable to the model, so the test edits the stored document directly.
+    await Work.collection.updateOne({ _id: new mongoose.Types.ObjectId(claimed.workItemId) }, { $unset: { "snapshot.contract.status": "" } });
+    upstream.submitLot.mockResolvedValue({ success: true, submissionId: "held-1", lotId: null, status: "ProposalReview", proposalReview: true });
+    await integration.queueAuctioneerDelivery(claimed.workItemId, ownerId, { destination: "LottingBoard" });
+    await delivery.runAuctioneerDeliveryJob(claimed.workItemId);
+    expect(upstream.submitLot).toHaveBeenCalledTimes(1);
+    const [, input] = upstream.returnProposalReviewItems.mock.calls[0];
+    expect(input.items).toHaveLength(3);
+    expect(await Work.findById(claimed.workItemId).lean()).toMatchObject({ delivery: { status: "sent", reconciliation: { required: false } } });
+  });
+});
