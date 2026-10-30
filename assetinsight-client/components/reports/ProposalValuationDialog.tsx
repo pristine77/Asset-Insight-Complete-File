@@ -44,6 +44,7 @@ import {
   recalculateProposalValuationSheet,
 } from "./proposal-valuation/calculations";
 import EvaluatorPicker from "./proposal-valuation/EvaluatorPicker";
+import PictureWindow from "./proposal-valuation/PictureWindow";
 import FormulaDetailsDialog from "./proposal-valuation/FormulaDetailsDialog";
 import ProposalValuationExcelButton from "./proposal-valuation/ProposalValuationExcelButton";
 import { MobileColumnTotals } from "./proposal-valuation/ColumnTotals";
@@ -625,6 +626,16 @@ export default function ProposalValuationDialog({
     });
   }, []);
 
+  const selectPictureGallery = useCallback((index: number) => {
+    setPictureGallery((current) =>
+      current && index >= 0 && index < current.urls.length ? { ...current, index } : current
+    );
+  }, []);
+
+  // On a desktop the pictures float over the grid (PictureWindow) and the page
+  // stays usable; only a phone gets the full-screen viewer.
+  const pictureModalOpen = Boolean(pictureGallery) && !desktopGridVisible;
+
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError("");
@@ -1044,15 +1055,23 @@ export default function ProposalValuationDialog({
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (formulaDetails) return;
+      // The floating picture window takes its own keys while focus is in it;
+      // elsewhere the page keeps its keys, as with no pictures open.
+      if (
+        pictureGallery &&
+        !pictureModalOpen &&
+        event.target instanceof Node &&
+        galleryPanelRef.current?.contains(event.target)
+      ) return;
       if (event.key === "Escape") {
-        if (pictureGallery) {
+        if (pictureModalOpen) {
           closePictureGallery();
         } else if (!pageMode) {
           close();
         }
         return;
       }
-      if (!pictureGallery) return;
+      if (!pictureModalOpen) return;
       if (event.key === "Tab") {
         const panel = galleryPanelRef.current;
         if (!panel) return;
@@ -1097,6 +1116,7 @@ export default function ProposalValuationDialog({
     open,
     pageMode,
     pictureGallery,
+    pictureModalOpen,
   ]);
 
   const filteredRows = useMemo(() => {
@@ -1480,13 +1500,16 @@ export default function ProposalValuationDialog({
         ? "flex h-[calc(100dvh-56px)] min-h-[480px] w-full bg-[var(--app-bg)] lg:h-[calc(100dvh-60px)]"
         : "fixed inset-0 z-[120] flex bg-black/55 p-0 backdrop-blur-sm sm:p-3 lg:p-5"}
       role={pageMode ? undefined : "dialog"}
-      aria-modal={pageMode || pictureGallery || formulaDetails ? undefined : true}
+      aria-modal={pageMode || pictureModalOpen || formulaDetails ? undefined : true}
       aria-label="Proposal Valuation"
-      aria-hidden={pictureGallery || formulaDetails ? true : undefined}
-      inert={pictureGallery || formulaDetails ? true : undefined}
+      aria-hidden={pictureModalOpen || formulaDetails ? true : undefined}
+      inert={pictureModalOpen || formulaDetails ? true : undefined}
     >
       <section className={`flex min-h-0 w-full flex-col overflow-hidden bg-[var(--app-bg)] ${pageMode ? "" : "shadow-2xl sm:rounded-xl sm:border sm:border-[var(--app-border)]"}`}>
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2">
+        {/* The totals sit in this bar on a wide screen and wrap to a row of
+            their own below it otherwise, so the grid gets the height (owner,
+            2026-10-30: "gives the Table more height and more row to be visible"). */}
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--app-accent-soft)] text-[var(--app-accent)]">
@@ -1498,6 +1521,21 @@ export default function ProposalValuationDialog({
               </div>
             </div>
           </div>
+          {sheet && totals ? (
+            <dl className="order-last grid basis-full grid-cols-2 gap-2 lg:grid-cols-4 2xl:order-none 2xl:flex 2xl:min-w-0 2xl:flex-1 2xl:basis-auto 2xl:justify-center">
+              {[
+                ["Assets", String(sheet.rows.length)],
+                ["Total asset value", formatMoney(totals.evaluatorTotal, currency)],
+                ["Estimated range", `${formatMoney(totals.lowTotal, currency)} - ${formatMoney(totals.highTotal, currency)}`],
+                ["Projected costs", formatMoney(totals.projectedCosts, currency)],
+              ].map(([label, value]) => (
+                <div key={label} className="min-w-0 rounded border border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2.5 py-1 2xl:min-w-32">
+                  <dt className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--app-text-muted)]">{label}</dt>
+                  <dd className="truncate text-sm font-bold tabular-nums text-[var(--app-text-strong)]">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
           <div className="flex shrink-0 items-center gap-1.5">
             {pageMode ? (
               <span className={`hidden items-center gap-1 text-[11px] font-semibold sm:inline-flex ${terminalMessage ? "text-[var(--app-danger)]" : liveStatus === "live" ? "text-[var(--app-success)]" : "text-[var(--app-text-muted)]"}`} aria-live="polite">
@@ -1602,28 +1640,13 @@ export default function ProposalValuationDialog({
                 </div>
               </div>
             ) : null}
-            <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2">
-              <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                {[
-                  ["Assets", String(sheet.rows.length)],
-                  ["Total asset value", formatMoney(totals.evaluatorTotal, currency)],
-                  ["Estimated range", `${formatMoney(totals.lowTotal, currency)} - ${formatMoney(totals.highTotal, currency)}`],
-                  ["Projected costs", formatMoney(totals.projectedCosts, currency)],
-                ].map(([label, value]) => (
-                  <div key={label} className="min-w-0 rounded border border-[var(--app-border)] bg-[var(--app-panel-alt)] px-2.5 py-1.5">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--app-text-muted)]">{label}</p>
-                    <p className="mt-0.5 truncate text-sm font-bold tabular-nums text-[var(--app-text-strong)] sm:text-base">{value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div className="min-h-0 flex-1 overflow-hidden">
               {tab === "lots" ? (
                 <div className="flex h-full min-h-0 flex-col p-2">
-                  <div className="mb-2 flex shrink-0 flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1.5 flex items-center gap-2 text-xs font-bold text-[var(--app-text-muted)]"><Users className="size-3.5" /> Evaluators</div>
+                  {/* Evaluators and the search on one line above the grid. */}
+                  <div className="mb-2 flex shrink-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-[var(--app-text-muted)]"><Users className="size-3.5" /> Evaluators</span>
                       <EvaluatorPicker
                         reportId={reportId}
                         evaluators={sheet.evaluator_columns}
@@ -1642,7 +1665,7 @@ export default function ProposalValuationDialog({
                         onRemove={removeLinkedEvaluator}
                       />
                     </div>
-                    <label className="relative block w-full lg:w-72">
+                    <label className="relative block w-full lg:w-72 lg:shrink-0">
                       <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--app-text-muted)]" />
                       <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search assets" className="h-8 w-full rounded border border-[var(--app-control-border)] bg-[var(--app-input)] pl-9 pr-3 text-xs text-[var(--app-text)] outline-none focus:border-[var(--app-accent)] focus:ring-2 focus:ring-[var(--app-accent-ring)]" />
                     </label>
@@ -1765,7 +1788,21 @@ export default function ProposalValuationDialog({
           onClose={() => setFormulaDetails(null)}
         />
       ) : null}
-      {pictureGallery ? (
+      {/* The pictures in a window floating over the grid, dragged anywhere
+          (owner, 2026-10-30); full screen on a phone, below. */}
+      {pictureGallery && !pictureModalOpen ? (
+        <PictureWindow
+          label={pictureGallery.label}
+          urls={pictureGallery.urls}
+          index={pictureGallery.index}
+          panelRef={galleryPanelRef}
+          blocked={Boolean(formulaDetails)}
+          onMove={movePictureGallery}
+          onSelect={selectPictureGallery}
+          onClose={closePictureGallery}
+        />
+      ) : null}
+      {pictureGallery && pictureModalOpen ? (
         <div
           className="fixed inset-0 z-[140] grid place-items-center bg-black/80 p-3 backdrop-blur-sm sm:p-6"
           role="dialog"

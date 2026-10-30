@@ -432,7 +432,59 @@ describe("ProposalValuationDialog", () => {
     ).toHaveLength(3);
   });
 
-  it("opens the user picture gallery from the shared Schedule A row", async () => {
+  it("shows a desktop row's pictures in a floating window, with Previous / Next, without blocking the page", async () => {
+    render(<ProposalValuationDialog open pageMode reportId="report-1" />);
+    const grid = await screen.findByRole("grid", { name: "Proposal valuation lots" });
+    const opener = within(grid).getByRole("button", { name: "Open 2 pictures for 13" });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const panel = screen.getByRole("complementary", { name: "Pictures for 13" });
+    // Dragged by its title bar, and remembered for the next time it opens.
+    const titleBar = within(panel).getByTitle("Drag to move");
+    const start = { left: panel.style.left, top: panel.style.top };
+    fireEvent.pointerDown(titleBar, { button: 0, pointerId: 1, clientX: 900, clientY: 300 });
+    fireEvent.pointerMove(titleBar, { pointerId: 1, clientX: 600, clientY: 200 });
+    fireEvent.pointerUp(titleBar, { pointerId: 1, clientX: 600, clientY: 200 });
+    expect({ left: panel.style.left, top: panel.style.top }).not.toEqual(start);
+    expect(JSON.parse(window.localStorage.getItem("pv-picture-window-position")!)).toEqual({
+      x: parseInt(panel.style.left, 10),
+      y: parseInt(panel.style.top, 10),
+    });
+
+    expect(screen.queryByRole("dialog", { name: "Pictures for 13" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Proposal Valuation")).not.toHaveAttribute("inert");
+    // The grid keeps focus and its keys; the arrows move the grid, not the pictures.
+    expect(opener).toHaveFocus();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(within(panel).getByRole("img", { name: "13 picture 1" })).toBeInTheDocument();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Next picture" }));
+    expect(within(panel).getByRole("img", { name: "13 picture 2" })).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Previous picture" }));
+    expect(within(panel).getByRole("img", { name: "13 picture 1" })).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Show picture 2" }));
+    expect(within(panel).getByRole("button", { name: "Show picture 2" })).toHaveAttribute("aria-current", "true");
+
+    // Inside the panel its own keys work: Left goes back, Esc closes it.
+    const close = within(panel).getByRole("button", { name: "Close picture gallery" });
+    close.focus();
+    fireEvent.keyDown(close, { key: "ArrowLeft" });
+    expect(within(panel).getByRole("img", { name: "13 picture 1" })).toBeInTheDocument();
+    fireEvent.keyDown(close, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("complementary", { name: "Pictures for 13" })).not.toBeInTheDocument();
+      expect(opener).toHaveFocus();
+    });
+  });
+
+  it("opens the user picture gallery from the shared Schedule A row on a phone", async () => {
+    // A phone has no room beside its cards, so it keeps the full-screen viewer.
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
     render(
       <ProposalValuationDialog
         open

@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, RefreshCw, Trash2, UserRound, X } from "lucide-react";
+import { Info, Plus, RefreshCw, Trash2, UserRound, X } from "lucide-react";
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ProposalValuationService } from "@/services/proposalValuation";
 import type {
@@ -51,6 +51,7 @@ export default function EvaluatorPicker({
   );
   const available = options.filter((candidate) => !selected.has(candidate.id));
   const limitReached = linked.filter((evaluator) => evaluator.user_id !== ownerUserId).length >= 4;
+  const helpText = `${ownerUserId ? "The report owner is included automatically. Add up to four additional user accounts." : "Add up to four user accounts."} Invited evaluators can edit only their own value column.`;
 
   useEffect(() => {
     if (disabled || saving) setOpen(false);
@@ -110,29 +111,27 @@ export default function EvaluatorPicker({
             <span className="text-[10px] font-medium">legacy</span>
           </span>
         ))}
+        {/* One line per evaluator, the email on hover, so the evaluators
+            take one row above the grid (owner, 2026-10-30). */}
         {linked.map((evaluator) => (
           <span
             key={evaluator.id}
-            className="inline-flex min-w-0 items-center rounded-md border border-[var(--app-control-border)] bg-[var(--app-panel)]"
+            title={evaluator.email || undefined}
+            className="inline-flex h-8 min-w-0 items-center rounded-md border border-[var(--app-control-border)] bg-[var(--app-panel)]"
           >
-            <span className="min-w-0 px-2 py-1 text-xs leading-tight">
-              <span className="block max-w-36 truncate font-bold text-[var(--app-text)]">
+            <span className="flex min-w-0 items-center gap-1.5 px-2 text-xs">
+              <span className="max-w-36 truncate font-bold text-[var(--app-text)]">
                 {evaluator.name}
               </span>
-              {evaluator.email ? (
-                <span className="block max-w-36 truncate text-[10px] text-[var(--app-text-muted)]">
-                  {evaluator.email}
-                </span>
-              ) : null}
               {evaluator.user_id === ownerUserId ? (
-                <span className="block text-[10px] font-semibold text-[var(--app-accent)]">Report owner</span>
+                <span className="shrink-0 rounded bg-[var(--app-accent-soft)] px-1 text-[10px] font-semibold text-[var(--app-accent)]">Report owner</span>
               ) : null}
             </span>
             {evaluator.user_id !== ownerUserId ? <button
               type="button"
               onClick={() => onRemove(evaluator.user_id!)}
               disabled={disabled || saving}
-              className="grid size-8 place-items-center border-l border-[var(--app-border)] text-[var(--app-danger)]"
+              className="grid h-full w-7 place-items-center border-l border-[var(--app-border)] text-[var(--app-danger)]"
               aria-label={`Remove ${evaluator.name}`}
             >
               <Trash2 className="size-3.5" />
@@ -153,6 +152,7 @@ export default function EvaluatorPicker({
           </button>
           {open ? (
             <div className="absolute left-0 top-full z-30 mt-1 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-2 shadow-[var(--app-shadow-modal)]">
+              <p className="mb-2 px-0.5 text-[11px] leading-snug text-[var(--app-text-muted)]">{helpText}</p>
               <div className="flex items-center gap-1.5">
                 <input
                   autoFocus
@@ -224,10 +224,13 @@ export default function EvaluatorPicker({
             </div>
           ) : null}
         </div>
+        {/* The rules, on hover here and at the top of the Add list, instead
+            of a line of their own under the evaluators. */}
+        <span className="grid size-6 shrink-0 place-items-center text-[var(--app-text-muted)]" title={helpText}>
+          <Info className="size-3.5" aria-hidden="true" />
+          <span className="sr-only">{helpText}</span>
+        </span>
       </div>
-      <p className="mt-1 text-[10px] text-[var(--app-text-muted)]">
-        {ownerUserId ? "The report owner is included automatically. Add up to four additional user accounts." : "Add up to four user accounts."} Invited evaluators can edit only their own value column.
-      </p>
     </div>
   );
 }
