@@ -22,7 +22,10 @@ const upstream = vi.hoisted(() => ({
   pushToAssetInsight: vi.fn(),
   completeContractTask: vi.fn(),
   closeContractPartForUser: vi.fn(),
+  uploadConditionReportPdf: vi.fn(),
 }));
+const crPdf = vi.hoisted(() => ({ buildLotConditionReportPdf: vi.fn() }));
+vi.mock("../src/service/auctioneer2ConditionReportDocument.js", () => ({ buildLotConditionReportPdf: crPdf.buildLotConditionReportPdf }));
 const photoSource = vi.hoisted(() => ({
   loadAuctioneerPhoto: vi.fn(),
   trustedPhotoSource: vi.fn(),
@@ -43,6 +46,7 @@ vi.mock("../src/service/auctioneer2Client.js", async (importOriginal) => {
     pushToAssetInsight: upstream.pushToAssetInsight,
     completeContractTask: upstream.completeContractTask,
     closeContractPartForUser: upstream.closeContractPartForUser,
+    uploadConditionReportPdf: upstream.uploadConditionReportPdf,
   };
 });
 
@@ -217,6 +221,9 @@ beforeEach(async () => {
   // Clear unused one-shot responses as well as call counts between report types.
   for (const mock of [...Object.values(upstream), ...Object.values(photoSource)]) mock.mockReset();
   photoSource.trustedPhotoSource.mockReset().mockReturnValue("r2");
+  // No lot PDF unless a test gives one; the PDF tests below do.
+  crPdf.buildLotConditionReportPdf.mockReset().mockResolvedValue(null);
+  upstream.uploadConditionReportPdf.mockResolvedValue({ success: true, crPdfUrl: "/storage/lots/x/asset-insight/condition-reports/x.pdf" });
   upstream.getLot.mockResolvedValue({
     id: "upstream-lot",
     status: "OpToDo",
@@ -1733,5 +1740,70 @@ describe("Re-inspection lots sent back from the To-Do Board", () => {
     expect(upstream.completeConditionReport).toHaveBeenCalledTimes(1);
     expect(upstream.uploadLotPhotos).toHaveBeenCalledTimes(1);
     expect((await AuctioneerWorkItem.findById(workItem._id).lean())?.delivery.status).toBe("sent");
+  });
+});
+
+/*
+   Owner 2026-10-29: "make sure that each lot PDF reach auctioneer 2.0 as a
+   pdf". The hand-off was removed on 2026-08-31; each lot now gets a PDF of
+   its own lot, stored once its condition report is complete.
+*/
+describe.sequential("Each lot's condition-report PDF reaches Auctioneer", () => {
+  const pdfFor = (lotIndex: number) => ({ bytes: Buffer.from(`%PDF-1.7 lot ${lotIndex + 1}`), filename: `lot-${lotIndex + 1}-condition-report.pdf` });
+
+  it.each(["asset", "lotListing"] as const)("stores a %s report's lots each with their own PDF, after the condition report", async (reportType) => {
+    crPdf.buildLotConditionReportPdf.mockImplementation(async ({ lotIndex }: { lotIndex: number }) => pdfFor(lotIndex));
+    const user = await createUser();
+    const lots = [
+      { lot_id: "local-1", lot_number: "1", title: "Tractor", image_indexes: [] },
+      { lot_id: "local-2", lot_number: "2", title: "Baler", image_indexes: [] },
+    ];
+    const report = reportType === "asset" ? await createReport(user._id, lots) : await createLotListingReport(user._id, lots);
+    const work = await createLinkedScheduleAWorkItem({ userId: user._id, reportId: report._id, reportType, lots, cycleKey: `cr-pdf-${reportType}`, deliveryStatus: "queued" });
+    await runAuctioneerDeliveryJob(String(work._id));
+
+    expect(upstream.uploadConditionReportPdf).toHaveBeenCalledTimes(2);
+    expect(upstream.uploadConditionReportPdf.mock.calls.map(([lotId, pdf]) => [lotId, pdf.filename])).toEqual([
+      ["upstream-1", "lot-1-condition-report.pdf"],
+      ["upstream-2", "lot-2-condition-report.pdf"],
+    ]);
+    for (const [, pdf] of upstream.uploadConditionReportPdf.mock.calls) expect(Buffer.from(pdf.bytes).subarray(0, 5).toString()).toBe("%PDF-");
+    // Each lot's PDF is stored after that lot's condition report is complete.
+    expect(upstream.completeConditionReport.mock.invocationCallOrder[0])
+      .toBeLessThan(upstream.uploadConditionReportPdf.mock.invocationCallOrder[0]);
+    expect(crPdf.buildLotConditionReportPdf.mock.calls.map(([input]) => input.lotIndex)).toEqual([0, 1]);
+    const sent = await AuctioneerWorkItem.findById(work._id).lean();
+    expect(sent?.delivery.status).toBe("sent");
+    expect(sent?.delivery.lots.every((lot) => lot.status === "sent" && lot.conditionReportPdfStoredAt instanceof Date)).toBe(true);
+  });
+
+  it("retries only the PDF when storing it failed, without redoing the condition report", async () => {
+    crPdf.buildLotConditionReportPdf.mockImplementation(async ({ lotIndex }: { lotIndex: number }) => pdfFor(lotIndex));
+    upstream.uploadConditionReportPdf.mockRejectedValueOnce(new Auctioneer2ClientError("Auctioneer is temporarily unavailable.", { statusCode: 503, code: "auctioneer2_upstream_error" }));
+    const user = await createUser();
+    const lots = [{ lot_id: "local-1", lot_number: "1", title: "Tractor", image_indexes: [] }];
+    const report = await createReport(user._id, lots);
+    const work = await createLinkedScheduleAWorkItem({ userId: user._id, reportId: report._id, reportType: "asset", lots, cycleKey: "cr-pdf-retry", deliveryStatus: "queued" });
+    await expect(runAuctioneerDeliveryJob(String(work._id))).rejects.toThrow("temporarily unavailable");
+    expect((await AuctioneerWorkItem.findById(work._id).lean())?.delivery).toMatchObject({
+      status: "failed", lots: [{ status: "failed", conditionReportCompletedAt: expect.any(Date) }] });
+    // Auctioneer now reports the lot complete; the retry stores only the PDF.
+    upstream.getLot.mockResolvedValue({ id: "upstream-1", status: "Lotting", conditionReportDone: true, photos: [] });
+    await queueAuctioneerDelivery(String(work._id), String(user._id), { destination: "LottingBoard", completeContract: false });
+    await runAuctioneerDeliveryJob(String(work._id));
+    expect(upstream.completeConditionReport).toHaveBeenCalledTimes(1);
+    expect(upstream.uploadConditionReportPdf).toHaveBeenCalledTimes(2);
+    expect((await AuctioneerWorkItem.findById(work._id).lean())?.delivery).toMatchObject({
+      status: "sent", lots: [{ status: "sent", conditionReportPdfStoredAt: expect.any(Date) }] });
+  });
+
+  it("still delivers a lot whose report has no PDF for it", async () => {
+    const user = await createUser();
+    const lots = [{ lot_id: "local-1", lot_number: "1", title: "Tractor", image_indexes: [] }];
+    const report = await createReport(user._id, lots);
+    const work = await createLinkedScheduleAWorkItem({ userId: user._id, reportId: report._id, reportType: "asset", lots, cycleKey: "cr-pdf-none", deliveryStatus: "queued" });
+    await runAuctioneerDeliveryJob(String(work._id));
+    expect(upstream.uploadConditionReportPdf).not.toHaveBeenCalled();
+    expect((await AuctioneerWorkItem.findById(work._id).lean())?.delivery).toMatchObject({ status: "sent", lots: [{ status: "sent" }] });
   });
 });

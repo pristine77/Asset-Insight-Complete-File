@@ -42,7 +42,8 @@ import {
   proposalReturnDescription,
 } from "./auctioneerProposalList.js";
 import { assertAuctioneerContractCaptureRevision, assertNoQueuedContinuationUpload, beginAuctioneerContractClose, confirmAuctioneerContractClose, withAuctioneerContractOperation } from "./auctioneerContractCloseService.js";
-import { AUCTIONEER2_INCOMING_CONTRACT_STATUS } from "./auctioneer2Client.js";
+import { AUCTIONEER2_INCOMING_CONTRACT_STATUS, uploadConditionReportPdf } from "./auctioneer2Client.js";
+import { buildLotConditionReportPdf } from "./auctioneer2ConditionReportDocument.js";
 import {
   buildAuctioneerConditionReport,
   buildAuctioneerKnownLotPatch,
@@ -576,6 +577,43 @@ async function reconcileCompletedLotNumber(
   }
 }
 
+/**
+ * Stores the lot's own condition-report PDF in Auctioneer, once its condition
+ * report is complete there (owner 2026-10-29; auctioneer2ConditionReportDocument).
+ * Checkpointed, so a retry only does what is left. A report with no lot at
+ * this position has no PDF to send, and the lot still counts as sent; any
+ * other failure fails the delivery, so it is retried rather than lost, as the
+ * PDFs were from 2026-08-31.
+ */
+async function storeLotConditionReportPdf(input: {
+  workItem: IAuctioneerWorkItem;
+  checkpoint: IAuctioneerDeliveryLotCheckpoint;
+  report: any;
+  manifest: any;
+  lotIndex: number;
+  lotId: string;
+  completedBy: string;
+}): Promise<void> {
+  const { workItem, checkpoint, report, manifest, lotIndex, lotId, completedBy } = input;
+  if (checkpoint.conditionReportPdfStoredAt) return;
+  checkpoint.status = "processing";
+  checkpoint.step = "storing_condition_report_pdf";
+  await persistDelivery(workItem);
+  const pdf = await buildLotConditionReportPdf({ report, manifest, lotIndex, contractNo: workItem.contract.contractNo });
+  if (!pdf) {
+    checkpoint.step = "condition_report_pdf_unavailable";
+    await persistDelivery(workItem);
+    return;
+  }
+  assertSuccessfulResponse(
+    await uploadConditionReportPdf(lotId, pdf, completedBy),
+    "storing the lot's condition-report PDF"
+  );
+  checkpoint.conditionReportPdfStoredAt = new Date();
+  checkpoint.step = "condition_report_pdf_stored";
+  await persistDelivery(workItem);
+}
+
 async function deliverScheduleALot(input: {
   workItem: IAuctioneerWorkItem;
   checkpoint: IAuctioneerDeliveryLotCheckpoint;
@@ -614,6 +652,7 @@ async function deliverScheduleALot(input: {
     if (isFinalRemoteState(remote, destination)) {
       await reconcileCompletedLotNumber(lotId, lot, remote);
       checkpoint.conditionReportCompletedAt = new Date();
+      await storeLotConditionReportPdf({ workItem, checkpoint, report, manifest, lotIndex, lotId, completedBy });
       checkpoint.status = "sent";
       checkpoint.step = "sent";
       checkpoint.lastError = undefined;
@@ -672,6 +711,7 @@ async function deliverScheduleALot(input: {
     );
     checkpoint.conditionReportCompletedAt = new Date();
   }
+  await storeLotConditionReportPdf({ workItem, checkpoint, report, manifest, lotIndex, lotId, completedBy });
 
   checkpoint.status = "sent";
   checkpoint.step = "sent";
@@ -880,6 +920,7 @@ async function deliverUnknownLot(input: {
     await reconcileCompletedLotNumber(lotId, lot, remote);
     checkpoint.conditionReportCompletedAt =
       checkpoint.conditionReportCompletedAt || new Date();
+    await storeLotConditionReportPdf({ workItem, checkpoint, report, manifest, lotIndex, lotId, completedBy });
     checkpoint.status = "sent";
     checkpoint.step = "sent";
     checkpoint.lastError = undefined;
@@ -976,6 +1017,7 @@ async function deliverUnknownLot(input: {
     }
     checkpoint.conditionReportCompletedAt = new Date();
   }
+  await storeLotConditionReportPdf({ workItem, checkpoint, report, manifest, lotIndex, lotId, completedBy });
 
   checkpoint.status = "sent";
   checkpoint.step = "sent";

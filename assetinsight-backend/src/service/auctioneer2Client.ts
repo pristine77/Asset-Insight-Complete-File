@@ -885,6 +885,28 @@ export function completeConditionReport(
   });
 }
 
+/**
+ * Stores one lot's condition-report PDF in Auctioneer (POST
+ * /lots/:lotId/condition-report-pdf, multipart field conditionReportPdf).
+ * Auctioneer files it on the lot and in the contract Folder, and answers a
+ * repeat for the same lot with the copy it already stored, so a retry after a
+ * lost response is harmless.
+ */
+export function uploadConditionReportPdf(
+  lotId: string,
+  pdf: { bytes: Uint8Array; filename: string },
+  completedBy?: string
+): Promise<Auctioneer2Record> {
+  const form = new FormData();
+  form.append("conditionReportPdf", new Blob([Uint8Array.from(pdf.bytes)], { type: "application/pdf" }), pdf.filename);
+  if (completedBy) form.append("completedBy", completedBy);
+  return auctioneer2Request(
+    `/lots/${encodeURIComponent(lotId)}/condition-report-pdf`,
+    { method: "POST", body: form },
+    { expectedStatuses: [200, 201] }
+  );
+}
+
 export function submitLot(body: Auctioneer2Record): Promise<Auctioneer2Record> {
   return auctioneer2Request(
     "/lots/submit",

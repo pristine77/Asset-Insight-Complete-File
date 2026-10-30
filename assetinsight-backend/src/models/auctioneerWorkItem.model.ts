@@ -115,6 +115,8 @@ export interface IAuctioneerDeliveryLotCheckpoint {
   photosUploadedAt?: Date;
   videoUploadedAt?: Date;
   conditionReportCompletedAt?: Date;
+  /** The lot's own condition-report PDF was stored in Auctioneer (2026-10-29). */
+  conditionReportPdfStoredAt?: Date;
   arrivedAt?: Date;
   pushedAt?: Date;
   lastError?: string;
@@ -352,6 +354,7 @@ const DeliveryLotCheckpointSchema = new Schema<IAuctioneerDeliveryLotCheckpoint>
     photosUploadedAt: { type: Date },
     videoUploadedAt: { type: Date },
     conditionReportCompletedAt: { type: Date },
+    conditionReportPdfStoredAt: { type: Date },
     arrivedAt: { type: Date },
     pushedAt: { type: Date },
     lastError: { type: String },

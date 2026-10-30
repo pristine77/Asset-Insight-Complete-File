@@ -14,6 +14,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 vi.mock("dotenv", () => ({ config: () => ({ parsed: {} }), default: { config: () => ({ parsed: {} }) } }));
 vi.mock("../src/utils/openaiClient.js", () => ({ default: {} }));
+// This suite's reports carry no condition-report PDF (see auctioneer2-delivery for that step).
+vi.mock("../src/service/auctioneer2ConditionReportDocument.js", () => ({ buildLotConditionReportPdf: vi.fn(async () => null) }));
 
 const upstream = vi.hoisted(() => ({
   getContractScheduleAItems: vi.fn(),
