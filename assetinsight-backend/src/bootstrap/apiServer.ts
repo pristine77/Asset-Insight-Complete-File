@@ -1,5 +1,5 @@
 import fs from "fs/promises";
-import type { Server } from "http";
+import type { IncomingMessage, Server, ServerResponse } from "http";
 import path from "path";
 import mongoose from "mongoose";
 import app from "../app.js";
@@ -76,6 +76,17 @@ export function registerGracefulShutdown(
 ): void {
   let shuttingDown = false;
 
+  // close() reaps sockets that are already idle, but an active keep-alive
+  // response can become idle afterward. Reap only finished responses while
+  // draining; other in-flight requests keep their socket and database access.
+  const observeResponseFinish = (_request: IncomingMessage, response: ServerResponse) => {
+    response.once("finish", () => {
+      if (shuttingDown) server.closeIdleConnections();
+    });
+  };
+  server.prependListener("request", observeResponseFinish);
+  server.once("close", () => server.removeListener("request", observeResponseFinish));
+
   const shutdown = (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -102,6 +113,7 @@ export function registerGracefulShutdown(
     // Stop accepting first, then end only registered SSE hints. Ordinary
     // requests retain their response and database connection until they finish.
     shutdownProposalValuationEventStreams();
+    server.closeIdleConnections();
   };
 
   runtime.once("SIGINT", () => shutdown("SIGINT"));

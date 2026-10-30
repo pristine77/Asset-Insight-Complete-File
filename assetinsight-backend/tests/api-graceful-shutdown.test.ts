@@ -34,8 +34,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("API graceful shutdown with a live Proposal Valuation stream", () => {
-  it("ends SSE, waits for an in-flight PATCH, then disconnects MongoDB and exits zero", async () => {
+describe("API graceful shutdown", () => {
+  it.each([
+    { name: "Connection: close with SSE", withStream: true, keepAlive: false },
+    { name: "keep-alive with SSE", withStream: true, keepAlive: true },
+    { name: "keep-alive without SSE", withStream: false, keepAlive: true },
+  ])("drains $name, waits for the PATCH, then disconnects MongoDB and exits zero", async ({ withStream, keepAlive }) => {
     const app = express();
     const patchEntered = deferred();
     const finishPatch = deferred();
@@ -53,6 +57,8 @@ describe("API graceful shutdown with a live Proposal Valuation stream", () => {
       res.json({ saved: true });
     });
     const server = http.createServer(app);
+    server.keepAliveTimeout = 65_000;
+    server.headersTimeout = 66_000;
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected loopback listener");
@@ -60,29 +66,32 @@ describe("API graceful shutdown with a live Proposal Valuation stream", () => {
     const runtime = new EventEmitter() as EventEmitter & { exit: (code: number) => void };
     runtime.exit = vi.fn((code: number) => { events.push(`exit-${code}`); exited.resolve(code); });
     const disconnect = vi.spyOn(mongoose, "disconnect").mockImplementation(async () => { events.push("database-disconnect"); });
+    const forceClose = vi.spyOn(server, "closeAllConnections");
     registerGracefulShutdown(server, runtime);
     const streamReady = deferred();
     const streamEnded = deferred();
     let streamResponse: http.IncomingMessage | undefined;
-    const streamRequest = http.get({ host: "127.0.0.1", port, path: "/events", agent: false }, (response) => {
+    const agent = keepAlive ? new http.Agent({ keepAlive: true, maxSockets: 2 }) : false;
+    const streamRequest = withStream ? http.get({ host: "127.0.0.1", port, path: "/events", agent }, (response) => {
       streamResponse = response;
       response.once("data", () => streamReady.resolve());
+      response.on("data", () => {});
       response.once("end", () => streamEnded.resolve());
-    });
+    }) : undefined;
     const patchResponse = deferred<{ status: number; body: string }>();
-    const patchRequest = http.request({ host: "127.0.0.1", port, path: "/value", method: "PATCH", agent: false }, (response) => {
+    const patchRequest = http.request({ host: "127.0.0.1", port, path: "/value", method: "PATCH", agent }, (response) => {
       let body = "";
       response.on("data", (chunk) => { body += chunk; });
       response.on("end", () => patchResponse.resolve({ status: response.statusCode || 0, body }));
     });
     patchRequest.end();
     try {
-      await streamReady.promise;
+      if (withStream) await streamReady.promise;
       await patchEntered.promise;
 
       runtime.emit("SIGTERM");
       runtime.emit("SIGINT");
-      await streamEnded.promise;
+      if (withStream) await streamEnded.promise;
 
       expect(server.listening).toBe(false);
       expect(committed).toBe(false);
@@ -95,12 +104,14 @@ describe("API graceful shutdown with a live Proposal Valuation stream", () => {
       expect(await exited.promise).toBe(0);
       expect(disconnect).toHaveBeenCalledTimes(1);
       expect(runtime.exit).toHaveBeenCalledTimes(1);
+      expect(forceClose).not.toHaveBeenCalled();
       expect(events).toEqual(["mutation-complete", "database-disconnect", "exit-0"]);
     } finally {
       finishPatch.resolve();
       streamResponse?.destroy();
-      streamRequest.destroy();
+      streamRequest?.destroy();
       patchRequest.destroy();
+      if (agent) agent.destroy();
       resetProposalValuationEventHubForTests();
       server.closeAllConnections();
       if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
