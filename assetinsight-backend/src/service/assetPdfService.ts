@@ -18,6 +18,7 @@ import {
   generateBarChartImage,
 } from "./marketIntelService.js";
 import { toTitleCaseWords } from "./docx/builders/utils.js";
+import { projectAssetAppraisalValues } from "./assetAppraisalValueProjectionService.js";
 
 // Helpers
 handlebars.registerHelper("formatDate", function (dateString) {
@@ -40,6 +41,7 @@ handlebars.registerHelper("titleCase", function (value: any) {
 export async function generateAssetPdfFromReport(
   reportData: any
 ): Promise<Buffer> {
+  reportData = projectAssetAppraisalValues(reportData);
   try {
     const templatePath = path.resolve(
       process.cwd(),

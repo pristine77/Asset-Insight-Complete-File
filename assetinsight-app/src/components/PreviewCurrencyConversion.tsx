@@ -5,46 +5,115 @@ import CurrencySelect from './forms/CurrencySelect';
 import { getAuthOperationEpoch } from '../services/authSessionOperation';
 
 type Quote = { fromCurrency: string; toCurrency: string; rate: number; asOf: string; sourceUrl: string; sourceTitle: string; quotedAt: string };
-export default function PreviewCurrencyConversion({ previewData, endpoint, disabled, onBusyChange, onConverted }: {
+type Operation = { generation: number; target: string; authEpoch: number; abort: AbortController };
+type AppliedConversion = { preview: Record<string, any>; endpoint: string; authEpoch: number; target: string };
+
+export default function PreviewCurrencyConversion({ previewData, endpoint, disabled, onBusyChange, onPendingChange, onConverted }: {
   previewData: Record<string, any>; endpoint: string; disabled: boolean;
-  onBusyChange: (busy: boolean) => void; onConverted: (preview: Record<string, any>) => void;
+  onBusyChange: (busy: boolean) => void;
+  onPendingChange: (target: string | null) => void;
+  onConverted: (preview: Record<string, any>) => void;
 }) {
   const source = String(previewData.currency || 'CAD').toUpperCase();
-  const [target, setTarget] = useState(source);
-  const [busy, setBusy] = useState(false);
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const current = useRef({ previewData, endpoint, source }); current.current = { previewData, endpoint, source };
-  const alive = useRef(true), inFlight = useRef(false), controller = useRef<AbortController | null>(null);
-  const busyCallback = useRef(onBusyChange); busyCallback.current = onBusyChange;
-  useEffect(() => { alive.current = true; return () => { alive.current = false; controller.current?.abort(); busyCallback.current(false); }; }, []);
-  useEffect(() => { setTarget(source); }, [source]);
-  const convert = async () => {
-    if (disabled || inFlight.current || source === target) return;
-    const snapshot = previewData, context = endpoint, from = source, authEpoch = getAuthOperationEpoch();
-    inFlight.current = true; setBusy(true); onBusyChange(true);
-    const abort = new AbortController(); controller.current = abort;
+  const authEpoch = getAuthOperationEpoch();
+  const context = useRef({ endpoint, source, authEpoch, generation: 0, scope: 0 });
+  if (context.current.endpoint !== endpoint || context.current.source !== source || context.current.authEpoch !== authEpoch) {
+    const previous = context.current;
+    context.current = {
+      endpoint, source, authEpoch, generation: previous.generation + 1,
+      scope: previous.scope + (previous.endpoint !== endpoint || previous.authEpoch !== authEpoch ? 1 : 0),
+    };
+  }
+  const generation = context.current.generation;
+  const [selection, setSelection] = useState({ generation, target: source });
+  const target = selection.generation === generation ? selection.target : source;
+  const pending = target !== source;
+  const [busyGeneration, setBusyGeneration] = useState<number | null>(null);
+  const busy = busyGeneration === generation;
+  const [completed, setCompleted] = useState<{ scope: number; quote: Quote } | null>(null);
+  const quote = completed?.scope === context.current.scope && completed.quote.toCurrency === source ? completed.quote : null;
+  const current = useRef({ previewData, endpoint, source, disabled });
+  current.current = { previewData, endpoint, source, disabled };
+  const alive = useRef(true), operation = useRef<Operation | null>(null), applied = useRef<AppliedConversion | null>(null);
+  const callbacks = useRef({ onBusyChange, onPendingChange, onConverted });
+  callbacks.current = { onBusyChange, onPendingChange, onConverted };
+  const observedGeneration = useRef(generation);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      operation.current?.abort.abort();
+      operation.current = null;
+      callbacks.current.onBusyChange(false);
+      callbacks.current.onPendingChange(null);
+    };
+  }, []);
+  useEffect(() => {
+    const acknowledged = applied.current && applied.current.preview === previewData &&
+      applied.current.endpoint === endpoint && applied.current.authEpoch === authEpoch && applied.current.target === source;
+    if (acknowledged || observedGeneration.current !== generation) {
+      operation.current?.abort.abort();
+      operation.current = null;
+      applied.current = null;
+      observedGeneration.current = generation;
+      setBusyGeneration(null);
+      setSelection({ generation, target: source });
+      callbacks.current.onBusyChange(false);
+      callbacks.current.onPendingChange(null);
+    }
+  }, [generation, previewData, endpoint, authEpoch, source]);
+
+  const convert = async (requestedTarget: string) => {
+    const latest = current.current;
+    if (latest.disabled || operation.current || latest.source === requestedTarget) return;
+    const snapshot = latest.previewData, from = latest.source, contextEndpoint = latest.endpoint;
+    const request: Operation = { generation: context.current.generation, target: requestedTarget, authEpoch: getAuthOperationEpoch(), abort: new AbortController() };
+    operation.current = request;
+    setBusyGeneration(request.generation);
+    callbacks.current.onBusyChange(true);
+    const isCurrent = () => alive.current && operation.current === request && !request.abort.signal.aborted &&
+      context.current.generation === request.generation && getAuthOperationEpoch() === request.authEpoch;
     try {
-      const response = await api.post(endpoint, { targetCurrency: target, preview_data: snapshot }, { timeout: 60_000, signal: abort.signal, skipAuthRefreshReplay: true });
-      if (!alive.current || abort.signal.aborted || current.current.endpoint !== context || getAuthOperationEpoch() !== authEpoch) return;
+      const response = await api.post(contextEndpoint, { targetCurrency: requestedTarget, preview_data: snapshot }, { timeout: 60_000, signal: request.abort.signal, skipAuthRefreshReplay: true });
+      if (!isCurrent()) return;
       if (current.current.previewData !== snapshot || current.current.source !== from) {
         Alert.alert('Preview changed', 'Your newer edits were kept. Convert again when you are ready.');
         return;
       }
       const result = response.data?.data;
-      if (!result?.preview_data || result.preview_data.currency !== target || !result.preview_data.currency_conversion || typeof result.preview_data.currency_conversion !== 'object' || !result?.quote || result.quote.fromCurrency !== from || result.quote.toCurrency !== target || !Number.isFinite(result.quote.rate) || result.quote.rate <= 0) throw new Error('A confirmed conversion was not returned. Your report was not changed.');
-      onConverted(result.preview_data);
-      setQuote(result.quote);
+      if (!result?.preview_data || result.preview_data.currency !== requestedTarget || !result.preview_data.currency_conversion || typeof result.preview_data.currency_conversion !== 'object' || !result?.quote || result.quote.fromCurrency !== from || result.quote.toCurrency !== requestedTarget || !Number.isFinite(result.quote.rate) || result.quote.rate <= 0) throw new Error('A confirmed conversion was not returned. Your report was not changed.');
+      applied.current = { preview: result.preview_data, endpoint: contextEndpoint, authEpoch: request.authEpoch, target: requestedTarget };
+      setCompleted({ scope: context.current.scope, quote: result.quote });
+      callbacks.current.onConverted(result.preview_data);
+      // Save stays blocked until the parent renders this exact returned snapshot.
     } catch (error: any) {
-      if (alive.current && !abort.signal.aborted && getAuthOperationEpoch() === authEpoch) Alert.alert('Currency conversion unavailable', error?.response?.status === 409 ? 'The saved report changed. Reload the preview, review your edits, then try again.' : error?.response?.data?.message || error?.message || 'Your values are unchanged. Please try again.');
+      if (isCurrent()) Alert.alert('Currency conversion unavailable', error?.response?.status === 409 ? 'The saved report changed. Reload the preview, review your edits, then try again.' : error?.response?.data?.message || error?.message || 'Your values are unchanged. Please try again.');
     } finally {
-      if (alive.current && controller.current === abort) { inFlight.current = false; controller.current = null; setBusy(false); onBusyChange(false); }
+      if (alive.current && operation.current === request) {
+        operation.current = null;
+        setBusyGeneration(null);
+        callbacks.current.onBusyChange(false);
+      }
     }
+  };
+
+  const selectTarget = (next: string) => {
+    if (current.current.disabled && !operation.current) return;
+    operation.current?.abort.abort();
+    operation.current = null;
+    applied.current = null;
+    setBusyGeneration(null);
+    callbacks.current.onBusyChange(false);
+    setSelection({ generation: context.current.generation, target: next });
+    callbacks.current.onPendingChange(next === current.current.source ? null : next);
+    if (next !== current.current.source) void convert(next);
   };
   return <View style={styles.panel}>
     <Text style={styles.heading}>Report currency · {source}</Text>
-    <Text style={styles.help}>Convert amounts using a current sourced exchange rate. Photos are not re-analyzed. Existing valuation percentages and fee rules still apply. Save afterward to update the report files.</Text>
-    <CurrencySelect value={target} onChange={setTarget} disabled={disabled || busy} label="Preview target currency" />
-    <TouchableOpacity accessibilityRole="button" accessibilityLabel="Convert report currency" disabled={disabled || busy || source === target} onPress={() => void convert()} style={[styles.button, (disabled || busy || source === target) && styles.disabled]}><Text style={styles.buttonText}>{busy ? 'Converting amounts…' : 'Convert amounts'}</Text></TouchableOpacity>
+    <Text style={styles.help}>Choosing a currency converts amounts using a current sourced exchange rate. Photos are not re-analyzed. Existing valuation percentages and fee rules still apply. Save afterward to update the report files.</Text>
+    <CurrencySelect value={target} onChange={selectTarget} disabled={disabled || busy} label="Preview target currency" />
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel="Convert report currency" disabled={disabled || busy || !pending} onPress={() => void convert(target)} style={[styles.button, (disabled || busy || !pending) && styles.disabled]}><Text style={styles.buttonText}>{busy ? 'Converting amounts…' : 'Retry conversion'}</Text></TouchableOpacity>
+    {pending ? <Text accessibilityRole="alert" style={styles.help}>{busy ? `Converting ${source} amounts to ${target}. Save is unavailable until conversion is applied.` : `${target} is selected, but the report is still ${source}. Retry conversion before saving, or select ${source} to keep the current amounts.`}</Text> : null}
     {quote ? <View><Text style={styles.help}>1 {quote.fromCurrency} = {quote.rate} {quote.toCurrency} · {quote.asOf}</Text><TouchableOpacity accessibilityRole="link" onPress={() => { if (/^https:\/\//i.test(quote.sourceUrl)) void Linking.openURL(quote.sourceUrl); }}><Text style={styles.link}>{quote.sourceTitle}</Text></TouchableOpacity></View> : null}
   </View>;
 }

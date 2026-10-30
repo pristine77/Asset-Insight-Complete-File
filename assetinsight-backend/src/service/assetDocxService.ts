@@ -5,6 +5,7 @@
  * boundary so report workflows do not depend on GroupDocs mechanics.
  */
 import { generateMixedDocx } from "./docx/mixedDocxBuilder.js";
+import { projectAssetAppraisalValues } from "./assetAppraisalValueProjectionService.js";
 import { createSimpleHeadingDocx, prefetchImages, clearImageCache } from "./docx/builders/utils.js";
 import {
   buildNeutralCoverPhoto,
@@ -104,6 +105,7 @@ function collectAllImageUrls(reportData: any): string[] {
 export async function generateAssetDocxFromReport(
   reportData: any
 ): Promise<Buffer> {
+  reportData = projectAssetAppraisalValues(reportData);
   try {
     console.log("[AssetDOCX] Starting report generation");
 

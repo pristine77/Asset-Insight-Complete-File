@@ -602,6 +602,7 @@ describe("ProposalValuationDialog", () => {
     expect(rileyFields.every((field) => field.hasAttribute("disabled"))).toBe(true);
     expect(femiFields.every((field) => !field.hasAttribute("disabled"))).toBe(true);
     expect(screen.queryByRole("button", { name: "Update report files" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Report files use the average/)).not.toBeInTheDocument();
   });
 
   it("assigns evaluator accounts from the searchable dropdown", async () => {
@@ -1166,7 +1167,9 @@ describe("ProposalValuationDialog", () => {
     render(<ProposalValuationDialog open pageMode reportId="report-1" />);
     await waitFor(() => expect(emit).toBeTypeOf("function"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Update report files" }));
+    const updateFiles = screen.getByRole("button", { name: "Update report files" });
+    expect(updateFiles).toHaveAccessibleDescription("Report files use the average of nonblank evaluator values. Lots with no evaluator values keep the existing estimate.");
+    fireEvent.click(updateFiles);
     await waitFor(() => expect(mocks.regenerate).toHaveBeenCalledTimes(1));
     act(() => {
       emit?.({ type: "pv-revision", reportId: "report-1", revision: 9 });

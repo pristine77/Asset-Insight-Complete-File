@@ -1564,6 +1564,7 @@ export default function ProposalValuationDialog({
                 onClick={() => void regenerateFiles()}
                 disabled={!sheet || saving || syncing || dirty || Boolean(terminalMessage)}
                 aria-label="Update report files"
+                aria-describedby={sheet ? "proposal-report-values" : undefined}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[var(--app-accent)] px-2.5 text-xs font-bold text-[var(--app-on-accent)] transition-colors hover:bg-[var(--app-accent-hover)] disabled:opacity-45"
               >
                 {saving ? <RefreshCw className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
@@ -1578,6 +1579,12 @@ export default function ProposalValuationDialog({
             ) : null}
           </div>
         </header>
+
+        {sheet && permissions.canRegenerateFiles ? (
+          <p id="proposal-report-values" className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-1.5 text-xs text-[var(--app-text-muted)]">
+            Report files use the average of nonblank evaluator values. Lots with no evaluator values keep the existing estimate.
+          </p>
+        ) : null}
 
         {loading ? (
           <div className="grid min-h-0 flex-1 place-items-center">

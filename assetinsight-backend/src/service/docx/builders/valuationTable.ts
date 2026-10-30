@@ -13,6 +13,7 @@ import {
 import { goldDivider } from "./utils.js";
 import openai from "../../../utils/openaiClient.js";
 import { resolveAssetValuationCodes, valuationRecordCode } from "../../../utils/assetValuationSelection.js";
+import { projectAssetAppraisalValues } from "../../assetAppraisalValueProjectionService.js";
 
 interface ValuationMethod {
   method: string;
@@ -87,6 +88,7 @@ export async function buildValuationTable(
     compact?: boolean;
   } = {}
 ): Promise<any[]> {
+  reportData = projectAssetAppraisalValues(reportData);
   const savedData = reportData?.valuation_data as ValuationData | undefined;
   const selectedCodes = resolveAssetValuationCodes(reportData);
   const valuationData = savedData ? {

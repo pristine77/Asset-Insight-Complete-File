@@ -1,4 +1,5 @@
 import { extractVinFromText } from "../vehicleApiService.js";
+import { projectAssetAppraisalValues } from "../assetAppraisalValueProjectionService.js";
 import { toTitleCaseWords } from "../docx/builders/utils.js";
 import {
   addWorksheetFromRows,
@@ -909,6 +910,7 @@ export async function generateAssetXlsxFromReport(
   reportData: any,
   options: AssetXlsxGenerationOptions = {}
 ): Promise<Buffer> {
+  reportData = projectAssetAppraisalValues(reportData);
   const grouping: string = String(reportData?.grouping_mode || "single_lot");
   const lots: any[] = normalizeLotsForBusinessRules(
     Array.isArray(reportData?.lots) ? reportData.lots : [],

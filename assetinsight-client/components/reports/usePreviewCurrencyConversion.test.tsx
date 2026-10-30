@@ -15,18 +15,20 @@ const result = { preview_data: { ...initial, currency: "USD", lots: [{ ...initia
 function Harness({ reportId = "report-A", open = true, assignedApproval = false }) {
   const [previewData, setPreviewData] = useState<any>(initial);
   const mutations = useExclusivePreviewMutation();
-  const { convertCurrency, currencyQuote } = usePreviewCurrencyConversion({
+  const { convertCurrency, currencyQuote, selectCurrency, currencyTarget, currencyPending, isCurrencyPending } = usePreviewCurrencyConversion({
     kind: "asset", reportId, contextKey: reportId, isOpen: open, assignedApproval, disabled: false,
     previewData, setPreviewData, ...mutations,
   });
   return <>
     <PreviewCurrencyControl key={`${reportId}:${previewData.currency}`} currency={previewData.currency}
+      targetCurrency={currencyTarget} pending={currencyPending} onTargetChange={selectCurrency}
       busy={mutations.activeMutation === "currency"} disabled={mutations.activeMutation !== null}
       onConvert={convertCurrency} quote={currencyQuote} />
     <output data-testid="data">{JSON.stringify(previewData)}</output>
     <output>{mutations.hasChanges ? "Changed" : "Unchanged"}</output>
     <button onClick={() => void convertCurrency("USD")}>Direct convert</button>
-    <button onClick={() => { const lease = mutations.beginMutation("submit"); if (lease) { mocks.save(previewData); mutations.finishMutation(lease); } }}>Save</button>
+    <button disabled={currencyPending || mutations.activeMutation !== null} onClick={() => { if (isCurrencyPending()) return; const lease = mutations.beginMutation("submit"); if (lease) { mocks.save(previewData); mutations.finishMutation(lease); } }}>Save</button>
+    <button onClick={() => selectCurrency(previewData.currency)}>Keep current currency</button>
     <button onClick={() => { setPreviewData({ ...previewData, note: "new local edit" }); mutations.setHasChanges(true); }}>Concurrent edit</button>
   </>;
 }
@@ -34,12 +36,14 @@ function defer() { let resolve!: (value: typeof result) => void; let reject!: (e
   const promise = new Promise<typeof result>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 beforeEach(() => { for (const fn of Object.values(mocks)) fn.mockReset(); mocks.convert.mockResolvedValue(result); });
 
-it("selecting currency does not relabel amounts, and Save carries the signed conversion", async () => {
+it("selecting currency starts conversion and blocks Save until its signed snapshot is applied", async () => {
   render(<Harness assignedApproval />);
   fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
-  expect(mocks.convert).not.toHaveBeenCalled();
+  expect(mocks.convert).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId("data")).toHaveTextContent('"currency":"CAD"');
-  fireEvent.click(screen.getByRole("button", { name: "Convert amounts" }));
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(mocks.save).not.toHaveBeenCalled();
   await screen.findByText("Changed");
   expect(screen.getByTestId("data")).toHaveTextContent("USD 7500");
   expect(screen.getByRole("link", { name: "Bank of Canada" })).toHaveAttribute("href", result.quote.sourceUrl);
@@ -66,6 +70,8 @@ it("keeps original currency, values and unsaved edits on a rate lookup failure",
   await waitFor(() => expect(mocks.error).toHaveBeenCalledWith("No current exchange rate is available"));
   expect(screen.getByTestId("data")).toHaveTextContent(JSON.stringify(initial));
   expect(screen.getByText("Unchanged")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(screen.getByText(/USD is selected, but the report is still CAD/)).toBeInTheDocument();
 });
 
 it("rejects stale results after report A-B-A navigation or closing", async () => {
@@ -93,4 +99,47 @@ it("drops a late conversion after the account session changes", async () => {
   await act(async () => pending.resolve(result));
   expect(screen.getByTestId("data")).toHaveTextContent(JSON.stringify(initial));
   expect(mocks.success).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+});
+
+it("cancels a pending currency intent when the original currency is chosen and ignores its late result", async () => {
+  const pending = defer(); mocks.convert.mockReturnValue(pending.promise);
+  render(<Harness />);
+  fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
+  fireEvent.click(screen.getByText("Keep current currency"));
+  await act(async () => pending.resolve(result));
+  expect(screen.getByLabelText("Currency")).toHaveValue("CAD");
+  expect(screen.getByTestId("data")).toHaveTextContent(JSON.stringify(initial));
+  expect(screen.queryByRole("link", { name: "Bank of Canada" })).not.toBeInTheDocument();
+  expect(mocks.success).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(mocks.save).toHaveBeenCalledWith(initial);
+});
+
+it("does not reuse a completed quote from an earlier opening", async () => {
+  const view = render(<Harness />);
+  fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
+  await screen.findByText("Changed");
+  expect(screen.getByRole("link", { name: "Bank of Canada" })).toBeInTheDocument();
+  view.rerender(<Harness open={false} />);
+  view.rerender(<Harness />);
+  expect(screen.getByLabelText("Currency")).toHaveValue("USD");
+  expect(screen.queryByRole("link", { name: "Bank of Canada" })).not.toBeInTheDocument();
+});
+
+it("keeps Save blocked after an account A-B-A change until the report is reopened", async () => {
+  const pending = defer(); mocks.convert.mockReturnValue(pending.promise);
+  const view = render(<Harness />);
+  fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
+  advanceAuthSession(); advanceAuthSession();
+  await act(async () => pending.resolve(result));
+  expect(screen.getByTestId("data")).toHaveTextContent(JSON.stringify(initial));
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Convert amounts" }));
+  expect(mocks.convert).toHaveBeenCalledTimes(1);
+  expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining("Reopen this report"));
+  view.rerender(<Harness open={false} />); view.rerender(<Harness />);
+  expect(screen.getByLabelText("Currency")).toHaveValue("CAD");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });

@@ -21,6 +21,7 @@ import {
 import { calculateAssetLotsTotalValue } from "../../../utils/assetTotalValue.js";
 import { buildSignatureImageParagraph } from "./signature.js";
 import { resolveAssetValuationCodes, resolveAssetValuationCode as resolveValuationCode, type AssetValuationCode } from "../../../utils/assetValuationSelection.js";
+import { projectAssetAppraisalValues } from "../../assetAppraisalValueProjectionService.js";
 
 /**
  * Resolves certificate data from current and legacy report shapes, then overlays
@@ -302,6 +303,7 @@ function methodDefinition(code: AssetValuationCode, currencyCode: string): strin
 export function resolveSelectedAssetValuationMethods(
   reportData: any
 ): ResolvedAssetValuationMethod[] {
+  reportData = projectAssetAppraisalValues(reportData);
   const selectedCodes = resolveAssetValuationCodes(reportData, ["FLV", "OLV"]);
 
   const currencyCode = String(reportData?.currency || "CAD").toUpperCase();

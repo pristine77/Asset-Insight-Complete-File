@@ -159,7 +159,7 @@ export default function LotListingPreviewModal({
     setPreviewData,
     setHasChanges,
   });
-  const { convertCurrency, currencyQuote } = usePreviewCurrencyConversion({
+  const { convertCurrency, currencyQuote, selectCurrency, currencyTarget, currencyPending, isCurrencyPending } = usePreviewCurrencyConversion({
     kind: "lot-listing", reportId, isOpen, contextKey: previewContextRef.current,
     assignedApproval: isAssignedApprovalMode,
     disabled: locationBusy || filesGenerating || filesRegenerating || loading,
@@ -243,6 +243,10 @@ export default function LotListingPreviewModal({
   };
 
   const handleSubmitForApproval = async () => {
+    if (isCurrencyPending()) {
+      toast.info("Finish the selected currency conversion before saving, or choose the current report currency.");
+      return;
+    }
     if (isMutationLocked()) return;
     if (!previewData) {
       toast.error("No preview data available");
@@ -770,9 +774,12 @@ export default function LotListingPreviewModal({
                   <PreviewCurrencyControl
                     key={`${reportId}:${previewData?.currency || "CAD"}`}
                     currency={previewData?.currency || "CAD"}
+                    targetCurrency={currencyTarget}
+                    pending={currencyPending}
                     disabled={editorLocked || locationBusy || filesGenerating || filesRegenerating}
                     busy={activeMutation === "currency"}
                     quote={currencyQuote}
+                    onTargetChange={selectCurrency}
                     onConvert={convertCurrency}
                   />
                 </div>
@@ -1076,6 +1083,7 @@ export default function LotListingPreviewModal({
                 type="button"
                 onClick={handleSubmitForApproval}
                 disabled={
+                  currencyPending ||
                   editorLocked ||
                   loading ||
                   locationBusy ||
@@ -1084,6 +1092,7 @@ export default function LotListingPreviewModal({
                 }
                 className="app-button app-button--primary"
                 aria-label="Save preview"
+                aria-describedby={currencyPending ? "preview-currency-status" : undefined}
                 title={SAVE_PREVIEW_TITLE}
               >
                 {submitting ? (

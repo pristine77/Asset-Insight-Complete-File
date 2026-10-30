@@ -121,12 +121,77 @@ it.each(['Asset', 'LotListing'] as const)('preserves the converted %s snapshot a
   await screen.findByLabelText('Lot 1 title');
   await fireEvent.press(screen.getByRole('button', { name: 'Preview target currency' }));
   await fireEvent.press(screen.getByRole('radio', { name: 'USD' }));
-  expect(api.post).not.toHaveBeenCalled();
-  await fireEvent.press(screen.getByRole('button', { name: 'Convert report currency' }));
   await screen.findByText('1 CAD = 0.7 USD · 2026-10-30');
   await save();
   expect(saved).toEqual(expect.objectContaining({ currency: 'USD', currency_conversion: converted.currency_conversion, lots: converted.lots }));
   expect(api.post).toHaveBeenCalledWith(`/${reportType === 'Asset' ? 'asset' : 'lot-listing'}/currency-report/preview/currency-conversion`, expect.objectContaining({ targetCurrency: 'USD', preview_data: expect.objectContaining({ currency: 'CAD' }) }), expect.objectContaining({ skipAuthRefreshReplay: true }));
+});
+
+it.each(['Asset', 'LotListing'] as const)('blocks %s Save after selecting CAD until its conversion succeeds', async reportType => {
+  saved = { ...fixture(2), currency: 'USD' };
+  const original = structuredClone(saved);
+  const cad = { ...structuredClone(saved), currency: 'CAD', currency_conversion: { signature: 'cad-proof' } };
+  cad.lots.forEach(lot => { lot.estimated_value = '25000'; });
+  let finish!: (value: unknown) => void;
+  jest.mocked(api.post).mockImplementation((url, body) => {
+    if (String(url).endsWith('/preview/currency-conversion')) return new Promise(resolve => { finish = resolve; });
+    saved = structuredClone((body as { preview_data: ReturnType<typeof fixture> }).preview_data);
+    return Promise.resolve({ data: { data: {} } });
+  });
+  await render(<PreviewScreen reportId="cad-direct-save" reportType={reportType} mode="pending" onBack={onBack} />);
+  await screen.findByLabelText('Lot 1 title');
+  await fireEvent.press(screen.getByRole('button', { name: 'Preview target currency' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'CAD' }));
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  await fireEvent.press(screen.getByRole('button', { name: 'Save' }));
+  expect(Alert.alert).not.toHaveBeenCalled();
+  expect(saved).toEqual(original);
+  expect(api.post).toHaveBeenCalledTimes(1);
+  await act(() => finish({ data: { data: { preview_data: cad, quote: { fromCurrency: 'USD', toCurrency: 'CAD', rate: 1.35, asOf: '2026-10-30', sourceUrl: 'https://example.test/rate', sourceTitle: 'Published rate', quotedAt: '2026-10-30T10:00:00Z' } } } }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+  await save();
+  expect(saved).toEqual(expect.objectContaining({ currency: 'CAD', currency_conversion: cad.currency_conversion, lots: cad.lots }));
+});
+
+it.each(['Asset', 'LotListing'] as const)('keeps %s Save blocked after a failed currency lookup and lets the user cancel the change', async reportType => {
+  saved = { ...fixture(2), currency: 'USD' };
+  const original = structuredClone(saved);
+  jest.mocked(api.post).mockImplementation(async (url, body) => {
+    if (String(url).endsWith('/preview/currency-conversion')) throw new Error('Rate unavailable');
+    saved = structuredClone((body as { preview_data: ReturnType<typeof fixture> }).preview_data);
+    return { data: { data: {} } };
+  });
+  await render(<PreviewScreen reportId="cad-failed-save" reportType={reportType} mode="pending" onBack={onBack} />);
+  await screen.findByLabelText('Lot 1 title');
+  await fireEvent.press(screen.getByRole('button', { name: 'Preview target currency' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'CAD' }));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Currency conversion unavailable', 'Rate unavailable'));
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  await fireEvent.press(screen.getByRole('button', { name: 'Save' }));
+  expect(api.post).toHaveBeenCalledTimes(1);
+  expect(saved).toEqual(original);
+  await fireEvent.press(screen.getByRole('button', { name: 'Preview target currency' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'USD' }));
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  expect(api.post).toHaveBeenCalledTimes(1);
+});
+
+it.each(['Asset', 'LotListing'] as const)('invalidates an old %s Save confirmation after a currency selection is cancelled', async reportType => {
+  saved = { ...fixture(2), currency: 'USD' };
+  jest.mocked(api.post).mockRejectedValue(new Error('Rate unavailable'));
+  await render(<PreviewScreen reportId="cad-old-confirmation" reportType={reportType} mode="pending" onBack={onBack} />);
+  await screen.findByLabelText('Lot 1 title');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save' }));
+  const oldConfirmation = confirmGeneration();
+  await fireEvent.press(screen.getByRole('button', { name: 'Preview target currency' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'CAD' }));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Currency conversion unavailable', 'Rate unavailable'));
+  await fireEvent.press(screen.getByRole('button', { name: 'Preview target currency' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'USD' }));
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  await act(async () => { await oldConfirmation.onPress?.(); });
+  expect(api.post).toHaveBeenCalledTimes(1);
+  expect(saved.currency).toBe('USD');
 });
 
 it.each(['Asset', 'LotListing'] as const)('hides narrative inputs but preserves their saved data when editing the %s Title', async reportType => {

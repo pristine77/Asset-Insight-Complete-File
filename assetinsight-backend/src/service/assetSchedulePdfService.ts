@@ -17,6 +17,7 @@ import { extractHourMeterReading } from "../utils/hourMeterReading.js";
 import { resolveCrLotDescription } from "../utils/crLotDescription.js";
 import { resolveAssetValuationCodes, valuationRecordCode, type AssetValuationCode } from "../utils/assetValuationSelection.js";
 import { assetScheduleAmountWidth } from "../utils/assetScheduleAmountWidth.js";
+import { projectAssetAppraisalValues } from "./assetAppraisalValueProjectionService.js";
 import {
   collectEffectiveAuctioneerManualSpecOverrides,
   collectAuctioneerSpecRecord,
@@ -299,6 +300,7 @@ function deriveScheduleValues(report: any, sourceValue: any, currencyCode: strin
 }
 
 export function buildScheduleRows(reportData: any): AssetScheduleRow[] {
+  reportData = projectAssetAppraisalValues(reportData);
   const lots: any[] = Array.isArray(reportData?.lots) ? reportData.lots : [];
   const currencyCode = String(reportData?.currency || "CAD").toUpperCase();
   const rows: AssetScheduleRow[] = [];
