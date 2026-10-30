@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import TextInput from './ListingTextInput';
+import CurrencySelect from './CurrencySelect';
+import useReportCurrency from './useReportCurrency';
 import { Feather } from '@expo/vector-icons';
 import { randomUUID } from 'expo-crypto';
 import OfflineCapturePanel from './OfflineCapturePanel';
@@ -117,6 +119,7 @@ const LotListingFormSheet = ({
   const [location, setLocation] = useState(() => normalizeHiddenLocation(continuation?.location ?? auctioneer?.contract.location).location);
   const [latitude, setLatitude] = useState<number | undefined>(continuation?.latitude);
   const [longitude, setLongitude] = useState<number | undefined>(continuation?.longitude);
+  const { currency, setCurrency, resetCurrency } = useReportCurrency({ initialCurrency: continuation?.currency, location, latitude, longitude, visible, paused: Boolean(draftIdToLoad) });
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuation?.bankPhotosEnabled ?? false);
   const [watermarkImages, setWatermarkImages] = useState(continuation?.watermarkImages ?? DEFAULT_IMAGE_WATERMARK);
   const [auctionCloseContract, setAuctionCloseContract] = useState(false);
@@ -132,7 +135,7 @@ const LotListingFormSheet = ({
   }, [auctioneer]);
   const [activeLotIdx, setActiveLotIdx] = useState(0);
   // owner 2026-10-28: a Proposal worked from its list; inert for every other setup.
-  const proposalList = useProposalList({ setup: auctioneer, lots, setLots, setActiveLotIdx });
+  const proposalList = useProposalList({ setup: auctioneer, lots, setLots, setActiveLotIdx, active: visible });
   const proposalLots = useMemo(
     () => proposalLotPresentation(auctioneer, lots, proposalList.items),
     [auctioneer, lots, proposalList.items]
@@ -317,6 +320,7 @@ const LotListingFormSheet = ({
         // Restore form data
         if (data.formData.contractNo) setContractNo(data.formData.contractNo);
         if (data.formData.effectiveDate) setSalesDate(data.formData.effectiveDate);
+        if (data.formData.currency) setCurrency(data.formData.currency);
         if (typeof data.formData.bankPhotosEnabled === 'boolean') {
           setBankPhotosEnabled(data.formData.bankPhotosEnabled);
         }
@@ -433,6 +437,7 @@ const LotListingFormSheet = ({
       // Kept only if the current (online: just refreshed) setup still offers it.
       restoreScheduleAItem(data.formData.scheduleAParentLotId);
       if (data.formData.effectiveDate) setSalesDate(data.formData.effectiveDate);
+        if (data.formData.currency) setCurrency(data.formData.currency);
       if (data.formData.salesDate) setSalesDate(data.formData.salesDate);
       if (typeof data.formData.bankPhotosEnabled === 'boolean') {
         setBankPhotosEnabled(data.formData.bankPhotosEnabled);
@@ -510,7 +515,7 @@ const LotListingFormSheet = ({
       setLots(restoredLots);
       setActiveLotIdx(Math.max(0, Math.min(data.activeLotIdx || 0, restoredLots.length - 1)));
     },
-    [setLots, restoreScheduleAItem]
+    [setLots, setCurrency, restoreScheduleAItem]
   );
 
   useEffect(() => {
@@ -580,6 +585,7 @@ const LotListingFormSheet = ({
       contractNo,
       effectiveDate: salesDate,
       salesDate,
+      currency,
       location,
       latitude,
       longitude,
@@ -587,7 +593,7 @@ const LotListingFormSheet = ({
       watermarkImages,
       selectedValuationMethods: LOT_LISTING_VALUATION_METHODS,
     }),
-    [auctioneer, scheduleAItem.required, scheduleAItem.choices, scheduleAItem.parentLotId, proposalList.listed, proposalList.items, auctionManagementTask, auctionServiceSelections, auctionCloseContract, captureMode, manualSubmissionRequired, bankPhotosEnabled, contractNo, latitude, location, longitude, salesDate, watermarkImages]
+    [auctioneer, scheduleAItem.required, scheduleAItem.choices, scheduleAItem.parentLotId, proposalList.listed, proposalList.items, auctionManagementTask, auctionServiceSelections, auctionCloseContract, captureMode, manualSubmissionRequired, bankPhotosEnabled, contractNo, latitude, location, longitude, salesDate, currency, watermarkImages]
   );
 
   const hasDraftableWork = useCallback((candidateLots: MixedLot[] = lots) => {
@@ -1084,6 +1090,7 @@ const LotListingFormSheet = ({
         contract_no: contractNo.trim(),
         sales_date: salesDate,
         location: location.trim(),
+        currency,
         latitude,
         longitude,
         include_damage_analysis: true,
@@ -1320,6 +1327,7 @@ const LotListingFormSheet = ({
     setCaptureMode('online'); setManualSubmissionRequired(false); setLocalSavedAt(undefined); setLocalSaveError(undefined); setUploadPaused(false);
     setContractNo('');
     setSalesDate(isoDate(new Date()));
+    resetCurrency();
     setLocation(normalizeHiddenLocation().location);
     setLatitude(undefined);
     setLongitude(undefined);
@@ -1632,6 +1640,11 @@ const LotListingFormSheet = ({
             
             {detailsExpanded && (
               <View style={styles.detailsContent}>
+                <View style={styles.fieldContainerSmall}>
+                  <Text style={styles.fieldLabelSmall}>Currency</Text>
+                  <CurrencySelect value={currency} onChange={setCurrency} disabled={submitting || savingDraftPreview} />
+                  <Text style={styles.fieldLabelSmall}>Detected from inspection location; change it if needed.</Text>
+                </View>
                 <View style={styles.fieldContainerSmall}>
                   <Text style={styles.fieldLabelSmall}>Contract # *</Text>
                   <TextInput

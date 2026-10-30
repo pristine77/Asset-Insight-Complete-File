@@ -1620,6 +1620,17 @@ describe.each(['asset', 'lotListing'] as const)('%s Schedule A item choice', typ
     expect(sent().mixed_lots?.map(lot => lot.schedule_a_parent_lot_id)).toEqual(['parent-lot-1', 'parent-lot-1']);
   });
 
+  it('keeps a restored currency with the selected Schedule A item in upload and autosave', async () => {
+    await mount(unknownSetup(), { currency: 'USD', scheduleAParentLotId: 'parent-lot-1' });
+    await waitFor(() => expect(radio('2021 Ford F150').props.accessibilityState.checked).toBe(true));
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    expect(sent().currency).toBe('USD');
+    expect(sent().mixed_lots?.map(lot => lot.schedule_a_parent_lot_id)).toEqual(['parent-lot-1', 'parent-lot-1']);
+    const savedDraft = jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0];
+    expect(savedDraft.formData).toMatchObject({ currency: 'USD', scheduleAParentLotId: 'parent-lot-1' });
+  });
+
   it('clears a saved item the refreshed setup no longer offers', async () => {
     await mount(unknownSetup(), { scheduleAParentLotId: 'parent-lot-withdrawn' });
     expect(choices.map(choice => radio(choice.title).props.accessibilityState.checked)).toEqual([false, false]);
@@ -1700,9 +1711,10 @@ describe.each(['asset', 'lotListing'] as const)('%s Proposal list', type => {
     await waitFor(() => expect(screen.getByTestId('auctioneer-create-actions')).toBeTruthy());
     await showLots();
   }
-  async function mountDraft(lots: ReturnType<typeof savedLot>[], current = listSetup()) {
+  async function mountDraft(lots: ReturnType<typeof savedLot>[], current = listSetup(), currency = 'CAD') {
     jest.mocked(auctioneerService.getSetup).mockResolvedValue(current);
-    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft(type), lots } as any);
+    const saved = draft(type);
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...saved, formData: { ...saved.formData, currency }, lots } as any);
     // Uploads stay pending: these tests stop at what would be sent.
     jest.mocked(upload).mockReturnValue(new Promise(() => {}));
     await render(<Form visible auctioneer={current} draftIdToLoad="local-parent" onClose={jest.fn()} />);
@@ -1746,6 +1758,18 @@ describe.each(['asset', 'lotListing'] as const)('%s Proposal list', type => {
     const savedDraft = jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0];
     expect(savedDraft.formData.auctioneerSnapshot?.proposalList?.items).toEqual(items);
     expect(savedDraft.lots.map(lot => lot.id)).toEqual([L1, 'lot-extra']);
+  });
+
+  it('keeps a restored currency alongside listed and extra lot identities', async () => {
+    await mountDraft([savedLot(L1, 2), savedLot('lot-extra', 1)], listSetup(), 'USD');
+    await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    expect(sent().currency).toBe('USD');
+    expect(sent().mixed_lots?.[0]).toMatchObject({ source_key: 'proposal-line:L1', count: 2 });
+    expect(sent().mixed_lots?.[1]).not.toHaveProperty('source_key');
+    const savedDraft = jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0];
+    expect(savedDraft.formData.currency).toBe('USD');
+    expect(savedDraft.formData.auctioneerSnapshot?.proposalList?.items).toEqual(items);
   });
 
   it('keeps a restored draft as saved and offers the listed items it lacks', async () => {

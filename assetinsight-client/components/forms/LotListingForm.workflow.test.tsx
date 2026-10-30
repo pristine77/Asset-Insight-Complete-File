@@ -134,8 +134,8 @@ vi.mock("next/dynamic", async () => {
         };
       }
 
-      return function MockSmartUploadWorkspace({ open, groupingMethod }: { open: boolean; groupingMethod?: string }) {
-        return open ? React.createElement("output", { "data-testid": "listing-upload-method" }, groupingMethod) : null;
+      return function MockSmartUploadWorkspace({ open, groupingMethod, details }: { open: boolean; groupingMethod?: string; details?: Record<string, unknown> }) {
+        return open ? React.createElement("output", { "data-testid": "listing-upload-method", "data-currency": details?.currency }, groupingMethod) : null;
       };
     },
   };
@@ -339,6 +339,63 @@ describe("LotListingForm explicit save and upload workflow", () => {
     window.localStorage.clear();
   });
 
+  it("uses the detected location currency and sends the dropdown override in background submission", async () => {
+    mocks.reverseGeocode.mockResolvedValue({ location: "London, United Kingdom", currency: "GBP" });
+    mocks.enqueue.mockReturnValue(new Promise(() => {}));
+    render(<LotListingForm />);
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    await waitFor(() => expect(currency).toHaveValue("GBP"));
+    fireEvent.change(currency, { target: { value: "USD" } });
+    addValidListing();
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    expect(mocks.enqueue.mock.calls[0][0].details.currency).toBe("USD");
+  });
+
+  it("requires an explicit currency when a readable location has no recognized currency", async () => {
+    mocks.reverseGeocode.mockResolvedValue({ location: "Unknown inspection yard, Unmapped country" });
+    render(<LotListingForm />);
+    await waitFor(() => expect(screen.getByLabelText(/^Current inspection location/i)).toHaveValue("Unknown inspection yard, Unmapped country"));
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("");
+    fireEvent.change(screen.getByRole("combobox", { name: /Currency/i }), { target: { value: "USD" } });
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("USD");
+  });
+
+  it("does not replace the selected currency with a late automatic location currency", async () => {
+    const lookup = deferred<{ location: string; currency: string }>();
+    mocks.reverseGeocode.mockReturnValueOnce(lookup.promise);
+    render(<LotListingForm />);
+    await waitFor(() => expect(mocks.reverseGeocode).toHaveBeenCalledOnce());
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    fireEvent.change(currency, { target: { value: "EUR" } });
+    await act(async () => { lookup.resolve({ location: "London, United Kingdom", currency: "GBP" }); await lookup.promise; });
+    expect(currency).toHaveValue("EUR");
+    expect(screen.getByLabelText(/^Current inspection location/i)).toHaveValue("London, United Kingdom");
+  });
+
+  it("infers currency from a manually entered country without overwriting an override", async () => {
+    render(<LotListingForm />);
+    await waitForResolvedLotLocation();
+    const location = screen.getByLabelText(/^Current inspection location/i);
+    fireEvent.change(location, { target: { value: "Delhi, India" } });
+    fireEvent.blur(location);
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    expect(currency).toHaveValue("INR");
+    fireEvent.change(currency, { target: { value: "EUR" } });
+    fireEvent.change(location, { target: { value: "United Kingdom" } });
+    fireEvent.blur(location);
+    expect(currency).toHaveValue("EUR");
+  });
+
+  it("preserves the saved draft currency while resolving its legacy coordinate location", async () => {
+    const draft = makeLotResumeDraft();
+    draft.formData = { ...draft.formData, currency: "EUR" };
+    mocks.reverseGeocode.mockResolvedValue({ location: "London, United Kingdom", currency: "GBP" });
+    render(<LotListingForm resumeDraft={draft} />);
+    await waitFor(() => expect(screen.getByLabelText(/^Current inspection location/i)).toHaveValue("London, United Kingdom"));
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("EUR");
+  });
+
   it("closes only after durable handoff and protects the next listing from late upload cleanup", async () => {
     const persistence = deferred<string>();
     const upload = deferred<Record<string, unknown>>();
@@ -470,8 +527,10 @@ describe("LotListingForm explicit save and upload workflow", () => {
     render(<LotListingForm />);
     fireEvent.change(screen.getByRole("textbox", { name: /contract number/i }), { target: { value: "93257" } });
     fireEvent.change(screen.getByRole("textbox", { name: /current inspection location/i }), { target: { value: "Regina" } });
+    fireEvent.change(screen.getByRole("combobox", { name: /Currency/i }), { target: { value: "USD" } });
     fireEvent.click(screen.getByRole("button", { name: label }));
     expect(await screen.findByTestId("listing-upload-method")).toHaveTextContent(method);
+    expect(screen.getByTestId("listing-upload-method")).toHaveAttribute("data-currency", "USD");
     expect(mocks.uploadReportFilesDirectToR2).not.toHaveBeenCalled();
   });
 
@@ -561,7 +620,7 @@ describe("LotListingForm explicit save and upload workflow", () => {
     render(<LotListingForm auctioneer={makeAuctioneerSetup("unknown")} continuationDetails={{ location: "Edited yard", salesDate: "2026-10-05", currency: "USD", bankPhotosEnabled: true, watermarkImages: true }} />);
     expect(screen.getByRole("textbox", { name: /contract number/i })).toHaveValue("IMPORTED-100");
     expect(screen.getByDisplayValue("Edited yard")).toBeVisible();
-    expect(screen.getByDisplayValue("USD")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("USD");
     expect(mocks.uploadReportFilesDirectToR2).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
     fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));

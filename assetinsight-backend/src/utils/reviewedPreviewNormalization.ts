@@ -6,5 +6,9 @@ export function normalizeReviewedPreviewLotsForBusinessRules<T extends Record<st
   previewData: T,
   options: Parameters<typeof normalizePreviewLotsForBusinessRules>[1] = {}
 ): T {
-  return normalizePreviewLotsForBusinessRules(markPreviewDataSpecsReviewed(previewData), options);
+  const canonical = { ...previewData };
+  // GET-only currency CAS marker is transport metadata, never report content or
+  // part of an immutable file-generation snapshot.
+  delete canonical._currency_base_revision;
+  return normalizePreviewLotsForBusinessRules(markPreviewDataSpecsReviewed(canonical), options);
 }

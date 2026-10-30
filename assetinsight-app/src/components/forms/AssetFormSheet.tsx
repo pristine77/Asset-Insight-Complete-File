@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import TextInput from './ListingTextInput';
+import CurrencySelect from './CurrencySelect';
+import useReportCurrency from './useReportCurrency';
 import { Feather } from '@expo/vector-icons';
 import { randomUUID } from 'expo-crypto';
 import OfflineCapturePanel from './OfflineCapturePanel';
@@ -41,7 +43,6 @@ import { useUploadAutoResume } from './useUploadAutoResume';
 import { canResumeDraftSnapshot, uploadResumeDraftKey } from '../../services/uploadResumeDraft';
 import UploadWaitingForSignal from './UploadWaitingForSignal';
 import { needsExplicitUploadResume, setDraftCaptureMode } from '../../services/offlineDraftPolicy';
-import * as Localization from 'expo-localization';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useAuth } from '../../context/AuthContext';
 import CameraCapture, { CaptureMode, MixedLot } from './CameraCapture';
@@ -71,26 +72,6 @@ import ProposalListPanel, { useProposalList } from './ProposalListPanel';
 import { proposalLotPresentation, proposalLotsWithoutMedia, proposalLotsWithoutMediaPrompt } from './proposalListPolicy';
 
 const MAX_ASSET_LOT_PHOTOS = 200;
-
-// Currency codes by region/locale
-const CURRENCY_MAP: Record<string, string> = {
-  'en-CA': 'CAD',
-  'en-US': 'USD',
-  'en-GB': 'GBP',
-  'en-AU': 'AUD',
-  'fr-CA': 'CAD',
-  'fr-FR': 'EUR',
-  'es-ES': 'EUR',
-  'es-MX': 'MXN',
-  'de-DE': 'EUR',
-  'it-IT': 'EUR',
-  'pt-BR': 'BRL',
-  'ja-JP': 'JPY',
-  'zh-CN': 'CNY',
-  'ko-KR': 'KRW',
-  'in-IN': 'INR',
-  'hi-IN': 'INR',
-};
 
 // Lot mode types
 export type LotMode = 'single_lot' | 'per_item' | 'per_photo';
@@ -159,8 +140,6 @@ const AssetFormSheet = ({
   const [inspectionDate, setInspectionDate] = useState(continuation?.inspectionDate ?? isoDate(new Date()));
   const [contractNo, setContractNo] = useState(auctioneer?.contract.contractNo || '');
   const [language, setLanguage] = useState<'en' | 'fr' | 'es'>(continuation?.language ?? 'en');
-  const [currency, setCurrency] = useState(continuation?.currency ?? (auctioneer ? 'CAD' : ''));
-  const [currencyLoading, setCurrencyLoading] = useState(false);
   const [preparedFor, setPreparedFor] = useState(continuation?.preparedFor ?? (auctioneer?.contract.customerName || ''));
   const [factorsAgeCondition, setFactorsAgeCondition] = useState(continuation?.factorsAgeCondition ?? '');
   const [factorsQuality, setFactorsQuality] = useState(continuation?.factorsQuality ?? '');
@@ -171,6 +150,10 @@ const AssetFormSheet = ({
   const [hiddenLocation, setHiddenLocation] = useState<HiddenLocationSnapshot | null>(() => continuation
     ? normalizeHiddenLocation(continuation.location, continuation.latitude, continuation.longitude)
     : auctioneer ? normalizeHiddenLocation(auctioneer.contract.location) : null);
+  const { currency, setCurrency, resetCurrency, detecting: currencyLoading } = useReportCurrency({
+    initialCurrency: continuation?.currency, location: hiddenLocation?.location,
+    latitude: hiddenLocation?.latitude, longitude: hiddenLocation?.longitude, visible, paused: Boolean(draftIdToLoad),
+  });
 
   // Valuation methods
   const [includeValuationTable, setIncludeValuationTable] = useState(continuation?.includeValuationTable ?? false);
@@ -192,7 +175,7 @@ const AssetFormSheet = ({
   const [cameraOpen, setCameraOpen] = useState(false);
   const [activeLotIdx, setActiveLotIdx] = useState(-1);
   // owner 2026-10-28: a Proposal worked from its list; inert for every other setup.
-  const proposalList = useProposalList({ setup: auctioneer, lots, setLots, setActiveLotIdx });
+  const proposalList = useProposalList({ setup: auctioneer, lots, setLots, setActiveLotIdx, active: visible });
   const proposalLots = useMemo(
     () => proposalLotPresentation(auctioneer, lots, proposalList.items),
     [auctioneer, lots, proposalList.items]
@@ -594,7 +577,7 @@ const AssetFormSheet = ({
       setActiveLotIdx(Math.max(0, Math.min(data.activeLotIdx || 0, restoredLots.length - 1)));
       setActiveStep(restoredLots.length ? 'images' : 'details');
     },
-    [setLots, restoreScheduleAItem]
+    [setLots, setCurrency, restoreScheduleAItem]
   );
 
   useEffect(() => {
@@ -1005,13 +988,6 @@ const AssetFormSheet = ({
     }
   };
 
-  // Auto-detect currency on mount
-  useEffect(() => {
-    if (!currency && visible && !draftIdToLoad && !loadedDraftIdRef.current) {
-      detectCurrency();
-    }
-  }, [visible]);
-
   // Pre-fill user data
   useEffect(() => {
     if (user && visible && !draftIdToLoad && !loadedDraftIdRef.current && !savedInputData && !continuation) {
@@ -1061,7 +1037,7 @@ const AssetFormSheet = ({
         setSelectedValuationMethods(data.selectedValuationMethods);
       }
     }
-  }, [savedInputData, visible]);
+  }, [savedInputData, visible, setCurrency]);
 
   useEffect(() => {
     if (!visible) {
@@ -1069,58 +1045,6 @@ const AssetFormSheet = ({
       savedInputHydrationRef.current = null;
     }
   }, [visible]);
-
-  const detectCurrency = async () => {
-    setCurrencyLoading(true);
-    try {
-      const locales = Localization.getLocales();
-      const locale = locales[0];
-      const localeTag = locale?.languageTag || 'en-US';
-
-      // Try exact match first
-      let detectedCurrency = CURRENCY_MAP[localeTag];
-
-      // Try language-region match
-      if (!detectedCurrency) {
-        const langRegion = `${locale?.languageCode}-${locale?.regionCode}`;
-        detectedCurrency = CURRENCY_MAP[langRegion];
-      }
-
-      // Try region-based detection
-      if (!detectedCurrency && locale?.regionCode) {
-        const regionMap: Record<string, string> = {
-          US: 'USD',
-          CA: 'CAD',
-          GB: 'GBP',
-          AU: 'AUD',
-          NZ: 'NZD',
-          EU: 'EUR',
-          DE: 'EUR',
-          FR: 'EUR',
-          IT: 'EUR',
-          ES: 'EUR',
-          MX: 'MXN',
-          BR: 'BRL',
-          JP: 'JPY',
-          CN: 'CNY',
-          KR: 'KRW',
-          IN: 'INR',
-          RU: 'RUB',
-          CH: 'CHF',
-          SE: 'SEK',
-          NO: 'NOK',
-        };
-        detectedCurrency = regionMap[locale.regionCode];
-      }
-
-      setCurrency(detectedCurrency || 'USD');
-    } catch (e) {
-      console.warn('Currency detection failed:', e);
-      setCurrency('USD');
-    } finally {
-      setCurrencyLoading(false);
-    }
-  };
 
   const validateForm = (): boolean => {
     const e: Record<string, string> = {};
@@ -1651,7 +1575,7 @@ const AssetFormSheet = ({
     setInspectionDate(isoDate(new Date()));
     setContractNo('');
     setLanguage('en');
-    setCurrency('');
+    resetCurrency();
     setPreparedFor('');
     setFactorsAgeCondition('');
     setFactorsQuality('');
@@ -1674,8 +1598,7 @@ const AssetFormSheet = ({
     setErrors({});
     setCurrentDraftId(null);
     loadedDraftIdRef.current = null;
-    // Re-detect currency
-    detectCurrency();
+
   };
 
   const createLot = () => {
@@ -2012,19 +1935,7 @@ const AssetFormSheet = ({
           <View style={[styles.fieldContainer, { flex: 1, marginRight: compactFields ? 0 : 8 }]}>
             <Text style={styles.fieldLabel}>Currency *</Text>
             <View style={styles.currencyContainer}>
-              <TextInput
-                accessibilityLabel="Currency code, required"
-                style={[styles.input, styles.currencyInput, errors.currency && styles.inputError]}
-                value={currency}
-                onChangeText={(t) => {
-                  setCurrency(t.toUpperCase());
-                  clearError('currency');
-                }}
-                placeholder="CAD"
-                placeholderTextColor="#9CA3AF"
-                maxLength={3}
-                autoCapitalize="characters"
-              />
+              <CurrencySelect value={currency} onChange={(code) => { setCurrency(code); clearError('currency'); }} disabled={submitting || savingDraftPreview} />
               {currencyLoading && (
                 <ActivityIndicator size="small" color="#2563EB" style={styles.currencyLoader} />
               )}

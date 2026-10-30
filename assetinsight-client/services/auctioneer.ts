@@ -862,11 +862,22 @@ export const AuctioneerService = {
     if (asRecord(response.data).success !== true || !Array.isArray(raw.notFound)) {
       throw new Error("Auctioneer did not confirm the not-found items. Refresh the Proposal before trying again.");
     }
+    const setup = normalizeSetup(raw.setup);
+    const requested = new Set(lineIds);
+    const confirmed = new Set(raw.notFound.filter((lineId): lineId is string => typeof lineId === "string"));
+    // An idempotent answer may contain no new returns: its refreshed setup
+    // must then explicitly confirm each requested item as already not found.
+    const alreadyNotFound = new Set(setup.proposalList?.items.filter((item) => item.state === "not_found").map((item) => item.lineId));
+    if (setup.workItemId !== workItemId || requested.size !== lineIds.length ||
+      !lineIds.length || raw.notFound.some((lineId) => typeof lineId !== "string" || !requested.has(lineId)) ||
+      lineIds.some((lineId) => !confirmed.has(lineId) && !alreadyNotFound.has(lineId))) {
+      throw new Error("Auctioneer did not confirm the not-found items. Refresh the Proposal before trying again.");
+    }
     return {
-      notFound: raw.notFound.filter((lineId): lineId is string => typeof lineId === "string"),
+      notFound: [...confirmed],
       remainsInAssetInsight:
         typeof raw.remainsInAssetInsight === "boolean" ? raw.remainsInAssetInsight : null,
-      setup: normalizeSetup(raw.setup),
+      setup,
     };
   },
 

@@ -1,3 +1,4 @@
+import { withCurrencyBaseRevision } from "../service/reportCurrencyConversionService.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { optionalCaptureId } from "../service/captureInventoryService.js";
 import { getCanonicalLotListingPreview, hasRecoverableFailedPreview } from "../utils/reportPreviewAvailability.js";
@@ -1696,7 +1697,7 @@ export const getLotListingPreview = async (req: AuthRequest, res: Response) => {
         bank_photos_enabled: (listing as any).bank_photos_enabled === true,
         watermark_images: resolvePhotoWatermark((listing as any).watermark_images),
         valuation_methods: normalizeValuationMethods((listing as any).valuation_methods),
-        preview_data: getCanonicalLotListingPreview(listing) || {
+        preview_data: withCurrencyBaseRevision(listing, getCanonicalLotListingPreview(listing) || {
           contract_no: listing.contract_no,
           sales_date: listing.sales_date,
           location: listing.location,
@@ -1710,7 +1711,7 @@ export const getLotListingPreview = async (req: AuthRequest, res: Response) => {
           watermark_images: resolvePhotoWatermark((listing as any).watermark_images),
           valuation_methods: normalizeValuationMethods((listing as any).valuation_methods),
           lots: listing.lots,
-        },
+        }),
         preview_files: previewFiles,
         imageUrls: listing.imageUrls,
         image_count: listing.imageUrls?.length || 0,
@@ -1755,7 +1756,7 @@ export const getLotListingSubmittedPreview = async (req: AuthRequest, res: Respo
         bank_photos_enabled: (listing as any).bank_photos_enabled === true,
         watermark_images: resolvePhotoWatermark((listing as any).watermark_images),
         valuation_methods: normalizeValuationMethods((listing as any).valuation_methods),
-        preview_data: getCanonicalLotListingPreview(listing) || {
+        preview_data: withCurrencyBaseRevision(listing, getCanonicalLotListingPreview(listing) || {
           contract_no: listing.contract_no,
           sales_date: listing.sales_date,
           location: listing.location,
@@ -1769,7 +1770,7 @@ export const getLotListingSubmittedPreview = async (req: AuthRequest, res: Respo
           watermark_images: resolvePhotoWatermark((listing as any).watermark_images),
           valuation_methods: normalizeValuationMethods((listing as any).valuation_methods),
           lots: listing.lots,
-        },
+        }),
         preview_files: downloadable ? listing.preview_files : {},
         files: downloadable ? listing.files : {},
         imageUrls: listing.imageUrls,

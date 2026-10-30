@@ -1,3 +1,4 @@
+import PreviewCurrencyConversion from '../components/PreviewCurrencyConversion';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
@@ -404,6 +405,7 @@ const PreviewScreen = ({
   const compactFields = width < 480 || fontScale > 1.3;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [convertingCurrency, setConvertingCurrency] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -430,6 +432,7 @@ const PreviewScreen = ({
   const [assetSelectionEpoch, setAssetSelectionEpoch] = useState(0);
   const previewRequestRevisionRef = useRef(0);
   const reportContextKey = `${reportType}:${reportId}:${mode}:${source}`;
+  useEffect(() => { setConvertingCurrency(false); }, [reportContextKey]);
   const reportContextRef = useRef(reportContextKey);
   reportContextRef.current = reportContextKey;
   const previewScrollRef = useRef<ScrollView>(null);
@@ -468,7 +471,7 @@ const PreviewScreen = ({
   const lastSpecTapRef = useRef<{ key: string; time: number } | null>(null);
   const previewBusyRef = useRef(false);
   previewBusyRef.current =
-    loading || refreshing || saving || submitting || filesGenerating || uploadingLotKey !== null;
+    loading || refreshing || saving || submitting || convertingCurrency || filesGenerating || uploadingLotKey !== null;
 
   const isAsset = reportType === "Asset";
   const isLotListing = reportType === "LotListing";
@@ -598,7 +601,7 @@ const PreviewScreen = ({
       setStatus(data.status || "");
       setFilesGenerating(Boolean(data.files_generating || data.files_regenerating));
       setDeclineReason(data.decline_reason || "");
-      const nextPreviewData = data.preview_data || {};
+      const nextPreviewData = { ...(data.preview_data || {}), currency: data.preview_data?.currency || data.currency || 'CAD' };
       setPreviewData(applyDamageAnalysisLotPolicy(
         isLotListing
           ? {
@@ -657,10 +660,10 @@ const PreviewScreen = ({
   }, []);
 
   const onRefresh = useCallback(() => {
-    if (saving || submitting || uploadingLotKey !== null) return;
+    if (saving || submitting || convertingCurrency || uploadingLotKey !== null) return;
     setRefreshing(true);
     loadPreviewData();
-  }, [loadPreviewData, saving, submitting, uploadingLotKey]);
+  }, [loadPreviewData, saving, submitting, convertingCurrency, uploadingLotKey]);
 
   const updateField = (field: string, value: any) => {
     if ((isAsset || isLotListing) && previewBusyRef.current) return;
@@ -1682,7 +1685,7 @@ const PreviewScreen = ({
           <View style={styles.sectionContent}>
             {renderDateInput("Effective Date", "effective_date")}
             {renderDateInput("Inspection Date", "inspection_date")}
-            {renderInput("Currency", "currency", "CAD")}
+            <View style={styles.fieldContainer}><Text style={styles.fieldLabel}>Currency</Text><Text>{previewData?.currency || "CAD"}</Text></View>
             {renderInput("Total Appraised Value", "total_appraised_value", "$0.00")}
           </View>
         </View>
@@ -2823,6 +2826,21 @@ const PreviewScreen = ({
 
           {/* Content */}
           <View style={styles.contentSection}>
+            {(isAsset || isLotListing) && previewData ? <PreviewCurrencyConversion
+              key={reportContextKey}
+              previewData={previewData}
+              endpoint={isAssignedApproval ? `/reports/assigned-approvals/${reportId}/preview/currency-conversion` : `/${isLotListing ? 'lot-listing' : 'asset'}/${reportId}/preview/currency-conversion`}
+              disabled={previewBusyRef.current}
+              onBusyChange={busy => { if (reportContextRef.current === reportContextKey) { if (busy) previewBusyRef.current = true; setConvertingCurrency(busy); } }}
+              onConverted={next => {
+                if (reportContextRef.current !== reportContextKey) return;
+                previewRequestRevisionRef.current++;
+                resetAssetLotSelection();
+                setPreviewData(next);
+                setHasChanges(true);
+              }}
+            /> : null}
+
             {isAsset ? renderAssetPreview() : isLotListing ? renderLotListingPreview() : renderRealEstatePreview()}
           </View>
           </View>
@@ -2835,7 +2853,7 @@ const PreviewScreen = ({
             <TouchableOpacity
               style={[styles.saveBtn, !hasChanges && styles.saveBtnDisabled]}
               onPress={handleSave}
-              disabled={saving || !hasChanges}
+              disabled={saving || convertingCurrency || !hasChanges}
               accessibilityRole="button"
               accessibilityLabel="Save preview changes"
             >

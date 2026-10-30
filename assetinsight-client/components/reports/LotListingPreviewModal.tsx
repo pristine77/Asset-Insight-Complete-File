@@ -40,6 +40,9 @@ import { getPreviewLotPhotoEntries } from "@/lib/previewLotPhotos";
 import { ReportDraftService } from "@/services/reportDrafts";
 import { useExclusivePreviewMutation } from "@/components/reports/useExclusivePreviewMutation";
 
+import PreviewCurrencyControl from "./PreviewCurrencyControl";
+import { usePreviewCurrencyConversion } from "./usePreviewCurrencyConversion";
+
 interface LotListingPreviewModalProps {
   reportId: string;
   isOpen: boolean;
@@ -155,6 +158,12 @@ export default function LotListingPreviewModal({
     previewData,
     setPreviewData,
     setHasChanges,
+  });
+  const { convertCurrency, currencyQuote } = usePreviewCurrencyConversion({
+    kind: "lot-listing", reportId, isOpen, contextKey: previewContextRef.current,
+    assignedApproval: isAssignedApprovalMode,
+    disabled: locationBusy || filesGenerating || filesRegenerating || loading,
+    previewData, setPreviewData, setHasChanges, beginMutation, finishMutation, hasEditsSince,
   });
   const effectiveResubmitMode = status
     ? status === "pending_approval" || status === "approved" || status === "error"
@@ -548,7 +557,9 @@ export default function LotListingPreviewModal({
   };
 
   const mutationMessage =
-    activeMutation === "upload"
+    activeMutation === "currency"
+      ? "Looking up a current exchange rate and converting amounts…"
+      : activeMutation === "upload"
       ? "Uploading images and updating this preview…"
       : activeMutation === "submit"
           ? effectiveResubmitMode
@@ -756,19 +767,14 @@ export default function LotListingPreviewModal({
                   </button>
                 </div>
                 <div>
-                  <label className="block text-xs sm:text-sm font-medium text-[var(--app-text-muted)] mb-1.5">
-                    Currency
-                  </label>
-                  <select
-                    value={previewData?.currency || "CAD"}
-                    onChange={(e) => updateField("currency", e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-[var(--app-border)] rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                  >
-                    <option value="CAD">CAD - Canadian Dollar</option>
-                    <option value="USD">USD - US Dollar</option>
-                    <option value="EUR">EUR - Euro</option>
-                    <option value="GBP">GBP - British Pound</option>
-                  </select>
+                  <PreviewCurrencyControl
+                    key={`${reportId}:${previewData?.currency || "CAD"}`}
+                    currency={previewData?.currency || "CAD"}
+                    disabled={editorLocked || locationBusy || filesGenerating || filesRegenerating}
+                    busy={activeMutation === "currency"}
+                    quote={currencyQuote}
+                    onConvert={convertCurrency}
+                  />
                 </div>
               </div>
             </div>

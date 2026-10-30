@@ -27,12 +27,17 @@ describe('native camera reference layout and protected capture behaviour', () =>
     const header = read('java/expo/modules/auctioncamera/viewextensions/CameraHeaderLayout.kt');
     expect(header).toContain('if (landscape) return // Reference landscape has a permanently visible exposure panel.');
   });
-  it('locks the reference rail geometry without reflow or scrolling', () => {
+  it('locks the owner-approved Pristine rail geometry without reflow or scrolling', () => {
     const rail = read('java/expo/modules/auctioncamera/viewextensions/CameraActionLayout.kt');
-    for (const geometry of ['R.id.textViewBundle, 70, 40, 64', 'R.id.textViewItem, 70, 40, 110',
-      'R.id.textViewPhoto, 70, 40, 156', 'R.id.textViewBundleExtra, 82, 40, 207',
-      'R.id.imageLeftArrow, 42, 30, 250', 'R.id.imageRightArrow, 42, 30, 250',
+    for (const geometry of ['R.id.galleryPreviewContainer, 34, 34, 12', 'R.id.imageViewRecordVideo, 34, 34, 12',
+      'R.id.textViewBundle, 70, 55, 54', 'R.id.textViewItem, 70, 55, 115',
+      'R.id.textViewPhoto, 70, 55, 176',
+      'R.id.imageLeftArrow, 42, 40, 240', 'R.id.imageRightArrow, 42, 40, 240',
       'R.id.textViewDone, 90, 30, 285']) expect(rail).toContain(geometry);
+    expect(rail).toContain('val x = unit(7f) + when');
+    expect(rail).not.toContain('intArrayOf(R.id.textViewBundleExtra');
+    const extra = read('res/layout-land/activity_camera_view.xml').split('\n').find((line) => line.includes('@+id/textViewBundleExtra'));
+    expect(extra).toContain('android:visibility="gone"');
     expect(rail).not.toContain('val plans');
     expect(rail).not.toContain('fontScale');
     const viewport = read('java/expo/modules/auctioncamera/viewextensions/CameraViewportLayout.kt');

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getCrDisclaimersForLot, normalizeCrDisclaimers } from "../src/utils/crDisclaimers.js";
 
 /*
    Owner 2026-10-29: "make sure that each lot PDF reach auctioneer 2.0 as a
@@ -57,6 +58,95 @@ describe("each lot's condition-report PDF", () => {
     const manifest = { previewData: { lots: [{ lot_id: "a", lot_number: "0645", title: "Tractor as sent" }] } };
     await buildLotConditionReportPdf({ report, manifest, lotIndex: 0 });
     expect(builder.generateAuctioneerSpecSheetPdfFromReport.mock.calls[0][0].lots[0].title).toBe("Tractor as sent");
+  });
+
+  it.each(["root", "preview"] as const)("keeps an unnumbered second lot's index-keyed notes from %s data", async (scope) => {
+    const lots = [{ title: "First" }, { title: "Second" }];
+    const byLot = {
+      "index:0": { customText: "<p>FIRST LOT ONLY</p>" },
+      "index:1": { customText: "<p>SECOND LOT ONLY</p>", rollingStockOnsite: true },
+    };
+    const source = {
+      ...report,
+      ...(scope === "root" ? { cr_disclaimers_by_lot: byLot } : {}),
+      preview_data: { lots, ...(scope === "preview" ? { cr_disclaimers_by_lot: byLot } : {}) },
+    };
+    const before = JSON.stringify(source);
+
+    await buildLotConditionReportPdf({ report: source, lotIndex: 1 });
+
+    const [renderData] = builder.generateAuctioneerSpecSheetPdfFromReport.mock.calls[0];
+    expect(renderData.lots).toHaveLength(1);
+    expect(renderData.lots[0]).toMatchObject({ title: "Second", lot_number: "2" });
+    expect(getCrDisclaimersForLot(renderData, renderData.lots[0], 0)).toEqual(normalizeCrDisclaimers(byLot["index:1"]));
+    expect(JSON.stringify(source)).toBe(before);
+  });
+
+  it("keeps the frozen lot's disclaimers instead of the current report's notes", async () => {
+    const source = {
+      ...report,
+      cr_disclaimers_by_lot: { "index:1": { customText: "<p>Current root note</p>" } },
+      preview_data: { lots: [{ title: "Current first" }, { title: "Current second" }] },
+    };
+    const manifest = { previewData: {
+      lots: [{ title: "Frozen first" }, { title: "Frozen second" }],
+      cr_disclaimers_by_lot: { "index:1": { customText: "<p>Frozen second lot</p>" } },
+    } };
+    const before = JSON.stringify({ source, manifest });
+
+    await buildLotConditionReportPdf({ report: source, manifest, lotIndex: 1 });
+
+    const [renderData] = builder.generateAuctioneerSpecSheetPdfFromReport.mock.calls[0];
+    expect(renderData.lots[0]).toMatchObject({ title: "Frozen second", lot_number: "2" });
+    expect(getCrDisclaimersForLot(renderData, renderData.lots[0], 0).customText).toBe("<p>Frozen second lot</p>");
+    expect(JSON.stringify({ source, manifest })).toBe(before);
+  });
+
+  it("preserves an explicit empty per-lot override over report-wide notes", async () => {
+    const source = {
+      ...report,
+      cr_disclaimers: { customText: "<p>Global note</p>", smallsOnsite: true },
+      preview_data: {
+        lots: [{ title: "First" }, { title: "Second" }],
+        cr_disclaimers_by_lot: { "index:1": {} },
+      },
+    };
+
+    await buildLotConditionReportPdf({ report: source, lotIndex: 1 });
+
+    const [renderData] = builder.generateAuctioneerSpecSheetPdfFromReport.mock.calls[0];
+    expect(getCrDisclaimersForLot(renderData, renderData.lots[0], 0)).toEqual(normalizeCrDisclaimers({}));
+  });
+
+  it.each(["root", "preview"] as const)("retains report-wide defaults from %s when the lot has no override", async (scope) => {
+    const defaults = { customText: "<p>Report-wide note</p>", smallsOffsite: true };
+    const source = {
+      ...report,
+      ...(scope === "root" ? { cr_disclaimers: defaults } : {}),
+      preview_data: { lots: [{ title: "First" }, { title: "Second" }], ...(scope === "preview" ? { cr_disclaimers: defaults } : {}) },
+    };
+
+    await buildLotConditionReportPdf({ report: source, lotIndex: 1 });
+
+    const [renderData] = builder.generateAuctioneerSpecSheetPdfFromReport.mock.calls[0];
+    expect(getCrDisclaimersForLot(renderData, renderData.lots[0], 0)).toEqual(normalizeCrDisclaimers(defaults));
+  });
+
+  it("keeps existing lot identity and number while selecting its own saved notes", async () => {
+    const selectedLot = { lot_id: "original-id", lot_number: "# 0645", title: "Original" };
+    const source = { ...report, preview_data: {
+      lots: [{ title: "First" }, selectedLot],
+      cr_disclaimers_by_lot: {
+        "original-id": { customText: "<p>Saved original lot note</p>" },
+        "0645": { customText: "<p>Wrong number-keyed note</p>" },
+      },
+    } };
+
+    await buildLotConditionReportPdf({ report: source, lotIndex: 1 });
+
+    const [renderData] = builder.generateAuctioneerSpecSheetPdfFromReport.mock.calls[0];
+    expect(renderData.lots[0]).toMatchObject(selectedLot);
+    expect(getCrDisclaimersForLot(renderData, renderData.lots[0], 0).customText).toBe("<p>Saved original lot note</p>");
   });
 
   it("has no PDF for a lot the report does not have", async () => {

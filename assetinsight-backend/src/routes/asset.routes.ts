@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { convertAssetPreviewCurrency } from "../controller/reportCurrencyConversion.controller.js";
 import { 
   createAssetReport, 
   uploadMiddleware, 
@@ -101,6 +102,7 @@ router.delete("/:id", protect, deleteAssetReport);
 router.get("/:id/preview", protect, getPreviewData);
 router.get("/:id/merge-candidates", protect, getAssetMergeCandidates);
 router.put("/:id/preview", protect, updatePreviewData);
+router.post("/:id/preview/currency-conversion", protect, convertAssetPreviewCurrency);
 router.post("/:id/preview/lots/:lotKey/images", protect, uploadMiddleware, uploadPreviewLotImages);
 router.post("/:id/preview/spec-pdf", protect, refreshPreviewSpecPdf);
 router.post("/:id/submit-approval", protect, submitForApproval);

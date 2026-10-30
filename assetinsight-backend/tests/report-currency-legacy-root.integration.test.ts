@@ -1,0 +1,42 @@
+import mongoose from "mongoose";
+import { MongoMemoryServer } from "mongodb-memory-server";
+import request from "supertest";
+import jwt from "jsonwebtoken";
+import { beforeAll, afterAll, it, expect, vi } from "vitest";
+const provider = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock("../src/utils/openaiClient.js", () => ({ default: { responses: { create: provider.create } } }));
+let mongo: MongoMemoryServer, app: any, Asset: any, User: any;
+const previousDeviceEnforcement = process.env.DEVICE_APPROVAL_ENFORCEMENT;
+beforeAll(async () => {
+  process.env.DEVICE_APPROVAL_ENFORCEMENT = "off";
+  mongo = await MongoMemoryServer.create(); await mongoose.connect(mongo.getUri());
+  ({ default: app } = await import("../src/app.js"));
+  ({ default: Asset } = await import("../src/models/asset.model.js"));
+  ({ default: User } = await import("../src/models/user.model.js"));
+});
+afterAll(async () => {
+  if (previousDeviceEnforcement === undefined) delete process.env.DEVICE_APPROVAL_ENFORCEMENT;
+  else process.env.DEVICE_APPROVAL_ENFORCEMENT = previousDeviceEnforcement;
+  await mongoose.disconnect(); await mongo.stop();
+});
+it("backfills a legacy Asset preview from its USD root, then quotes and saves EUR without a CAD relabel", async () => {
+  const owner = await User.create({ email: "legacy-currency-owner@example.test", username: "legacy-currency-owner", password: "Testing123!", authProvider: "email", isVerified: true });
+  const lot = { id: "legacy-lot", lot_id: "legacy-lot", lot_number: "1", mode: "bundle", title: "Legacy unit", estimated_value: "USD 1000" };
+  const saved = await Asset.create({ user: owner._id, status: "preview", job_status: "done", currency: "USD", contract_no: "LEGACY-USD", grouping_mode: "mixed", imageUrls: [], lots: [lot], total_value: 1000, preview_data: { lots: [lot], total_value: 1000, contract_no: "LEGACY-USD" } });
+  const auth = { Authorization: `Bearer ${jwt.sign({ id: String(owner._id), role: "user" }, process.env.JWT_SECRET!, { expiresIn: "30m" })}` };
+  const before = JSON.stringify(await Asset.findById(saved._id).lean());
+  const get = await request(app).get(`/api/asset/${saved._id}/preview`).set(auth);
+  expect(get.status).toBe(200); expect(get.body.data.preview_data.currency).toBe("USD");
+  expect(JSON.stringify(await Asset.findById(saved._id).lean())).toBe(before);
+  const sourceUrl = "https://www.bankofcanada.ca/rates/exchange/daily-exchange-rates/";
+  provider.create.mockResolvedValue({ status: "completed", output_text: JSON.stringify({ fromCurrency: "USD", toCurrency: "EUR", rate: .5, asOf: new Date().toISOString().slice(0, 10), sourceUrl, sourceTitle: "Bank of Canada rates" }), output: [{ type: "web_search_call", action: { sources: [{ url: sourceUrl }] } }] });
+  const quoted = await request(app).post(`/api/asset/${saved._id}/preview/currency-conversion`).set(auth).send({ targetCurrency: "EUR", preview_data: get.body.data.preview_data });
+  expect(quoted.status, JSON.stringify(quoted.body)).toBe(200);
+  expect(quoted.body.data.quote.fromCurrency).toBe("USD");
+  const put = await request(app).put(`/api/asset/${saved._id}/preview`).set(auth).send({ preview_data: quoted.body.data.preview_data });
+  expect(put.status, JSON.stringify(put.body)).toBe(200);
+  const current = await Asset.findById(saved._id).lean();
+  expect(current.currency).toBe("EUR"); expect(current.total_value).toBe(500);
+  expect(current.preview_data._currency_base_revision).toBeUndefined();
+  expect(provider.create).toHaveBeenCalledOnce();
+});

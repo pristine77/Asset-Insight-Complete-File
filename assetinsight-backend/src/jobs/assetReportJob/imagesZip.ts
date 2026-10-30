@@ -1,11 +1,16 @@
 import archiver from "archiver";
 import axios from "axios";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   getCloudinaryCustomUrl,
   isCloudinaryFetchConfigured,
 } from "../../utils/cloudinary.js";
 import { getPositiveIntEnv, mapWithConcurrency } from "../../utils/concurrency.js";
 import { processImageWithLogo } from "../../utils/imageProcessing.js";
+import {
+  getR2ObjectStream,
+  resolveR2ObjectLocationFromUrl,
+} from "../../utils/r2Storage/r2Upload.js";
 
 // Options used when packaging report images into a ZIP archive.
 export type GenerateImagesZipOptions = {
@@ -61,25 +66,58 @@ function resolveZipFilenames(
   });
 }
 
-async function downloadImage(url: string): Promise<Buffer> {
-  const response = await axios.get(url, {
-    responseType: "arraybuffer",
-    timeout: 30000,
-  });
-  const buffer = Buffer.from(response.data as ArrayBuffer);
-  if (buffer.length === 0) throw new Error("Empty image response");
+function mediaReadFailureCode(error: any): string {
+  const status = Number(error?.response?.status ?? error?.$metadata?.httpStatusCode);
+  if (Number.isInteger(status) && status >= 100 && status <= 599) return `http_${status}`;
+  const code = String(error?.code || error?.name || "");
+  return ["ETIMEDOUT", "ECONNABORTED", "ECONNRESET", "EAI_AGAIN", "EPIPE", "TimeoutError", "AbortError"].includes(code)
+    ? code : "read_failed";
+}
+
+async function downloadMediaOnce(url: string, timeoutMs: number): Promise<Buffer> {
+  // Read only exact owned storage origins through the SDK. Public CDN errors
+  // must not make a retained original disappear from a large media package.
+  const location = resolveR2ObjectLocationFromUrl(url);
+  let buffer: Buffer;
+  if (location) {
+    const { stream } = await getR2ObjectStream(location.bucketName, location.key, { timeoutMs });
+    const timer = setTimeout(() => stream.destroy(Object.assign(new Error("Media read timed out"), { code: "ETIMEDOUT" })), timeoutMs);
+    timer.unref();
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      buffer = Buffer.concat(chunks);
+    } finally {
+      clearTimeout(timer);
+      stream.destroy();
+    }
+  } else {
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: timeoutMs,
+      ...(timeoutMs > 30000 ? { maxContentLength: Infinity, maxBodyLength: Infinity } : {}),
+    });
+    buffer = Buffer.from(response.data as ArrayBuffer);
+  }
+  if (buffer.length === 0) throw new Error("Empty media response");
   return buffer;
 }
 
-async function downloadRawFile(url: string): Promise<Buffer> {
-  const response = await axios.get(url, {
-    responseType: "arraybuffer",
-    timeout: 120000,
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
-  });
-  return Buffer.from(response.data as ArrayBuffer);
+async function downloadMedia(url: string, timeoutMs: number): Promise<Buffer> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await downloadMediaOnce(url, timeoutMs);
+    } catch (error) {
+      const code = mediaReadFailureCode(error);
+      const retryable = /^http_(408|429|5\d\d)$/.test(code) || (code !== "read_failed" && !code.startsWith("http_"));
+      if (attempt >= 1 || !retryable) throw error;
+      await delay(200);
+    }
+  }
 }
+
+const downloadImage = (url: string) => downloadMedia(url, 30000);
+const downloadRawFile = (url: string) => downloadMedia(url, 120000);
 
 function resolveRawFilenames(
   rawFiles: Array<{ url: string; filename: string }>,
@@ -199,11 +237,12 @@ export async function generateImagesZip(
               }
 
               return { imageBuffer, filename: resolvedFilenames[i] };
-            } catch {
+            } catch (error) {
               // Never publish a successful package with a missing photo. In
               // particular, losing photo one silently changes the apparent lead
               // photo and hides the failure from appraisers and auction staff.
               // Keep source URLs/provider diagnostics out of user-facing errors.
+              console.warn(`[generateImagesZip] Photo ${i + 1}/${imageUrls.length} read failed (${mediaReadFailureCode(error)})`);
               return { error: new Error(`Failed to include photo ${i + 1} of ${imageUrls.length} in the media ZIP. Retry generation when the original is available.`) };
             }
           }

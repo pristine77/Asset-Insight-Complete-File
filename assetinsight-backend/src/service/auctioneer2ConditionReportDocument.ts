@@ -14,6 +14,7 @@
  */
 import { buildSpecReportData } from "./auctioneerSpecPdfRefreshService.js";
 import { generateAuctioneerSpecSheetPdfFromReport } from "./auctioneerSpecSheetPdfService.js";
+import { getCrDisclaimerLotKey, getCrDisclaimersForLot } from "../utils/crDisclaimers.js";
 
 /** Auctioneer's limit for one condition-report PDF. */
 export const AUCTIONEER_CR_PDF_MAX_BYTES = 25 * 1024 * 1024;
@@ -57,7 +58,16 @@ export async function buildLotConditionReportPdf(input: {
   // The lot keeps its own number on a one-lot PDF; the builder would otherwise
   // number it by its position, which is 1.
   const lotNumber = clean(lot.lot_number || lot.lot_id || lot.lot || lot.id) || String(input.lotIndex + 1);
-  const bytes = await generateAuctioneerSpecSheetPdfFromReport({ ...reportData, lots: [{ ...lot, lot_number: lotNumber }] });
+  const renderLot = { ...lot, lot_number: lotNumber };
+  // Resolve before numbering/slicing: legacy lots can store their notes under
+  // index:N. An explicit blank override must also remain blank, not fall back
+  // to the report-wide settings when this lot is rendered at index 0.
+  const disclaimers = getCrDisclaimersForLot(reportData, lot, input.lotIndex);
+  const bytes = await generateAuctioneerSpecSheetPdfFromReport({
+    ...reportData,
+    lots: [renderLot],
+    cr_disclaimers_by_lot: { [getCrDisclaimerLotKey(renderLot, 0)]: disclaimers },
+  });
   if (!isPdf(bytes)) throw new Error(`The condition report for lot ${lotNumber} was not produced as a PDF.`);
   if (bytes.byteLength > AUCTIONEER_CR_PDF_MAX_BYTES) {
     throw new Error(`The condition report PDF for lot ${lotNumber} is larger than Auctioneer's 25 MB limit.`);

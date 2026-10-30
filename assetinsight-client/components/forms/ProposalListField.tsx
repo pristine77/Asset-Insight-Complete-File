@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast";
+import { captureAuthSession, isAuthSessionCurrent, type AuthSessionSnapshot } from "@/lib/auth-storage";
 import {
   AuctioneerService,
   type AuctioneerProposalItem,
@@ -70,10 +71,33 @@ export default function ProposalListField({
   const [items, setItems] = useState<AuctioneerProposalItem[]>(
     integration.proposalList?.items ?? []
   );
+  // Bind both the confirmation and its receipt to the exact form opening.
+  // A -> B -> A must not let A's old reply remove photos from the new form.
+  const contextRef = useRef({ integration, generation: 0 });
+  if (contextRef.current.integration !== integration) {
+    contextRef.current = { integration, generation: contextRef.current.generation + 1 };
+  }
+  const mountedRef = useRef(true);
+  const operationRef = useRef<symbol | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      contextRef.current.generation += 1;
+      operationRef.current = null;
+    };
+  }, []);
   useEffect(() => {
     setItems(integration.proposalList?.items ?? []);
+    setPending(null);
+    setBusy(false);
+    operationRef.current = null;
   }, [integration]);
-  const [pending, setPending] = useState<AuctioneerProposalItem | null>(null);
+  const [pending, setPending] = useState<{
+    item: AuctioneerProposalItem;
+    generation: number;
+    session: AuthSessionSnapshot;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const inForm = useMemo(
     () => new Set(lots.map((lot) => lot.source?.key).filter(Boolean) as string[]),
@@ -91,21 +115,37 @@ export default function ProposalListField({
   }
 
   const confirmNotFound = async () => {
-    if (!pending) return;
+    if (!pending || disabled || operationRef.current) return;
+    const question = pending;
+    if (contextRef.current.generation !== question.generation || !isAuthSessionCurrent(question.session)) {
+      setPending(null);
+      return;
+    }
+    const operation = Symbol("proposal-not-found");
+    operationRef.current = operation;
+    const current = () => mountedRef.current && operationRef.current === operation &&
+      contextRef.current.generation === question.generation && isAuthSessionCurrent(question.session);
     setBusy(true);
     try {
       const result = await AuctioneerService.markProposalItemsNotFound(
         integration.workItemId,
-        [pending.lineId]
+        [question.item.lineId]
       );
+      if (!current()) return;
       if (result.setup.proposalList) setItems(result.setup.proposalList.items);
-      onItemNotFound(pending);
-      toast.success(`${pending.title} was returned to Auctioneer as not found.`);
+      onItemNotFound(question.item);
+      toast.success(`${question.item.title} was returned to Auctioneer as not found.`);
       setPending(null);
     } catch (error) {
-      toast.error(notFoundError(error));
+      if (current()) toast.error(notFoundError(error));
     } finally {
-      setBusy(false);
+      if (operationRef.current === operation) {
+        operationRef.current = null;
+        if (mountedRef.current && contextRef.current.generation === question.generation) {
+          setBusy(false);
+          if (!isAuthSessionCurrent(question.session)) setPending(null);
+        }
+      }
     }
   };
 
@@ -150,7 +190,7 @@ export default function ProposalListField({
                     type="button"
                     className={quietButtonClass}
                     disabled={disabled || busy}
-                    onClick={() => setPending(item)}
+                    onClick={() => setPending({ item, generation: contextRef.current.generation, session: captureAuthSession() })}
                   >
                     Not found
                   </button>
@@ -165,8 +205,8 @@ export default function ProposalListField({
         title="Return this item as not found?"
         description={
           pending
-            ? `${pending.title} will be returned to Auctioneer 2.0 now as not found, and will not be captured.${
-                inForm.has(pending.sourceKey) ? " Its lot and any photos in this form are removed." : ""
+            ? `${pending.item.title} will be returned to Auctioneer 2.0 now as not found, and will not be captured.${
+                inForm.has(pending.item.sourceKey) ? " Its lot and any photos in this form are removed." : ""
               }`
             : undefined
         }

@@ -124,11 +124,13 @@ it.each(['asset', 'lotListing'] as const)('%s Offline saves incomplete details l
   jest.mocked(NetInfo.fetch).mockResolvedValue({ isConnected: false, isInternetReachable: false } as any);
   const Form = type === 'asset' ? AssetFormSheet : LotListingFormSheet;
   const view = await render(<Form visible onClose={jest.fn()} />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Currency code, required' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'USD' }));
   expect(screen.getByRole('radio', { name: 'Online capture' }).props.accessibilityState.checked).toBe(true);
   await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
   expect(screen.getByRole('radio', { name: 'Offline capture' }).props.accessibilityState.checked).toBe(true);
   await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
-  expect(AutoSaveService.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ type, captureMode: 'offline', formData: expect.objectContaining({ captureMode: 'offline' }) }));
+  expect(AutoSaveService.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ type, captureMode: 'offline', formData: expect.objectContaining({ captureMode: 'offline', currency: 'USD' }) }));
   expect(assetService.createAssetReport).not.toHaveBeenCalled();
   expect(lotListingService.createLotListing).not.toHaveBeenCalled();
   expect(api.post).not.toHaveBeenCalled(); expect(api.put).not.toHaveBeenCalled();

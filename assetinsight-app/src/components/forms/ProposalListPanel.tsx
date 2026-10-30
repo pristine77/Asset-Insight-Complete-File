@@ -18,6 +18,7 @@ import auctioneerService, {
 } from '../../services/auctioneerService';
 import { auctioneerErrorMessage } from '../../services/auctioneerErrors';
 import OfflineCaptureStore from '../../services/offlineCaptureStore';
+import { getAuthOperationEpoch } from '../../services/authSessionOperation';
 import type { MixedLot } from '../camera/types';
 import {
   PROPOSAL_ITEM_STATE_LABELS,
@@ -45,22 +46,31 @@ export function useProposalList({
   lots,
   setLots,
   setActiveLotIdx,
+  active = true,
 }: {
   setup?: AuctioneerWorkItemSetup;
   lots: MixedLot[];
   setLots: React.Dispatch<React.SetStateAction<MixedLot[]>>;
   setActiveLotIdx?: React.Dispatch<React.SetStateAction<number>>;
+  active?: boolean;
 }) {
   const listed = isProposalListSetup(setup);
+  const owner = OfflineCaptureStore.getOwnerId();
+  const authEpoch = getAuthOperationEpoch();
+  // A distinct token also fences A -> B -> A transitions with the same setup object.
+  const context = useMemo(() => ({ setup, owner, authEpoch, active }), [setup, owner, authEpoch, active]);
+  const contextRef = useRef(context);
+  contextRef.current = context;
   // Refresh and Not found answer with the list as the server now sees it. A
   // newer setup from the boundary replaces both, so an old list never outlives
   // its assignment (same rule as the Schedule A item picker).
-  const [refreshed, setRefreshed] = useState<{ setup: AuctioneerWorkItemSetup; items: AuctioneerProposalItem[] }>();
-  const items = !listed ? NO_ITEMS : refreshed && refreshed.setup === setup ? refreshed.items : proposalItemsOf(setup);
+  const [refreshed, setRefreshed] = useState<{ context: typeof context; items: AuctioneerProposalItem[] }>();
+  const items = !listed ? NO_ITEMS : refreshed && refreshed.context === context ? refreshed.items : proposalItemsOf(setup);
   const [busy, setBusy] = useState<string>();
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState('');
   const busyRef = useRef(false);
+  const operationRef = useRef<object | undefined>(undefined);
   const mountedRef = useRef(true);
   const lotsRef = useRef(lots);
   lotsRef.current = lots;
@@ -68,6 +78,17 @@ export function useProposalList({
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+  useEffect(() => {
+    operationRef.current = undefined;
+    busyRef.current = false;
+    setBusy(undefined);
+    setMessage('');
+    setNotice('');
+  }, [context]);
+  const isCurrent = useCallback(() =>
+    mountedRef.current && context.active && contextRef.current === context &&
+    context.owner === OfflineCaptureStore.getOwnerId() &&
+    context.authEpoch === getAuthOperationEpoch(), [context]);
 
   const inForm = useMemo(
     () => new Set(lots.map((lot) => proposalItemSourceKeyOfLot(lot)).filter((key): key is string => Boolean(key))),
@@ -75,20 +96,23 @@ export function useProposalList({
   );
 
   const add = useCallback((toAdd: AuctioneerProposalItem[]) => {
+    if (!isCurrent()) return;
     setMessage('');
     setNotice('');
     // A listed item is one lot: never add a second lot for an item already here.
     setLots((previous) => {
+      if (!isCurrent()) return previous;
       const present = new Set(previous.map((lot) => proposalItemSourceKeyOfLot(lot)));
       const fresh = toAdd.filter((item) => item.state === 'outstanding' && !present.has(item.sourceKey));
       return fresh.length ? [...previous, ...fresh.map(proposalItemLot)] : previous;
     });
-  }, [setLots]);
+  }, [isCurrent, setLots]);
 
   const runExclusive = useCallback(async (key: string, work: (stillHere: () => boolean) => Promise<void>) => {
-    if (!setup || busyRef.current) return;
-    const owner = OfflineCaptureStore.getOwnerId();
-    const stillHere = () => mountedRef.current && owner === OfflineCaptureStore.getOwnerId();
+    if (!setup || !isCurrent() || busyRef.current) return;
+    const operation = {};
+    operationRef.current = operation;
+    const stillHere = () => isCurrent() && operationRef.current === operation;
     busyRef.current = true;
     setBusy(key);
     setMessage('');
@@ -96,10 +120,13 @@ export function useProposalList({
     try {
       await work(stillHere);
     } finally {
-      busyRef.current = false;
-      if (mountedRef.current) setBusy(undefined);
+      if (operationRef.current === operation) {
+        operationRef.current = undefined;
+        busyRef.current = false;
+        if (isCurrent()) setBusy(undefined);
+      }
     }
-  }, [setup]);
+  }, [isCurrent, setup]);
 
   const refresh = useCallback(() => runExclusive('refresh', async (stillHere) => {
     try {
@@ -109,13 +136,13 @@ export function useProposalList({
       if (fresh.workItemId !== setup!.workItemId || fresh.contract.id !== setup!.contract.id || !fresh.proposalList) {
         throw new Error('This Incoming assignment changed. Close this form and reopen it from Incoming.');
       }
-      setRefreshed({ setup: setup!, items: fresh.proposalList.items });
+      setRefreshed({ context, items: fresh.proposalList.items });
     } catch (error) {
       if (stillHere()) {
         setMessage(auctioneerErrorMessage(error, 'The listed items could not be checked. Check the connection, then try again.'));
       }
     }
-  }), [runExclusive, setup]);
+  }), [context, runExclusive, setup]);
 
   const returnNotFound = useCallback((item: AuctioneerProposalItem) => runExclusive(item.lineId, async (stillHere) => {
     try {
@@ -128,15 +155,17 @@ export function useProposalList({
       }
       const result = await auctioneerService.markProposalItemsNotFound(setup!.workItemId, [item.lineId]);
       if (!stillHere()) return;
+      if (result.setup.workItemId !== setup!.workItemId || result.setup.contract.id !== setup!.contract.id || !result.setup.proposalList) {
+        throw new Error('This Incoming assignment changed. Close this form and reopen it from Incoming.');
+      }
       setRefreshed({
-        setup: setup!,
-        items: result.setup.proposalList?.items ??
-          items.map((candidate) => candidate.lineId === item.lineId ? { ...candidate, state: 'not_found' as const } : candidate),
+        context,
+        items: result.setup.proposalList.items,
       });
       // The item is back in Auctioneer, so its lot leaves this form.
       const remaining = lotsRef.current.filter((lot) => proposalItemSourceKeyOfLot(lot) !== item.sourceKey).length;
-      setLots((previous) => previous.filter((lot) => proposalItemSourceKeyOfLot(lot) !== item.sourceKey));
-      setActiveLotIdx?.((index) => Math.max(0, Math.min(index, remaining - 1)));
+      setLots((previous) => isCurrent() ? previous.filter((lot) => proposalItemSourceKeyOfLot(lot) !== item.sourceKey) : previous);
+      setActiveLotIdx?.((index) => isCurrent() ? Math.max(0, Math.min(index, remaining - 1)) : index);
       setNotice(result.remainsInAssetInsight === false
         ? `${proposalItemLabel(item)} was returned as not found. Every listed item is now back in Auctioneer.`
         : `${proposalItemLabel(item)} was returned as not found.`);
@@ -145,16 +174,16 @@ export function useProposalList({
         setMessage(auctioneerErrorMessage(error, 'The item was not returned. Check the connection, then try again.'));
       }
     }
-  }), [items, runExclusive, setActiveLotIdx, setLots, setup]);
+  }), [context, isCurrent, runExclusive, setActiveLotIdx, setLots, setup]);
 
   const confirmNotFound = useCallback((item: AuctioneerProposalItem) => {
-    if (busyRef.current) return;
+    if (!isCurrent() || busyRef.current) return;
     const lot = lotsRef.current.find((candidate) => proposalItemSourceKeyOfLot(candidate) === item.sourceKey);
     Alert.alert('Not found', proposalNotFoundPrompt(item, lot), [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Return as not found', style: 'destructive', onPress: () => { void returnNotFound(item); } },
+      { text: 'Return as not found', style: 'destructive', onPress: () => { if (isCurrent()) void returnNotFound(item); } },
     ]);
-  }, [returnNotFound]);
+  }, [isCurrent, returnNotFound]);
 
   return { listed, items, inForm, add, refresh, confirmNotFound, busy, message, notice };
 }

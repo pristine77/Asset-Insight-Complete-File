@@ -439,6 +439,43 @@ describe('Proposal list', () => {
     await expect(auctioneerService.markProposalItemsNotFound('list-work', ['L1'])).resolves.toMatchObject({ notFound: [], remainsInAssetInsight: null });
   });
 
+  it('accepts an idempotent item alongside newly confirmed not-found items', async () => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data: {
+      notFound: ['L2'], setup: listSetup([listed('L1', 'not_found'), listed('L2', 'not_found')]),
+    } } });
+    await expect(auctioneerService.markProposalItemsNotFound('list-work', ['L1', 'L2']))
+      .resolves.toMatchObject({ notFound: ['L2'], remainsInAssetInsight: null });
+  });
+
+  it.each([
+    { notFound: [], items: [listed('L1')], requested: ['L1'] },
+    { notFound: ['OTHER'], items: [listed('L1')], requested: ['L1'] },
+    { notFound: ['L1', 'L1'], items: [listed('L1', 'not_found')], requested: ['L1'] },
+    { notFound: ['L1'], items: [listed('L1', 'not_found'), listed('L2')], requested: ['L1', 'L2'] },
+  ])('rejects a receipt that does not confirm precisely the requested items %#', async ({ notFound, items, requested }) => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data: { notFound, setup: listSetup(items) } } });
+    await expect(auctioneerService.markProposalItemsNotFound('list-work', requested))
+      .rejects.toThrow('Auctioneer did not confirm the not-found items.');
+  });
+
+  it('rejects an answer without a matching Proposal list even when its receipt names the item', async () => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data: {
+      notFound: ['L1'], setup: { ...fixture(), workItemId: 'list-work' },
+    } } });
+    await expect(auctioneerService.markProposalItemsNotFound('list-work', ['L1']))
+      .rejects.toThrow('Auctioneer did not confirm the not-found items.');
+  });
+
+  it('rejects a late not-found receipt from an earlier sign-in session', async () => {
+    let resolve!: (value: any) => void;
+    jest.mocked(api.post).mockReturnValue(new Promise(done => { resolve = done; }));
+    const pending = auctioneerService.markProposalItemsNotFound('list-work', ['L1']);
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'ERR_CANCELED' });
+    invalidateAuthOperations();
+    resolve({ data: { success: true, data: { notFound: ['L1'], setup: listSetup([listed('L1', 'not_found')]) } } });
+    await rejected;
+  });
+
   it.each([
     [[]],
     [['L1', 'L1']],

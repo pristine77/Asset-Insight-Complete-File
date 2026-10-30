@@ -118,12 +118,13 @@ function formatScheduleCurrency(rawValue: any, currencyCode: string): string {
   const parsed = parseCurrencyAmount(rawValue);
   if (parsed === undefined) return "";
 
-  const formattedNumber = new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(parsed);
-
-  return `$${formattedNumber}`;
+  // ISO codes distinguish CAD/USD and keep PDF width measurement safe for
+  // currencies whose native symbols are absent from the standard PDF font.
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: String(currencyCode || "CAD").trim().toUpperCase(),
+    currencyDisplay: "code",
+  }).format(parsed).replace(/\u00a0/g, " ");
 }
 
 function padLotNumber(rawValue: any, index: number): string {

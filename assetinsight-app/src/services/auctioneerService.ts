@@ -546,10 +546,12 @@ class AuctioneerService {
     ) {
       throw new Error('Choose the listed items to return as not found.');
     }
+    const assertCurrent = captureAuthOperation();
     const response = await api.post(
       `/auctioneer/work-items/${encodeURIComponent(workItemId)}/proposal-items/not-found`,
       { lineIds: requested }
     );
+    assertCurrent();
     const data = response.data?.data;
     if (
       response.data?.success !== true ||
@@ -564,6 +566,16 @@ class AuctioneerService {
     const setup = parseAuctioneerSetup(data.setup);
     if (setup.workItemId !== workItemId) {
       throw new Error('This Incoming assignment changed. Close this form and reopen it from Incoming.');
+    }
+    const acknowledged = new Set<string>(data.notFound);
+    if (
+      acknowledged.size !== data.notFound.length ||
+      data.notFound.some((lineId: string) => !requested.includes(lineId)) ||
+      !setup.proposalList ||
+      requested.some((lineId) => !acknowledged.has(lineId) &&
+        !setup.proposalList!.items.some((item) => item.lineId === lineId && item.state === 'not_found'))
+    ) {
+      throw new Error('Auctioneer did not confirm the not-found items. Reopen the Proposal from Incoming to check them.');
     }
     return {
       notFound: data.notFound as string[],

@@ -6,9 +6,15 @@ const downloadMocks = vi.hoisted(() => ({
   get: vi.fn(),
   cloudinaryConfigured: vi.fn(),
   cloudinaryUrl: vi.fn(),
+  resolveStorage: vi.fn(),
+  storageStream: vi.fn(),
 }));
 
 vi.mock("axios", () => ({ default: { get: downloadMocks.get } }));
+vi.mock("../src/utils/r2Storage/r2Upload.js", () => ({
+  resolveR2ObjectLocationFromUrl: downloadMocks.resolveStorage,
+  getR2ObjectStream: downloadMocks.storageStream,
+}));
 vi.mock("../src/utils/cloudinary.js", () => ({
   isCloudinaryFetchConfigured: downloadMocks.cloudinaryConfigured,
   getCloudinaryCustomUrl: downloadMocks.cloudinaryUrl,
@@ -51,6 +57,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.resetAllMocks();
   downloadMocks.cloudinaryConfigured.mockReturnValue(false);
+  downloadMocks.resolveStorage.mockReturnValue(null);
   downloadMocks.cloudinaryUrl.mockReturnValue(optimizedUrl);
   downloadMocks.get.mockImplementation(async (url: string) => {
     if (url !== sourceUrl) throw new Error("Unexpected image download");

@@ -1,3 +1,4 @@
+import { withCurrencyBaseRevision } from "../service/reportCurrencyConversionService.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 /**
  * Approver queue and report-decision HTTP boundary.
@@ -821,7 +822,7 @@ function buildAssignedAssetPreviewPayload(report: any) {
     status: report.status,
     files_generating: (report as any).files_generating || false,
     files_regenerating: (report as any).files_regenerating || false,
-    preview_data: report.preview_data,
+    preview_data: withCurrencyBaseRevision(report),
     preview_files: (report as any).preview_files,
     grouping_mode: report.grouping_mode,
     image_count: Array.isArray((report as any).imageUrls) ? (report as any).imageUrls.length : 0,
@@ -863,7 +864,7 @@ function buildAssignedLotListingPreviewPayload(report: any) {
     status: report.status,
     files_generating: (report as any).files_generating || false,
     files_regenerating: (report as any).files_regenerating || false,
-    preview_data: report.preview_data,
+    preview_data: withCurrencyBaseRevision(report),
     preview_files: (report as any).preview_files,
     files: (report as any).files,
     image_count: Array.isArray((report as any).imageUrls) ? (report as any).imageUrls.length : 0,

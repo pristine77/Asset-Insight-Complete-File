@@ -45,6 +45,8 @@ import {
   parseBrowserCoordinateLocation,
 } from "@/lib/browserLocation";
 import { BrowserLocationService } from "@/services/browserLocation";
+import CurrencySelect from "./CurrencySelect";
+import { currencyForReportLocation, normalizeReportCurrency } from "@/lib/reportCurrency";
 import ActiveReportConflictDialog from "./ActiveReportConflictDialog";
 import DuplicateDraftDialog from "./DuplicateDraftDialog";
 import { saveManualDraftOnly } from "./manualDraftSave";
@@ -427,8 +429,8 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   >(null);
   const [contractNo, setContractNo] = useState(continuationDetails?.contractNo ?? (auctioneer?.contract.contractNo || ""));
   const [language, setLanguage] = useState<"en" | "fr" | "es">(continuationDetails?.language ?? "en");
-  const [currency, setCurrency] = useState(continuationDetails?.currency ?? ((auctioneer ? "CAD" : "")));
-  const [currencyTouched, setCurrencyTouched] = useState(Boolean(auctioneer));
+  const [currency, setCurrency] = useState(continuationDetails?.currency ?? currencyForReportLocation(continuationDetails?.location || importedLocation) ?? (auctioneer ? "CAD" : ""));
+  const [currencyTouched, setCurrencyTouched] = useState(Boolean(auctioneer || continuationDetails?.currency));
   const [currencyLoading, setCurrencyLoading] = useState(false);
   const [includeDamageAnalysis, setIncludeDamageAnalysis] = useState(continuationDetails?.includeDamageAnalysis ?? (true));
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuationDetails?.bankPhotosEnabled ?? (false));
@@ -1399,11 +1401,10 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
           : formatBrowserAccuracyStatus(accuracy)
       );
       clearFieldError("location");
-      if (!currencyTouchedRef.current && resolved.currency) {
-        setCurrency(resolved.currency);
-      } else if (detectCurrency && !resolved.currency) {
-        applyLocaleFallbackCurrency();
-      }
+      const detectedCurrency = normalizeReportCurrency(resolved.currency) || currencyForReportLocation(resolved.location);
+      // A readable location with an unrecognized currency is not evidence of
+      // CAD (or the browser locale). Ask for an explicit choice instead.
+      if (!currencyTouchedRef.current) setCurrency(detectedCurrency || "");
       if (restored) {
         restoredLocationMigrationDirtyRef.current = true;
         saveRevisionRef.current =
@@ -1480,7 +1481,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   };
 
   useEffect(() => {
-    if (auctioneer || resumeDraft) {
+    if (auctioneer || resumeDraft || continuationDetails?.location) {
       setCurrencyLoading(false);
       return;
     }
@@ -1493,7 +1494,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     return () => {
       currencyPromptedRef.current = false;
     };
-  }, [auctioneer, currencyTouched, resumeDraft]);
+  }, [auctioneer, continuationDetails?.location, currencyTouched, resumeDraft]);
 
   const resetForm = () => {
     submissionActivityIdRef.current = undefined;
@@ -1521,8 +1522,9 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     );
     setContractNo(auctioneer?.contract.contractNo || "");
     setLanguage("en");
-    setCurrency(auctioneer ? "CAD" : "");
+    setCurrency(currencyForReportLocation(importedLocation) || (auctioneer ? "CAD" : ""));
     setCurrencyTouched(Boolean(auctioneer));
+    currencyTouchedRef.current = Boolean(auctioneer);
     setCurrencyLoading(false);
     currencyPromptedRef.current = false;
     setIncludeDamageAnalysis(true);
@@ -1721,7 +1723,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     if (!effectiveDate) nextErrors.effectiveDate = "Effective date is required.";
     if (!appraisalPurpose.trim()) nextErrors.appraisalPurpose = "Appraisal purpose is required.";
     if (!appraiser.trim()) nextErrors.appraiser = "Appraiser is required.";
-    if (!/^[A-Z]{3}$/.test(currency)) nextErrors.currency = "Enter a three-letter ISO code, such as CAD.";
+    if (!/^[A-Z]{3}$/.test(currency)) nextErrors.currency = "Choose a currency.";
     if (!hasUsableReportLocation(location)) {
       nextErrors.location =
         "Wait for browser location detection or enter the inspection location.";
@@ -2605,21 +2607,19 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
                   id="asset-currency"
                   label="Currency"
                   required
-                  hint="Three-letter ISO code"
+                  hint="Detected from the inspection location. Choose a different currency if needed."
                   error={errors.currency}
                   labelAction={currencyLoading ? "Detecting…" : undefined}
                 >
-                  <input
-                    className={formControlClass}
+                  <CurrencySelect
+                    className={formSelectClass}
                     value={currency}
                     onChange={(event) => {
+                      currencyTouchedRef.current = true;
                       setCurrencyTouched(true);
-                      setCurrency(event.target.value.toUpperCase().slice(0, 3));
+                      setCurrency(event.target.value);
                       clearFieldError("currency");
                     }}
-                    placeholder="CAD"
-                    inputMode="text"
-                    maxLength={3}
                   />
                 </FormField>
                 <FormField
@@ -2654,6 +2654,11 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
                       setLocationAttributionUrl(null);
                       setLocationStatus("Manually entered inspection location");
                       clearFieldError("location");
+                    }}
+                    onBlur={(event) => {
+                      if (currencyTouchedRef.current) return;
+                      const detected = currencyForReportLocation(event.target.value);
+                      if (detected) setCurrency(detected);
                     }}
                   />
                 </FormField>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import API from "@/lib/api";
 import {
@@ -8,6 +8,8 @@ import {
 } from "@/services/auctioneer";
 import ProposalListField from "./ProposalListField";
 import { buildAuctioneerSeedLots, proposalItemLot } from "./auctioneerSeed";
+import { clearTokens } from "@/lib/auth-storage";
+import { toast } from "@/components/ui/toast";
 
 /*
    Owner 2026-10-28: a Proposal's list, pushed item by item. Listed items are
@@ -32,8 +34,10 @@ function setup(items: AuctioneerProposalItem[]): AuctioneerWorkItemSetup {
 
 describe("Proposal list on the website (owner 2026-10-28)", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(API.get).mockReset();
     vi.mocked(API.post).mockReset();
+    clearTokens();
   });
 
   it("starts the form with one fixed-mode lot per listed item still to capture", () => {
@@ -115,6 +119,93 @@ describe("Proposal list on the website (owner 2026-10-28)", () => {
     const { toast } = await import("@/components/ui/toast");
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("This item was already returned."));
     expect(onItemNotFound).not.toHaveBeenCalled();
+  });
+
+  it("keeps the lot when a success envelope does not confirm its requested item", async () => {
+    const integration = setup([item("a", "outstanding")]);
+    vi.mocked(API.post).mockResolvedValueOnce({ data: { success: true, data: {
+      notFound: [], setup: integration,
+    } } });
+    const onItemNotFound = vi.fn();
+    render(<ProposalListField id="proposal" integration={integration} lots={buildAuctioneerSeedLots(integration)}
+      onAddItem={vi.fn()} onItemNotFound={onItemNotFound} />);
+    fireEvent.click(screen.getByRole("button", { name: "Not found" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return as not found" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(onItemNotFound).not.toHaveBeenCalled();
+  });
+
+  it("accepts an idempotent return when the matching refreshed setup already confirms not found", async () => {
+    const integration = setup([item("a", "outstanding")]);
+    const confirmed = setup([item("a", "not_found")]);
+    vi.mocked(API.post).mockResolvedValueOnce({ data: { success: true, data: {
+      notFound: [], setup: confirmed,
+    } } });
+    const onItemNotFound = vi.fn();
+    render(<ProposalListField id="proposal" integration={integration} lots={buildAuctioneerSeedLots(integration)}
+      onAddItem={vi.fn()} onItemNotFound={onItemNotFound} />);
+    fireEvent.click(screen.getByRole("button", { name: "Not found" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return as not found" }));
+    await waitFor(() => expect(onItemNotFound).toHaveBeenCalledWith(expect.objectContaining({ lineId: "a" })));
+  });
+
+  it("rejects a not-found receipt for a different work item", async () => {
+    vi.mocked(API.post).mockResolvedValueOnce({ data: { success: true, data: {
+      notFound: ["a"], setup: { ...setup([item("a", "not_found")]), workItemId: "other-work" },
+    } } });
+    await expect(AuctioneerService.markProposalItemsNotFound("work-1", ["a"])).rejects.toThrow(/confirm/i);
+  });
+
+  it("does not remove lots or show a toast after the form changes work item and returns", async () => {
+    const integration = setup([item("a", "outstanding")]);
+    let finish!: (value: unknown) => void;
+    vi.mocked(API.post).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const onItemNotFound = vi.fn();
+    const props = { id: "proposal", lots: buildAuctioneerSeedLots(integration), onAddItem: vi.fn(), onItemNotFound };
+    const view = render(<ProposalListField {...props} integration={integration} />);
+    fireEvent.click(screen.getByRole("button", { name: "Not found" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return as not found" }));
+    view.rerender(<ProposalListField {...props} integration={{ ...integration, workItemId: "work-2" }} />);
+    view.rerender(<ProposalListField {...props} integration={integration} />);
+    await act(async () => finish({ data: { success: true, data: {
+      notFound: ["a"], setup: setup([item("a", "not_found")]),
+    } } }));
+    expect(onItemNotFound).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Return as not found" })).toBeNull();
+  });
+
+  it("clears an unconfirmed question when the work item changes", () => {
+    const integration = setup([item("a", "outstanding")]);
+    const props = { id: "proposal", lots: buildAuctioneerSeedLots(integration), onAddItem: vi.fn(), onItemNotFound: vi.fn() };
+    const view = render(<ProposalListField {...props} integration={integration} />);
+    fireEvent.click(screen.getByRole("button", { name: "Not found" }));
+    view.rerender(<ProposalListField {...props} integration={{ ...integration, workItemId: "work-2" }} />);
+    expect(screen.queryByRole("button", { name: "Return as not found" })).toBeNull();
+    expect(API.post).not.toHaveBeenCalled();
+  });
+
+  it.each(["before confirmation", "while sending", "after unmount"] as const)("ignores stale account/form work %s", async (when) => {
+    const integration = setup([item("a", "outstanding")]);
+    let finish!: (value: unknown) => void;
+    vi.mocked(API.post).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const onItemNotFound = vi.fn();
+    const view = render(<ProposalListField id="proposal" integration={integration} lots={buildAuctioneerSeedLots(integration)}
+      onAddItem={vi.fn()} onItemNotFound={onItemNotFound} />);
+    fireEvent.click(screen.getByRole("button", { name: "Not found" }));
+    if (when === "before confirmation") clearTokens();
+    fireEvent.click(screen.getByRole("button", { name: "Return as not found" }));
+    if (when === "before confirmation") {
+      expect(API.post).not.toHaveBeenCalled();
+      return;
+    }
+    if (when === "while sending") clearTokens();
+    else view.unmount();
+    await act(async () => finish({ data: { success: true, data: {
+      notFound: ["a"], setup: setup([item("a", "not_found")]),
+    } } }));
+    expect(onItemNotFound).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("reads the list from setup defensively and leaves setups without one unchanged", async () => {

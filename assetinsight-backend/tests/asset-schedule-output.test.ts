@@ -60,7 +60,7 @@ describe("Asset Schedule A saved output authority", () => {
     expect(resolveAssetValuationCodes(report)).toEqual(["FMV"]);
     expect(resolveAssetValuationCodes({ ...report, include_valuation_table: undefined })).toEqual(["FMV"]);
     expect(headers(await xmlFor(report))).toEqual(["Schedule A", "Asset #", "Year", "Description", "Usage", "Serial Number", "FMV", "Pictures"]);
-    expect(buildScheduleRows(report)[0].valuations.map((v) => v.value)).toEqual(["$160.00"]);
+    expect(buildScheduleRows(report)[0].valuations.map((v) => v.value)).toEqual(["CAD 160.00"]);
   });
 
   it("uses each child's own Title and retains untitled legacy descriptions", () => {
@@ -78,16 +78,16 @@ describe("Asset Schedule A saved output authority", () => {
       valuation_data: { methods: [{ method: "TKV", percentage: 74 }, { method: "OLV", percentage: "81%" }, { method: "FLV", percentage: 52 }] },
       lots: [{ ...lot, olv: 0 }, { ...lot, estimated_value: 0 }, { ...lot, estimated_value: 101.25 }] };
     const rows = buildScheduleRows(report);
-    expect(rows[0].valuations.map((v) => v.value)).toEqual(["$118.40", "$0.00", "$83.20", "$160.00"]);
-    expect(rows[1].valuations.map((v) => v.value)).toEqual(["$0.00", "$0.00", "$0.00", "$0.00"]);
-    expect(rows[2].valuations.map((v) => v.value)).toEqual(["$74.93", "$82.01", "$52.65", "$101.25"]);
+    expect(rows[0].valuations.map((v) => v.value)).toEqual(["CAD 118.40", "CAD 0.00", "CAD 83.20", "CAD 160.00"]);
+    expect(rows[1].valuations.map((v) => v.value)).toEqual(["CAD 0.00", "CAD 0.00", "CAD 0.00", "CAD 0.00"]);
+    expect(rows[2].valuations.map((v) => v.value)).toEqual(["CAD 74.93", "CAD 82.01", "CAD 52.65", "CAD 101.25"]);
     expect(buildScheduleRows({ lots: [lot], valuation_methods: ["TKV", "OLV", "FLV"] })[0].valuations.map((v) => v.value)).toEqual(["", "", ""]);
   });
 
   it("does not duplicate parent method totals into child rows", () => {
     const report = { valuation_methods: ["OLV"], valuation_data: { methods: [{ method: "OLV", percentage: 80 }] },
       lots: [{ ...lot, olv: 128, items: [{ title: "One", estimated_value: 100 }, { title: "Two", estimated_value: 0 }] }] };
-    expect(buildScheduleRows(report).map((row) => row.valuations[0].value)).toEqual(["$80.00", "$0.00"]);
+    expect(buildScheduleRows(report).map((row) => row.valuations[0].value)).toEqual(["CAD 80.00", "CAD 0.00"]);
   });
 
   it.each(Array.from({ length: 16 }, (_, mask) => [mask]))("keeps Word and PDF header/body columns aligned for selection %i", async (mask) => {

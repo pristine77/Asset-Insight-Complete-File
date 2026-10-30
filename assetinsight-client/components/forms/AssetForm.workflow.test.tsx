@@ -81,8 +81,8 @@ vi.mock("next/dynamic", async () => {
     default: () => {
       const componentIndex = dynamicIndex++;
       if (componentIndex !== 0) {
-        return function DeferredWorkspace({ open, groupingMethod }: { open: boolean; groupingMethod?: string }) {
-          return open ? React.createElement("output", { "data-testid": "asset-upload-method" }, groupingMethod) : null;
+        return function DeferredWorkspace({ open, groupingMethod, details }: { open: boolean; groupingMethod?: string; details?: Record<string, unknown> }) {
+          return open ? React.createElement("output", { "data-testid": "asset-upload-method", "data-currency": details?.currency }, groupingMethod) : null;
         };
       }
 
@@ -549,8 +549,10 @@ describe("AssetForm manual save and submission workflow", () => {
     render(<AssetForm />);
     fillRequiredReportFields();
     fireEvent.change(screen.getByRole("textbox", { name: /inspection location/i }), { target: { value: "Regina" } });
+    fireEvent.change(screen.getByRole("combobox", { name: /Currency/i }), { target: { value: "USD" } });
     fireEvent.click(screen.getByRole("button", { name: label }));
     expect(await screen.findByTestId("asset-upload-method")).toHaveTextContent(method);
+    expect(screen.getByTestId("asset-upload-method")).toHaveAttribute("data-currency", "USD");
     expect(mocks.createAsset).not.toHaveBeenCalled();
   });
 
@@ -1112,6 +1114,60 @@ describe("AssetForm manual save and submission workflow", () => {
     expect(screen.getByTestId("selected-asset-media")).toHaveTextContent(
       "asset-photo.jpg"
     );
+  });
+
+  it("detects the currency from the report location and exposes a dropdown override", async () => {
+    mocks.reverseGeocode.mockResolvedValue({ location: "London, United Kingdom", currency: "GBP" });
+    render(<AssetForm />);
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    await waitFor(() => expect(currency).toHaveValue("GBP"));
+    expect(within(currency).getByRole("option", { name: /USD/ })).toBeInTheDocument();
+    fireEvent.change(currency, { target: { value: "EUR" } });
+    expect(currency).toHaveValue("EUR");
+  });
+
+  it("requires an explicit currency when the resolved location has no recognized currency", async () => {
+    mocks.reverseGeocode.mockResolvedValue({ location: "Unknown inspection yard, Unmapped country" });
+    render(<AssetForm />);
+    await waitFor(() => expect(screen.getByLabelText(/^Inspection location/i)).toHaveValue("Unknown inspection yard, Unmapped country"));
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("");
+    fireEvent.change(screen.getByRole("combobox", { name: /Currency/i }), { target: { value: "EUR" } });
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("EUR");
+  });
+
+  it("keeps a manual currency when an earlier geolocation request finishes", async () => {
+    const lookup = deferred<{ location: string; currency: string }>();
+    mocks.reverseGeocode.mockReturnValueOnce(lookup.promise);
+    render(<AssetForm />);
+    await waitFor(() => expect(mocks.reverseGeocode).toHaveBeenCalledOnce());
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    fireEvent.change(currency, { target: { value: "EUR" } });
+    await act(async () => { lookup.resolve({ location: "London, United Kingdom", currency: "GBP" }); await lookup.promise; });
+    expect(currency).toHaveValue("EUR");
+    expect(screen.getByLabelText(/^Inspection location/i)).toHaveValue("London, United Kingdom");
+  });
+
+  it("infers a currency for a manually entered country until the user overrides it", async () => {
+    render(<AssetForm />);
+    await waitForResolvedAssetLocation();
+    const location = screen.getByLabelText(/^Inspection location/i);
+    fireEvent.change(location, { target: { value: "Austin, Texas, United States" } });
+    fireEvent.blur(location);
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    expect(currency).toHaveValue("USD");
+    fireEvent.change(currency, { target: { value: "GBP" } });
+    fireEvent.change(location, { target: { value: "Delhi, India" } });
+    fireEvent.blur(location);
+    expect(currency).toHaveValue("GBP");
+  });
+
+  it("preserves a saved draft currency while naming the old coordinate location", async () => {
+    const draft = makeAssetResumeDraft();
+    draft.formData = { ...draft.formData, currency: "EUR" };
+    mocks.reverseGeocode.mockResolvedValue({ location: "London, United Kingdom", currency: "GBP" });
+    render(<AssetForm resumeDraft={draft} />);
+    await waitFor(() => expect(screen.getByLabelText(/^Inspection location/i)).toHaveValue("London, United Kingdom"));
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("EUR");
   });
 
   it("makes rapid Save draft then Submit one cancellable draft-save intent", async () => {

@@ -1,4 +1,5 @@
 import express from "express";
+import { convertAssignedPreviewCurrency } from "../controller/reportCurrencyConversion.controller.js";
 import {
   approveAssignedApproval,
   getAssignedApprovalPreview,
@@ -42,6 +43,7 @@ router.get("/assigned-releases", protect, getAssignedReleases);
 router.post("/assigned-releases/:id/release", ownReviewReport, releaseAssignedReport);
 router.get("/assigned-approvals/:id/preview", ownReviewReport, getAssignedApprovalPreview);
 router.put("/assigned-approvals/:id/preview", ownReviewReport, updateAssignedApprovalPreview);
+router.post("/assigned-approvals/:id/preview/currency-conversion", ownReviewReport, convertAssignedPreviewCurrency);
 router.post("/assigned-approvals/:id/preview/lots/:lotKey/images", ownReviewReport, uploadMiddleware, uploadAssignedAssetApprovalPreviewLotImages);
 router.post("/assigned-approvals/:id/preview/spec-pdf", ownReviewReport, refreshAssignedAssetApprovalPreviewSpecPdf);
 router.post("/assigned-approvals/:id/preview/resubmit", ownReviewReport, resubmitAssignedApprovalPreview);

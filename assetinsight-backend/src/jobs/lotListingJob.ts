@@ -1397,7 +1397,7 @@ async function completeLotFmvWithAI(input: {
       `Selected valuation methods: ${input.valuationMethods.join(", ")}.`,
       "Return one conservative non-zero per-lot auction value. Use FML/FMV if selected; otherwise use the first selected valuation method.",
       "This is an estimate from the asset identity, visible condition, specs, mileage/hours, damage, and market judgment. The value does not need to be printed on the asset.",
-      "Never return 0, blank, unknown, TBD, N/A, or a range. Return a single formatted value such as CAD 18,500.",
+      `Never return 0, blank, unknown, TBD, N/A, or a range. Return a single formatted value such as ${input.currency} 18,500.`,
       "If confidence is low, still estimate conservatively and explain the basis briefly.",
     ].join("\n\n"),
     input: [

@@ -14,6 +14,8 @@ const jobMocks = vi.hoisted(() => ({
   queueLotListingJob: vi.fn(),
   regenerateLotListingFiles: vi.fn(),
 }));
+const currencyProvider = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock("../src/utils/openaiClient.js", () => ({ default: { responses: { create: currencyProvider.create } } }));
 
 vi.mock("../src/jobs/lotListingJob.js", () => ({
   queueLotListingJob: jobMocks.queueLotListingJob,
@@ -392,10 +394,19 @@ describe("Lot Listing controller hardening", () => {
     const description = "Websites for reference: https://www.freightfarms.com/\n\nFull greenhouse inspection details, growing racks and accessories.\nAdditional appraiser notes must remain here after saving.";
     previewData.lots[0].description = description;
 
+    // Currency changes now require an attributable conversion rather than a
+    // prefix-only relabel. Preserve this test's existing root/coordinate checks.
+    const opened = await request(app).get(`/api/reports/assigned-approvals/${listing._id}/preview`).set(authHeader(String(approver._id)));
+    expect(opened.status).toBe(200);
+    const sourceUrl = "https://www.bankofcanada.ca/rates/exchange/daily-exchange-rates/";
+    currencyProvider.create.mockResolvedValueOnce({ status: "completed", output_text: JSON.stringify({ fromCurrency: "CAD", toCurrency: "USD", rate: .5, asOf: new Date().toISOString().slice(0, 10), sourceUrl, sourceTitle: "Bank of Canada rates" }), output: [{ type: "web_search_call", action: { sources: [{ url: sourceUrl }] } }] });
+    const converted = await request(app).post(`/api/reports/assigned-approvals/${listing._id}/preview/currency-conversion`).set(authHeader(String(approver._id))).send({ targetCurrency: "USD", preview_data: { ...previewData, currency: "CAD", _currency_base_revision: opened.body.data.preview_data._currency_base_revision } });
+    expect(converted.status).toBe(200);
+
     const response = await request(app)
       .put(`/api/reports/assigned-approvals/${listing._id}/preview`)
       .set(authHeader(String(approver._id)))
-      .send({ preview_data: previewData });
+      .send({ preview_data: { ...converted.body.data.preview_data, total_value: 1250 } });
 
     expect(response.status).toBe(200);
     const persisted: any = await LotListing.findById(listing._id).lean();

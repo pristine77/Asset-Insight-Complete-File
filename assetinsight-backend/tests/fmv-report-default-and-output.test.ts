@@ -64,7 +64,7 @@ describe("Asset report FMV defaults and selected output", () => {
 
   it("preserves a zero FMV amount with the table off", () => {
     const row = buildScheduleRows({ include_valuation_table: false, valuation_methods: [], currency: "CAD", lots: [lots[1]] })[0];
-    expect(row.valuations).toEqual([{ code: "FMV", value: "$0.00" }]);
+    expect(row.valuations).toEqual([{ code: "FMV", value: "CAD 0.00" }]);
   });
 
   it("prints all 63 sample lots and the independent CA$1,275,200 total", async () => {
@@ -99,7 +99,7 @@ describe("Asset report FMV defaults and selected output", () => {
     expect(rows).toHaveLength(63);
     for (const [index, row] of rows.entries()) {
       expect(row.description).toBe(fixtureLots[index].title);
-      expect(row.valuations).toEqual([{ code: "FMV", value: index === 62 ? "$35,200.00" : "$20,000.00" }]);
+      expect(row.valuations).toEqual([{ code: "FMV", value: index === 62 ? "CAD 35,200.00" : "CAD 20,000.00" }]);
       expect(xml).toContain(fixtureLots[index].title);
     }
     const output = process.env.FMV_REVIEW_ARTIFACT_DIR;
@@ -133,8 +133,8 @@ describe("Asset report FMV defaults and selected output", () => {
     } }, children: await buildAssetScheduleSection(report) }] });
     const bytes = await Packer.toBuffer(document);
     const xml = new PizZip(bytes).file("word/document.xml")!.asText();
-    expect(xml.split("$1,234,567,890.12")).toHaveLength(5);
-    expect(xml.split("$987,654,321.98")).toHaveLength(5);
+    expect(xml.split("CAD 1,234,567,890.12")).toHaveLength(5);
+    expect(xml.split("CAD 987,654,321.98")).toHaveLength(5);
     if (output) {
       await fs.writeFile(path.join(output, "fmv-four-methods-large.docx"), bytes);
       await fs.writeFile(path.join(output, "fmv-four-methods-large.pdf"), await generateAssetSchedulePdfFromReport(report));

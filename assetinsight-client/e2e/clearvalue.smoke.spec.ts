@@ -512,7 +512,7 @@ for (const kind of ['asset', 'lot-listing'] as const) {
     const setup = { workItemId: "split-work", cycleKey: "split-cycle", clientSubmissionId: "split-submission",
       status: "claimed", reportType: kind === "asset" ? "asset" : "lotListing", kind: "scheduleA",
       contract: { id: "split-contract", contractNo: "SPLIT-100", customerName: "Split client" },
-      lots: [{ sourceKey: "parent-line", lotId: "upstream-parent", lotNumber: "100", description: "Original line" }],
+      lots: [{ sourceKey: "parent-line", lotId: "upstream-parent", lotNumber: "100", description: "Original line", severalLots: true }],
     };
     await page.addInitScript(({ kind, setup }) => {
       sessionStorage.setItem("cv:report-form-handoff:v1", JSON.stringify({ version: 1, kind, auctioneer: setup }));
@@ -552,7 +552,7 @@ for (const kind of ['asset', 'lot-listing'] as const) {
     await page.route('**/api/auctioneer/work-items/parent-work/continue', route => route.fulfill({ json: { data: { ...setup, workItemId: 'child-work', cycleKey: 'child-cycle', clientSubmissionId: 'child-submission' } } }));
     await page.goto(`/create/${kind}`);
     await page.getByLabel(/inspection location/i).fill('Edited continuation yard');
-    await page.getByLabel(/^Currency/).fill('USD');
+    await page.getByLabel(/^Currency/).selectOption('USD');
     await page.getByRole('radiogroup').getByText('Bundle', { exact: true }).click();
     await expect(page.getByRole('radio', { name: /Bundle/ })).toBeChecked();
     await page.getByLabel('Add main photos', { exact: true }).setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jfU0AAAAASUVORK5CYII=', 'base64') });
@@ -879,7 +879,7 @@ test("Smart Upload keeps a large review bounded and completes from the report wo
   ).toBeVisible();
   await page.getByLabel("Client name").fill("Smart Upload QA");
   await page.getByLabel("Appraisal purpose").fill("Insurance valuation");
-  await page.getByLabel("Currency").fill("CAD");
+  await page.getByLabel("Currency").selectOption("CAD");
   await page
     .getByLabel(/^Inspection location/)
     .fill("Smart Upload QA Yard, Leeds");

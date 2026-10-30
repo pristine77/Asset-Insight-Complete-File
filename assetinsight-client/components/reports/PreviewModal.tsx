@@ -59,6 +59,9 @@ import {
   type AssetConditionSelectionKey,
 } from "@/lib/assetConditionSelections";
 
+import PreviewCurrencyControl from "./PreviewCurrencyControl";
+import { usePreviewCurrencyConversion } from "./usePreviewCurrencyConversion";
+
 interface PreviewModalProps {
   reportId: string;
   isOpen: boolean;
@@ -445,6 +448,12 @@ export default function PreviewModal({
     setPreviewData,
     setHasChanges,
   });
+  const { convertCurrency, currencyQuote } = usePreviewCurrencyConversion({
+    kind: "asset", reportId, isOpen, contextKey: previewContextRef.current,
+    assignedApproval: isAssignedApprovalMode,
+    disabled: locationBusy || filesGenerating || filesRegenerating || loading,
+    previewData, setPreviewData, setHasChanges, beginMutation, finishMutation, hasEditsSince,
+  });
   const effectiveResubmitMode = isAssignedApprovalMode || (status
     ? status === "pending_approval" || status === "approved" || status === "error"
     : isResubmitMode);
@@ -740,33 +749,6 @@ export default function PreviewModal({
         delete next.appraiser_signature_data_url;
         delete next.appraiser_signature_updated_at;
       }
-      return next;
-    });
-    setHasChanges(true);
-  };
-
-  // Normalize currency prefixes in display value strings without converting amounts
-  const handleCurrencyChange = (newCurrency: string) => {
-    const normalize = (val: any) => {
-      const s = String(val || "");
-      if (!s) return s;
-      // keep numeric part, dots and commas
-      const num = s.replace(/[^0-9.,-]/g, "").replace(/^,+/, "");
-      return num ? `${newCurrency} ${num}` : s;
-    };
-
-    setPreviewData((prev: any) => {
-      const next: any = { ...prev, currency: newCurrency };
-      if (next.total_appraised_value != null) {
-        next.total_appraised_value = normalize(next.total_appraised_value);
-      }
-      if (Array.isArray(next.lots)) {
-        next.lots = next.lots.map((lot: any) => ({
-          ...lot,
-          estimated_value: normalize(lot.estimated_value),
-        }));
-      }
-      // Leave valuation_data numeric fields untouched; UI shows currency label separately
       return next;
     });
     setHasChanges(true);
@@ -1460,7 +1442,9 @@ export default function PreviewModal({
 
   const workflowLocked = filesGenerating || filesRegenerating;
   const mutationMessage =
-    activeMutation === "upload"
+    activeMutation === "currency"
+      ? "Looking up a current exchange rate and converting amounts…"
+      : activeMutation === "upload"
       ? "Uploading images and updating this preview…"
       : activeMutation === "submit"
           ? effectiveResubmitMode
@@ -1844,21 +1828,14 @@ export default function PreviewModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs sm:text-sm font-medium text-[var(--app-text-muted)] mb-1.5">
-                    Currency
-                  </label>
-                  <select
-                    {...getFocusTrackingProps("currency")}
-                    value={previewData?.currency || "CAD"}
-                    onChange={(e) => handleCurrencyChange(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-[var(--app-border)] rounded-lg focus:ring-2 focus:ring-[var(--app-accent)] focus:border-transparent transition-all"
-                  >
-                    <option value="CAD">CAD - Canadian Dollar</option>
-                    <option value="USD">USD - US Dollar</option>
-                    <option value="EUR">EUR - Euro</option>
-                    <option value="GBP">GBP - British Pound</option>
-                    <option value="INR">INR - Indian Rupee</option>
-                  </select>
+                  <PreviewCurrencyControl
+                    key={`${reportId}:${previewData?.currency || "CAD"}`}
+                    currency={previewData?.currency || "CAD"}
+                    disabled={editorLocked || locationBusy || filesGenerating || filesRegenerating}
+                    busy={activeMutation === "currency"}
+                    quote={currencyQuote}
+                    onConvert={convertCurrency}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-[var(--app-text-muted)] mb-1.5">

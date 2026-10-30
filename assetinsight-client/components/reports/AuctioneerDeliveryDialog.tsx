@@ -378,7 +378,7 @@ export default function AuctioneerDeliveryDialog({
                   disabled={busy || terminal || retrying}
                   autoFocus
                 >
-                  <option value="LottingBoard">Lotting Board</option>
+                  <option value="LottingBoard">Posting Board</option>
                   <option value="OpToDoBoard">Operations To-Do Board</option>
                 </select>
               </label>

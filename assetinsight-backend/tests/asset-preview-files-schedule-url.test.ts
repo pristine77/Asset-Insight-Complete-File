@@ -112,8 +112,8 @@ describe.sequential("Asset preview file generation", () => {
       valuation_methods: [], valuation_data: { methods: [{ method: "OLV", percentage: 77 }] },
       preview_data: { lots: [reportLot], valuation_methods: [], include_valuation_table: false } });
     const sourceBefore: any = await AssetReport.findById(report._id).lean();
-    const rounds = [{ table: false, methods: [], expected: ["FMV"], amount: "$160.00" },
-      { table: true, methods: ["OLV"], expected: ["OLV"], amount: "$123.20" },
+    const rounds = [{ table: false, methods: [], expected: ["FMV"], amount: "CAD 160.00" },
+      { table: true, methods: ["OLV"], expected: ["OLV"], amount: "CAD 123.20" },
       { table: true, methods: [], expected: [], amount: undefined }];
     for (const [index, round] of rounds.entries()) {
       const token = `fmv-review-${index}`;
@@ -160,7 +160,7 @@ describe.sequential("Asset preview file generation", () => {
         const row = buildScheduleRows(data)[0];
         expect(row.description).toBe(title);
         expect(row.valuations.map((v) => v.code)).toEqual(round === 1 ? ["FMV"] : ["OLV"]);
-        expect(row.valuations[0].value).toBe(round === 1 ? "$160.00" : "$123.20");
+        expect(row.valuations[0].value).toBe(round === 1 ? "CAD 160.00" : "CAD 123.20");
       }
       const stored: any = await AssetReport.findById(report._id).lean();
       expect(stored.job_status).toBe("done");

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { convertLotListingPreviewCurrency } from "../controller/reportCurrencyConversion.controller.js";
 import {
   createLotListing,
   uploadMiddleware,
@@ -58,6 +59,7 @@ router.get("/progress/:id", protect, getLotListingProgress);
 router.get("/:id/preview", protect, getLotListingPreview);
 router.get("/:id/submitted-preview", protect, getLotListingSubmittedPreview);
 router.put("/:id/preview", protect, updateLotListingPreview);
+router.post("/:id/preview/currency-conversion", protect, convertLotListingPreviewCurrency);
 router.post("/:id/preview/lots/:lotKey/images", protect, uploadMiddleware, uploadLotListingPreviewLotImages);
 router.post("/:id/preview/spec-pdf", protect, refreshLotListingSpecPdf);
 

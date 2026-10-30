@@ -99,6 +99,36 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
+it('inherits a legacy report currency instead of assuming CAD in its preview', async () => {
+  const legacy = fixture(1) as Record<string, unknown>;
+  delete legacy.currency;
+  jest.mocked(api.get).mockImplementation(async url => String(url).includes('category-specs') ? { data: { data: { specs: [] } } } : { data: { data: { status: 'preview', currency: 'USD', preview_data: legacy, imageUrls: [] } } });
+  await render(<PreviewScreen reportId="legacy-usd" reportType="Asset" mode="pending" onBack={onBack} />);
+  await screen.findByText('Report currency · USD');
+  expect(api.post).not.toHaveBeenCalled();
+});
+
+it.each(['Asset', 'LotListing'] as const)('preserves the converted %s snapshot and signed quote through the existing Save', async reportType => {
+  saved = fixture(2);
+  const converted = { ...structuredClone(saved), currency: 'USD', currency_conversion: { signature: 'opaque-signed-receipt' } };
+  converted.lots.forEach(lot => { lot.estimated_value = '12950'; });
+  jest.mocked(api.post).mockImplementation(async (url, body) => {
+    if (String(url).endsWith('/preview/currency-conversion')) return { data: { data: { preview_data: converted, quote: { fromCurrency: 'CAD', toCurrency: 'USD', rate: .7, asOf: '2026-10-30', sourceUrl: 'https://example.test/rate', sourceTitle: 'Published rate', quotedAt: '2026-10-30T10:00:00Z' } } } };
+    saved = structuredClone((body as { preview_data: ReturnType<typeof fixture> }).preview_data);
+    return { data: { data: {} } };
+  });
+  await render(<PreviewScreen reportId="currency-report" reportType={reportType} mode="pending" onBack={onBack} />);
+  await screen.findByLabelText('Lot 1 title');
+  await fireEvent.press(screen.getByRole('button', { name: 'Preview target currency' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'USD' }));
+  expect(api.post).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole('button', { name: 'Convert report currency' }));
+  await screen.findByText('1 CAD = 0.7 USD · 2026-10-30');
+  await save();
+  expect(saved).toEqual(expect.objectContaining({ currency: 'USD', currency_conversion: converted.currency_conversion, lots: converted.lots }));
+  expect(api.post).toHaveBeenCalledWith(`/${reportType === 'Asset' ? 'asset' : 'lot-listing'}/currency-report/preview/currency-conversion`, expect.objectContaining({ targetCurrency: 'USD', preview_data: expect.objectContaining({ currency: 'CAD' }) }), expect.objectContaining({ skipAuthRefreshReplay: true }));
+});
+
 it.each(['Asset', 'LotListing'] as const)('hides narrative inputs but preserves their saved data when editing the %s Title', async reportType => {
   saved = fixture(2);
   const original = structuredClone(saved);
