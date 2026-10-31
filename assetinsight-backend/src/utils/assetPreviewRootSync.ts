@@ -11,7 +11,8 @@ const STRING_FIELDS = [
   "appraisal_company",
   "industry",
   "language",
-  "currency",
+  // Not "currency": a report keeps the currency it was valued in, so a preview
+  // save never changes it (owner, 2026-10-31; utils/reportCurrencyLock.ts).
   "damage_analysis",
 ] as const;
 

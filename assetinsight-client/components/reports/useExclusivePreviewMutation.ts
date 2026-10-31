@@ -8,7 +8,7 @@ import {
   type SetStateAction,
 } from "react";
 
-export type PreviewMutationKind = "save" | "submit" | "upload" | "currency";
+export type PreviewMutationKind = "save" | "submit" | "upload";
 
 export type PreviewMutationLease = {
   id: number;

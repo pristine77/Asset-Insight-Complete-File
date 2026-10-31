@@ -1,66 +1,51 @@
 # Asset and Lot Listing currency
 
-Creation forms detect currency from the inspection location, not the device's
-language. The dropdown is the final authority: manual selections and restored
-draft/continuation values survive late location responses. A readable web
-location with an unknown currency requires an explicit choice. Offline/denied
-location access retains the existing manual fallback.
+A report's currency is decided when the report is created, and the valuation
+is produced in it: `utils/assetPrompts.ts` asks for every value in the report's
+currency. A preview save never changes it (owner, 2026-10-31: "The software has
+to do its valuation in the correct currency").
 
-## Preview conversion
+## How a new report's currency is chosen
 
-An editable preview uses **Convert amounts**, followed by its existing **Save**.
-Selecting a dropdown option alone never relabels monetary values. Conversion
-is a read-only calculation until Save; it does not enqueue image analysis,
-regenerate files, approve, release or mutate a customer report by itself.
-Save retains the existing artifact-generation and approval workflow.
+1. A continued form keeps the currency already chosen.
+2. A report from an Auctioneer 2.0 contract starts in that sale's currency.
+   Auctioneer 2.0 sends `currency` ("CAD"/"USD") on its contracts, incoming
+   tasks and events, decided as the sale's invoices are billed (a US sale is
+   USD; a contract not yet on a sale goes by the currency it was written in).
+   `normalizeAuctioneer2Contract` reads it, the work item's contract snapshot
+   stores it, the setup returns it, and `applyCanonicalAuctioneerDetails` uses
+   it when a form sends none.
+3. Otherwise the inspection location decides: the country named in it, then a
+   Canadian postal code or a US state code with its ZIP, then a province/state
+   name or a ", SK" / ", ND" style code (`currencyForReportLocation`, the same
+   rules on the website and in the phone app). Reverse geocoding of the
+   device's position supplies the country when no address is typed. An
+   address that points both ways chooses nothing, and the user picks.
+4. The browser's or phone's language is never used: most Canadian PCs report
+   "en-US".
 
-The authenticated endpoints are:
+The dropdown on the creation form is the final authority before submission:
+a manual selection survives late location responses.
 
-- `POST /api/asset/:id/preview/currency-conversion`
-- `POST /api/lot-listing/:id/preview/currency-conversion`
-- `POST /api/reports/assigned-approvals/:id/preview/currency-conversion`
+## After creation
 
-Body: `{ targetCurrency, preview_data }`. Send the entire current edited
-snapshot, including the opaque `_currency_base_revision` provided by its most
-recent preview GET. The response is `{ data: { preview_data, quote } }`.
-Apply the returned snapshot intact, including `currency_conversion`; do not
-construct or edit its token or monetary basis. Pass it to the ordinary Save.
-The read marker is stripped before persistence and generation snapshots.
+The preview shows the report's currency and does not change it.
+`utils/reportCurrencyLock.ts`:
 
-`quote` contains `fromCurrency`, `toCurrency`, `rate`, `asOf`, `sourceUrl`,
-`sourceTitle` and `quotedAt`. Display the date and clickable source to users.
-The backend uses the existing centralized OpenAI connection and the
-[Responses web-search tool](https://developers.openai.com/api/docs/guides/tools-web-search)
-to look up only the currency pair and current date. Report content, photographs
-and customer details are not sent to that lookup. A completed search, consulted
-HTTPS source from the allowlist, positive finite rate and recent observation
-date are required. Failed or unsupported lookups leave the preview untouched;
-there is no invented fallback rate.
+- `previewWithReportCurrency` fills the currency into every preview GET.
+- `keepSavedReportCurrency` runs on every Asset and Lot Listing preview save
+  (owner, assigned-approval and draft paths): the preview's currency is reset
+  to the one the report was valued in, whatever the request carried.
+- `syncAssetPreviewDataToRoot` no longer copies a preview currency onto the
+  report.
 
-## Financial and concurrency rules
+## Removed: preview currency conversion (2026-10-31)
 
-- Decimal/rational arithmetic applies the rate to explicit financial fields,
-  using the target currency's minor units. Nulls and unknowns stay unknown.
-  Ambiguous monetary strings are rejected instead of guessed.
-- Derived totals sum converted, individually rounded lots. Independent manual
-  financial overrides are converted as overrides. Valuation percentages stay
-  percentages. Existing Proposal Valuation fee formulas and caps still apply.
-- Signed monetary bases prevent successive pre-Save currency changes from
-  compounding rounding drift. New local monetary edits are rebased deliberately.
-- The rate is a stable, dated intent for a long editing session. A timer does
-  not force users to discard work. Its signature, report identity, server
-  snapshot, update stamp and Proposal Valuation revision are verified at Save.
-  Another tab's edit or reassignment requires a fresh preview/conversion.
-- Protected Asset saves convert the authoritative evaluator sheet under the
-  existing revision guard. They ignore client attempts to supply its values.
-  Root and preview currencies/financial values are saved together.
-- Merged reports convert the full derived report; parent reports stay intact.
-- Monetary conversion never rewrites specifications, hours, quantities, IDs,
-  descriptions or historical external statistics embedded in prose.
-- Client contexts fence pending responses by report, editing state and account
-  session, and serialize conversion with Save/upload actions.
-
-The optional Lot preview receipt uses its existing document schema. There are
-no new collections, indexes, environment variables or migrations. Deploy the
-backend before the website and a new mobile build. Admin's generic preview
-remains read-only and displays the saved report values.
+The preview's "Convert amounts" conversion (exchange rate looked up through the
+OpenAI web-search tool, signed conversion receipts) was removed at the owner's
+request. Its endpoints `POST /api/asset/:id/preview/currency-conversion`,
+`/api/lot-listing/:id/preview/currency-conversion` and
+`/api/reports/assigned-approvals/:id/preview/currency-conversion` no longer
+exist. Reports converted while it was live keep their converted amounts and
+currency; the leftover `currency_conversion` and `_currency_base_revision`
+fields are stripped from incoming saves and never written again.

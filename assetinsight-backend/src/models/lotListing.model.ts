@@ -84,7 +84,6 @@ export interface ILotListing extends Document {
     longitude?: number;
     inspector_name?: string;
     currency?: string;
-    currency_conversion?: Record<string, unknown>;
     total_value?: number;
     include_damage_analysis?: boolean;
     bank_photos_enabled?: boolean;
@@ -292,7 +291,6 @@ const LotListingSchema: Schema<ILotListing> = new Schema(
       longitude: { type: Number, min: -180, max: 180 },
       inspector_name: { type: String },
       currency: { type: String },
-      currency_conversion: { type: Schema.Types.Mixed },
       total_value: { type: Number },
       include_damage_analysis: { type: Boolean, default: true },
       bank_photos_enabled: { type: Boolean, default: false },

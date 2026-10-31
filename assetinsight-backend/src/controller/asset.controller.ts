@@ -1,4 +1,4 @@
-import { withCurrencyBaseRevision } from "../service/reportCurrencyConversionService.js";
+import { previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { productionReportOwnerFilter } from "../service/reviewReportPolicy.js";
 import { optionalCaptureId } from "../service/captureInventoryService.js";
@@ -1579,7 +1579,7 @@ export const getPreviewData = async (req: AuthRequest, res: Response) => {
           (report as any).preview_files,
           (report as any).files
         ),
-        preview_data: withCurrencyBaseRevision(report),
+        preview_data: previewWithReportCurrency(report, report.preview_data),
         preview_files: previewFiles,
         grouping_mode: report.grouping_mode,
         image_count: Array.isArray(report.imageUrls) ? report.imageUrls.length : 0,
@@ -2878,7 +2878,7 @@ export const getSubmittedPreviewData = async (req: AuthRequest, res: Response) =
           report.preview_files,
           (report as any).files
         ),
-        preview_data: withCurrencyBaseRevision(report),
+        preview_data: previewWithReportCurrency(report, report.preview_data),
         preview_files: downloadable ? report.preview_files : {},
         grouping_mode: report.grouping_mode,
         image_count: Array.isArray(report.imageUrls) ? report.imageUrls.length : 0,

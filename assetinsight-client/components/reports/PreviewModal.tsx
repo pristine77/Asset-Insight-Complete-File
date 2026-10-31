@@ -59,8 +59,7 @@ import {
   type AssetConditionSelectionKey,
 } from "@/lib/assetConditionSelections";
 
-import PreviewCurrencyControl from "./PreviewCurrencyControl";
-import { usePreviewCurrencyConversion } from "./usePreviewCurrencyConversion";
+import PreviewCurrencyDisplay from "./PreviewCurrencyDisplay";
 
 interface PreviewModalProps {
   reportId: string;
@@ -448,12 +447,6 @@ export default function PreviewModal({
     setPreviewData,
     setHasChanges,
   });
-  const { convertCurrency, currencyQuote, selectCurrency, currencyTarget, currencyPending, isCurrencyPending } = usePreviewCurrencyConversion({
-    kind: "asset", reportId, isOpen, contextKey: previewContextRef.current,
-    assignedApproval: isAssignedApprovalMode,
-    disabled: locationBusy || filesGenerating || filesRegenerating || loading,
-    previewData, setPreviewData, setHasChanges, beginMutation, finishMutation, hasEditsSince,
-  });
   const effectiveResubmitMode = isAssignedApprovalMode || (status
     ? status === "pending_approval" || status === "approved" || status === "error"
     : isResubmitMode);
@@ -613,10 +606,6 @@ export default function PreviewModal({
   };
 
   const handleSubmitForApproval = async () => {
-    if (isCurrencyPending()) {
-      toast.info("Finish the selected currency conversion before saving, or choose the current report currency.");
-      return;
-    }
     if (isMutationLocked()) return;
     if (!previewData) {
       toast.error("No preview data available");
@@ -1446,9 +1435,7 @@ export default function PreviewModal({
 
   const workflowLocked = filesGenerating || filesRegenerating;
   const mutationMessage =
-    activeMutation === "currency"
-      ? "Looking up a current exchange rate and converting amounts…"
-      : activeMutation === "upload"
+    activeMutation === "upload"
       ? "Uploading images and updating this preview…"
       : activeMutation === "submit"
           ? effectiveResubmitMode
@@ -1831,19 +1818,7 @@ export default function PreviewModal({
                     className="w-full px-3 py-2 text-sm border border-[var(--app-border)] rounded-lg focus:ring-2 focus:ring-[var(--app-accent)] focus:border-transparent transition-all"
                   />
                 </div>
-                <div>
-                  <PreviewCurrencyControl
-                    key={`${reportId}:${previewData?.currency || "CAD"}`}
-                    currency={previewData?.currency || "CAD"}
-                    targetCurrency={currencyTarget}
-                    pending={currencyPending}
-                    disabled={editorLocked || locationBusy || filesGenerating || filesRegenerating}
-                    busy={activeMutation === "currency"}
-                    quote={currencyQuote}
-                    onTargetChange={selectCurrency}
-                    onConvert={convertCurrency}
-                  />
-                </div>
+                <PreviewCurrencyDisplay currency={previewData?.currency || "CAD"} />
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-[var(--app-text-muted)] mb-1.5">
                     Total Appraised Value
@@ -2840,7 +2815,6 @@ export default function PreviewModal({
               <button
                 onClick={handleSubmitForApproval}
                 disabled={
-                  currencyPending ||
                   editorLocked ||
                   loading ||
                   locationBusy ||
@@ -2848,7 +2822,6 @@ export default function PreviewModal({
                 }
                 className="app-button app-button--primary"
                 aria-label={isAssignedApprovalMode ? "Save and approve preview" : "Save preview"}
-                aria-describedby={currencyPending ? "preview-currency-status" : undefined}
                 title={SAVE_PREVIEW_TITLE}
               >
                 {submitting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

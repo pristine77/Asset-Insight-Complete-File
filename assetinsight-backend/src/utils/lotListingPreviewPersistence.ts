@@ -2,7 +2,7 @@ import { resolvePhotoWatermark } from "./photoWatermarkPolicy.js";
 import { getExplicitCoordinates } from "./auctionLocations.js";
 import { normalizeReportContractKey } from "./reportContractIdentity.js";
 import { normalizeLotListingValuationMethods } from "./lotListingValuationMethods.js";
-import { currencyConversionForSave } from "../service/reportCurrencyConversionService.js";
+import { keepSavedReportCurrency } from "./reportCurrencyLock.js";
 
 function clonePlain<T>(value: T): T {
   return value ? JSON.parse(JSON.stringify(value)) : value;
@@ -51,7 +51,9 @@ export function buildLotListingPreviewPersistence(
     ...(nextPreviewData || {}),
     valuation_methods: valuationMethods,
   };
-  currencyConversionForSave(listing, listing?.preview_data || {}, previewData, "lotListing");
+  // The currency stays the one the listing was valued in (owner, 2026-10-31;
+  // utils/reportCurrencyLock.ts), so `set.currency` below repeats it.
+  keepSavedReportCurrency(listing, listing?.preview_data, previewData);
   const lots = Array.isArray(previewData.lots)
     ? clonePlain(previewData.lots)
     : [];

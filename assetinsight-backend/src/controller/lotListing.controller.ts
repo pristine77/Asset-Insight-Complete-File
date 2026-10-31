@@ -1,4 +1,4 @@
-import { withCurrencyBaseRevision } from "../service/reportCurrencyConversionService.js";
+import { previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { optionalCaptureId } from "../service/captureInventoryService.js";
 import { getCanonicalLotListingPreview, hasRecoverableFailedPreview } from "../utils/reportPreviewAvailability.js";
@@ -1697,7 +1697,7 @@ export const getLotListingPreview = async (req: AuthRequest, res: Response) => {
         bank_photos_enabled: (listing as any).bank_photos_enabled === true,
         watermark_images: resolvePhotoWatermark((listing as any).watermark_images),
         valuation_methods: normalizeValuationMethods((listing as any).valuation_methods),
-        preview_data: withCurrencyBaseRevision(listing, getCanonicalLotListingPreview(listing) || {
+        preview_data: previewWithReportCurrency(listing, getCanonicalLotListingPreview(listing) || {
           contract_no: listing.contract_no,
           sales_date: listing.sales_date,
           location: listing.location,
@@ -1756,7 +1756,7 @@ export const getLotListingSubmittedPreview = async (req: AuthRequest, res: Respo
         bank_photos_enabled: (listing as any).bank_photos_enabled === true,
         watermark_images: resolvePhotoWatermark((listing as any).watermark_images),
         valuation_methods: normalizeValuationMethods((listing as any).valuation_methods),
-        preview_data: withCurrencyBaseRevision(listing, getCanonicalLotListingPreview(listing) || {
+        preview_data: previewWithReportCurrency(listing, getCanonicalLotListingPreview(listing) || {
           contract_no: listing.contract_no,
           sales_date: listing.sales_date,
           location: listing.location,

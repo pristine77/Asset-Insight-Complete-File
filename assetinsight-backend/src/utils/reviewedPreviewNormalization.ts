@@ -7,8 +7,10 @@ export function normalizeReviewedPreviewLotsForBusinessRules<T extends Record<st
   options: Parameters<typeof normalizePreviewLotsForBusinessRules>[1] = {}
 ): T {
   const canonical = { ...previewData };
-  // GET-only currency CAS marker is transport metadata, never report content or
-  // part of an immutable file-generation snapshot.
+  // Fields of the removed preview currency conversion (owner, 2026-10-31). A
+  // page still open from before the removal may send them; they are never
+  // report content or part of an immutable file-generation snapshot.
   delete canonical._currency_base_revision;
+  delete canonical.currency_conversion;
   return normalizePreviewLotsForBusinessRules(markPreviewDataSpecsReviewed(canonical), options);
 }

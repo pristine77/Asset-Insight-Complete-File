@@ -4,7 +4,7 @@ import { mergeAssetAdminScheduleSheetAfterPreviewEdit } from "./assetAdminSchedu
 import { proposalValuationWritableRevisionCondition } from "./proposalValuationArtifactPublicationService.js";
 import { broadcastProposalValuationRevision } from "./proposalValuationRealtimeService.js";
 import { normalizeAssetPreviewCoverImages } from "../utils/assetCoverImages.js";
-import { currencyConversionForSave, convertedAuthoritativeAssetPreview } from "./reportCurrencyConversionService.js";
+import { keepSavedReportCurrency } from "../utils/reportCurrencyLock.js";
 
 const SERVER_OWNED_PREVIEW_FIELDS = new Set(["admin_schedule_sheet"]);
 
@@ -82,8 +82,9 @@ export async function saveAssetReportWithProtectedPreviewData(input: {
       ? JSON.parse(JSON.stringify(input.report.preview_data))
       : {};
   const previousPreviewData = input.previousPreviewData || {};
-  const currencyConversion = currencyConversionForSave(input.report, previousPreviewData, submittedPreviewData, "asset");
-  const protectedPreviousPreviewData = convertedAuthoritativeAssetPreview(previousPreviewData, currencyConversion);
+  // The currency stays the one the report was valued in (owner, 2026-10-31;
+  // utils/reportCurrencyLock.ts).
+  keepSavedReportCurrency(input.report, previousPreviewData, submittedPreviewData);
   const previewDataWithCoverSelection =
     !Object.prototype.hasOwnProperty.call(
       submittedPreviewData,
@@ -103,19 +104,19 @@ export async function saveAssetReportWithProtectedPreviewData(input: {
       previewDataWithCoverSelection,
       input.report?.imageUrls
     ),
-    protectedPreviousPreviewData
+    previousPreviewData
   );
   const proposalValuationRevision = Number(
     input.report?.proposal_valuation_revision || 0
   );
   const scheduleMerge = mergeAssetAdminScheduleSheetAfterPreviewEdit({
-    previousPreviewData: protectedPreviousPreviewData,
+    previousPreviewData,
     nextPreviewData: previewData,
   });
   const proposalValuationChanged = Boolean(
-    (currencyConversion && previousPreviewData.admin_schedule_sheet) || (scheduleMerge &&
+    scheduleMerge &&
       JSON.stringify(scheduleMerge.previousSheet) !==
-        JSON.stringify(scheduleMerge.nextSheet))
+        JSON.stringify(scheduleMerge.nextSheet)
   );
   const nextProposalValuationRevision = proposalValuationChanged
     ? proposalValuationRevision + 1
@@ -136,14 +137,6 @@ export async function saveAssetReportWithProtectedPreviewData(input: {
   }
   const expectedUpdatedAt = input.report?.updatedAt;
   input.report.preview_data = previewData;
-  if (currencyConversion) {
-    for (const field of ["currency", "lots", "total_value", "total_appraised_value", "valuation_data"]) {
-      if (Object.prototype.hasOwnProperty.call(previewData, field)) {
-        input.report.set(field, previewData[field]);
-        if (typeof previewData[field] === "object") input.report.markModified?.(field);
-      }
-    }
-  }
   input.report.markModified?.("preview_data");
   input.report.$where = {
     $and: [

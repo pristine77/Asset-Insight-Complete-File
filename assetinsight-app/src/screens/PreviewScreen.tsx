@@ -1,4 +1,3 @@
-import PreviewCurrencyConversion from '../components/PreviewCurrencyConversion';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
@@ -405,9 +404,6 @@ const PreviewScreen = ({
   const compactFields = width < 480 || fontScale > 1.3;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [convertingCurrency, setConvertingCurrency] = useState(false);
-  const [pendingCurrencyTarget, setPendingCurrencyTarget] = useState<string | null>(null);
-  const pendingCurrencyTargetRef = useRef<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -434,11 +430,6 @@ const PreviewScreen = ({
   const [assetSelectionEpoch, setAssetSelectionEpoch] = useState(0);
   const previewRequestRevisionRef = useRef(0);
   const reportContextKey = `${reportType}:${reportId}:${mode}:${source}`;
-  useEffect(() => {
-    setConvertingCurrency(false);
-    pendingCurrencyTargetRef.current = null;
-    setPendingCurrencyTarget(null);
-  }, [reportContextKey]);
   const reportContextRef = useRef(reportContextKey);
   reportContextRef.current = reportContextKey;
   const previewScrollRef = useRef<ScrollView>(null);
@@ -477,7 +468,7 @@ const PreviewScreen = ({
   const lastSpecTapRef = useRef<{ key: string; time: number } | null>(null);
   const previewBusyRef = useRef(false);
   previewBusyRef.current =
-    loading || refreshing || saving || submitting || convertingCurrency || filesGenerating || uploadingLotKey !== null;
+    loading || refreshing || saving || submitting || filesGenerating || uploadingLotKey !== null;
 
   const isAsset = reportType === "Asset";
   const isLotListing = reportType === "LotListing";
@@ -666,10 +657,10 @@ const PreviewScreen = ({
   }, []);
 
   const onRefresh = useCallback(() => {
-    if (saving || submitting || convertingCurrency || uploadingLotKey !== null) return;
+    if (saving || submitting || uploadingLotKey !== null) return;
     setRefreshing(true);
     loadPreviewData();
-  }, [loadPreviewData, saving, submitting, convertingCurrency, uploadingLotKey]);
+  }, [loadPreviewData, saving, submitting, uploadingLotKey]);
 
   const updateField = (field: string, value: any) => {
     if ((isAsset || isLotListing) && previewBusyRef.current) return;
@@ -956,7 +947,7 @@ const PreviewScreen = ({
   };
 
   const handleSave = async () => {
-    if (previewBusyRef.current || pendingCurrencyTargetRef.current) return;
+    if (previewBusyRef.current) return;
     previewBusyRef.current = true;
     const requestRevision = ++previewRequestRevisionRef.current;
     const isCurrent = () =>
@@ -1079,7 +1070,7 @@ const PreviewScreen = ({
   };
 
   const handleSubmit = async () => {
-    if (previewBusyRef.current || pendingCurrencyTargetRef.current) return;
+    if (previewBusyRef.current) return;
     const submissionContext = reportContextKey;
     const confirmationRevision = previewRequestRevisionRef.current;
     let confirmed = false;
@@ -1109,7 +1100,7 @@ const PreviewScreen = ({
             ? generationLabel
             : isAssignedApproval ? "Submit" : (isSubmittedMode ? "Resubmit" : "Submit"),
           onPress: async () => {
-            if (confirmed || reportContextRef.current !== submissionContext || previewBusyRef.current || pendingCurrencyTargetRef.current ||
+            if (confirmed || reportContextRef.current !== submissionContext || previewBusyRef.current ||
                 previewRequestRevisionRef.current !== confirmationRevision) return;
             confirmed = true;
             previewBusyRef.current = true;
@@ -1691,7 +1682,8 @@ const PreviewScreen = ({
           <View style={styles.sectionContent}>
             {renderDateInput("Effective Date", "effective_date")}
             {renderDateInput("Inspection Date", "inspection_date")}
-            <View style={styles.fieldContainer}><Text style={styles.fieldLabel}>Currency</Text><Text>{previewData?.currency || "CAD"}</Text></View>
+            {/* Shown, never changed: a report keeps the currency it was valued in (owner, 2026-10-31). */}
+            <View style={styles.fieldContainer}><Text style={styles.fieldLabel}>Currency</Text><Text testID="preview-currency">{previewData?.currency || "CAD"}</Text></View>
             {renderInput("Total Appraised Value", "total_appraised_value", "$0.00")}
           </View>
         </View>
@@ -2832,27 +2824,6 @@ const PreviewScreen = ({
 
           {/* Content */}
           <View style={styles.contentSection}>
-            {(isAsset || isLotListing) && previewData ? <PreviewCurrencyConversion
-              key={reportContextKey}
-              previewData={previewData}
-              endpoint={isAssignedApproval ? `/reports/assigned-approvals/${reportId}/preview/currency-conversion` : `/${isLotListing ? 'lot-listing' : 'asset'}/${reportId}/preview/currency-conversion`}
-              disabled={previewBusyRef.current}
-              onBusyChange={busy => { if (reportContextRef.current === reportContextKey) { if (busy) previewBusyRef.current = true; setConvertingCurrency(busy); } }}
-              onPendingChange={target => {
-                if (reportContextRef.current !== reportContextKey || pendingCurrencyTargetRef.current === target) return;
-                pendingCurrencyTargetRef.current = target;
-                previewRequestRevisionRef.current++;
-                setPendingCurrencyTarget(target);
-              }}
-              onConverted={next => {
-                if (reportContextRef.current !== reportContextKey) return;
-                previewRequestRevisionRef.current++;
-                resetAssetLotSelection();
-                previewDataRef.current = next;
-                setPreviewData(next);
-                setHasChanges(true);
-              }}
-            /> : null}
 
             {isAsset ? renderAssetPreview() : isLotListing ? renderLotListingPreview() : renderRealEstatePreview()}
           </View>
@@ -2866,7 +2837,7 @@ const PreviewScreen = ({
             <TouchableOpacity
               style={[styles.saveBtn, !hasChanges && styles.saveBtnDisabled]}
               onPress={handleSave}
-              disabled={saving || convertingCurrency || pendingCurrencyTarget !== null || !hasChanges}
+              disabled={saving || !hasChanges}
               accessibilityRole="button"
               accessibilityLabel="Save preview changes"
             >
@@ -2883,7 +2854,7 @@ const PreviewScreen = ({
 
           {(() => {
             const submitDisabled =
-              previewBusyRef.current || pendingCurrencyTarget !== null || (!isAssignedApproval && !isLotListing && !isAsset &&
+              previewBusyRef.current || (!isAssignedApproval && !isLotListing && !isAsset &&
                 (reportType === "RealEstate" ? !shouldResubmitRealEstate(status, mode) : mode === "pending") && hasChanges);
             const submitText = filesGenerating
               ? "Generating files..."
