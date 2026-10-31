@@ -633,6 +633,12 @@ export default function PreviewsPage() {
     );
   }
 
+  /*
+     Layout (owner, 2026-10-31: "Make UI nicer too", after "use dead space" on
+     Incoming and My Reports): full width beside the menu, the six counts on
+     one row, and on wide screens each report on one line (name, details,
+     actions) instead of a header line plus a details band (page.module.css).
+  */
   return (
     <main className={styles.page}>
       <header className={styles.pageHeader}>
@@ -643,15 +649,18 @@ export default function PreviewsPage() {
             submitted preview packages.
           </p>
         </div>
-        <button
-          type="button"
-          className={styles.control}
-          onClick={() => void handleManualRefresh()}
-          disabled={refreshing}
-        >
-          <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
+        <div className={styles.headerActions}>
+          {lastLoadedAt ? <span className={styles.refreshedAt}>Last complete refresh: {lastLoadedAt.toLocaleTimeString()}</span> : null}
+          <button
+            type="button"
+            className={styles.control}
+            onClick={() => void handleManualRefresh()}
+            disabled={refreshing}
+          >
+            <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </header>
 
       {loadIssues.length > 0 ? <section role="alert" className={styles.loadIssue}>
@@ -660,7 +669,6 @@ export default function PreviewsPage() {
         <ul>{loadIssues.map(issue => <li key={issue}>{issue}</li>)}</ul>
         <button type="button" className={styles.control} disabled={refreshing} onClick={() => void handleManualRefresh()}>Retry loading previews</button>
       </section> : null}
-      {lastLoadedAt ? <p className={styles.subtitle}>Last complete refresh: {lastLoadedAt.toLocaleTimeString()}</p> : null}
 
       <section
         aria-label="Preview summary"
@@ -1115,11 +1123,12 @@ export default function PreviewsPage() {
                           onClick={() => handleOpenPreview(report)}
                         ><FileSearch className="size-3.5" /> {jobActive || report.status === "cancelled" ? "View progress" : jobFailed ? "Review & retry" : "Review report"}</button> : <button
                           type="button"
-                          className={`${styles.action} ${styles.actionDanger}`}
+                          aria-label={`Delete ${info.typeLabel} report: ${info.title}`}
+                          title="Delete this report"
+                          className={`${styles.action} ${styles.actionDanger} ${styles.actionDelete}`}
                           onClick={() => setDeleteTarget(report)}
                         >
-                          <Trash2 className="size-3.5" />
-                          Delete
+                          <Trash2 className="size-4" />
                         </button>}
                       </div>
                     </div>

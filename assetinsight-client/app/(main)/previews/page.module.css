@@ -1,9 +1,9 @@
+/* Full width beside the menu (owner, 2026-10-31: "use dead space"). */
 .page {
   width: 100%;
-  max-width: 1480px;
   min-width: 0;
   margin: 0 auto;
-  padding: 22px clamp(16px, 2.4vw, 32px) 32px;
+  padding: 20px clamp(16px, 2vw, 28px) 28px;
   color: var(--app-text);
 }
 
@@ -12,11 +12,24 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .headerCopy {
   min-width: 0;
+}
+
+.headerActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.refreshedAt {
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .title {
@@ -94,11 +107,12 @@
   transform: none;
 }
 
+/* All six counts on one row. */
 .summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   overflow: hidden;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   background: var(--app-panel);
@@ -107,7 +121,7 @@
 
 .summaryItem {
   min-width: 0;
-  padding: 13px 16px 12px;
+  padding: 10px 16px;
   border-inline-end: 1px solid var(--app-border);
 }
 
@@ -127,9 +141,9 @@
 }
 
 .summaryValue {
-  margin: 3px 0 0;
+  margin: 2px 0 0;
   color: var(--app-text-strong);
-  font-size: 1.28rem;
+  font-size: 1.2rem;
   font-weight: 690;
   line-height: 1.2;
   letter-spacing: -0.03em;
@@ -149,14 +163,13 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
-  min-height: 70px;
-  padding: 14px 16px 0;
+  padding: 10px 16px 0;
   border-bottom: 1px solid var(--app-border);
 }
 
 .queueIntro {
   min-width: 0;
-  padding-bottom: 13px;
+  padding-bottom: 10px;
 }
 
 .queueTitle {
@@ -180,7 +193,7 @@
   align-items: center;
   gap: 3px;
   padding: 3px;
-  margin-bottom: 11px;
+  margin-bottom: 9px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   background: var(--app-panel-alt);
@@ -418,6 +431,13 @@
   color: var(--app-danger);
 }
 
+/* Delete: an icon at the end of the row, as on My Reports. */
+.actionDelete {
+  width: 34px;
+  margin-left: auto;
+  padding-inline: 0;
+}
+
 .actionStatus {
   border-color: color-mix(in srgb, var(--app-accent) 24%, transparent);
   background: var(--app-accent-soft);
@@ -462,6 +482,55 @@
 
 .rowContinuation {
   margin-left: 88px;
+}
+
+/*
+   Wide screens: one line per report. The row is a grid of name | details |
+   actions (rowMain steps aside with display: contents so its two children
+   join the row's grid), and notices, progress and downloads run full width
+   beneath. Actions start at the same place on every row: Preview first,
+   Delete at the end. From 1281px, where the three columns fit beside the
+   menu; narrower screens keep the stacked row.
+*/
+@media (min-width: 1281px) {
+  .reportRow {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.1fr) minmax(240px, 1fr) minmax(280px, auto);
+    grid-template-areas: "identity details actions";
+    align-items: center;
+    column-gap: 28px;
+    padding: 10px 16px;
+    contain-intrinsic-size: auto 84px;
+  }
+
+  .rowMain {
+    display: contents;
+  }
+
+  .reportIdentity {
+    grid-area: identity;
+    align-items: center;
+  }
+
+  .details {
+    grid-area: details;
+    margin: 0;
+    border-top: 0;
+  }
+
+  .detail {
+    padding-top: 0;
+  }
+
+  .actions {
+    grid-area: actions;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .rowContinuation {
+    grid-column: 1 / -1;
+  }
 }
 
 .notice,
@@ -589,6 +658,20 @@
   background: color-mix(in srgb, var(--app-danger) 82%, black);
 }
 
+@media (max-width: 1180px) {
+  .summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .summaryItem:nth-child(3n) {
+    border-inline-end: 0;
+  }
+
+  .summaryItem:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--app-border);
+  }
+}
+
 @media (max-width: 900px) {
   .page {
     padding-top: 18px;
@@ -626,21 +709,9 @@
     max-width: 48ch;
   }
 
-  .summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-bottom: 14px;
-  }
-
+  /* Phones keep the three-across counts set at 1180px. */
   .summaryItem {
-    padding: 11px 12px 10px;
-  }
-
-  .summaryItem:nth-child(2) {
-    border-inline-end: 0;
-  }
-
-  .summaryItem:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--app-border);
+    padding: 9px 10px;
   }
 
   .summaryValue {
