@@ -102,8 +102,13 @@ const FILE_VARIANTS = [
   "images",
 ] as const;
 
+/*
+   Action buttons are as wide as their label (owner, 2026-10-31: "Improve the UI
+   here too ... use dead space"). They used to stretch to fill the row, so four
+   actions wrapped onto two uneven lines and made every row twice as tall.
+*/
 const REPORT_ACTION_CLASS_NAME =
-  "inline-flex min-h-8 min-w-[5.75rem] flex-1 items-center justify-center gap-1.5 rounded-md border px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-ring)] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex min-h-8 items-center justify-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-ring)] disabled:cursor-not-allowed disabled:opacity-45";
 
 function auctioneerDeliveryPresentation(
   delivery?: AuctioneerDeliverySummary
@@ -381,19 +386,27 @@ function hasGroupDownloadVariants(group: ReportGroup) {
   });
 }
 
+/*
+   Each download's icon is coloured by the kind of file, so a row's files read
+   at a glance on the plain chips (owner, 2026-10-31: "make these nicer"):
+   PDF red, Word blue, Excel green, ZIP amber.
+*/
 function fileActionIcon(
   variant: "pdf" | "specPdf" | "crDocx" | "docx" | "xlsx" | "images"
 ) {
   if (variant === "xlsx") {
-    return <FileSpreadsheet aria-hidden className="size-4 shrink-0" />;
+    return <FileSpreadsheet aria-hidden className="size-3.5 shrink-0 text-[var(--app-success)]" />;
   }
   if (variant === "images") {
-    return <FileArchive aria-hidden className="size-4 shrink-0" />;
+    return <FileArchive aria-hidden className="size-3.5 shrink-0 text-[var(--app-warning)]" />;
   }
   if (variant === "specPdf") {
-    return <FileImage aria-hidden className="size-4 shrink-0" />;
+    return <FileImage aria-hidden className="size-3.5 shrink-0 text-[var(--app-danger)]" />;
   }
-  return <FileText aria-hidden className="size-4 shrink-0" />;
+  if (variant === "pdf") {
+    return <FileText aria-hidden className="size-3.5 shrink-0 text-[var(--app-danger)]" />;
+  }
+  return <FileText aria-hidden className="size-3.5 shrink-0 text-[var(--app-info)]" />;
 }
 
 function imageUrlsFrom(value: unknown): string[] {
@@ -1634,7 +1647,7 @@ export default function ReportsPage() {
 
     return (
       <div
-        className="grid w-full min-w-[9.5rem] grid-cols-2 gap-1.5"
+        className="flex w-full flex-wrap gap-1"
         role="group"
         aria-label={`Available files for ${fileGroupName}`}
       >
@@ -1652,7 +1665,7 @@ export default function ReportsPage() {
               type="button"
               title={`Download ${label}`}
               aria-label={`Download ${label}`}
-              className="inline-flex min-h-8 min-w-0 items-center justify-start gap-1 rounded-md border border-[var(--app-info-border)] bg-[var(--app-accent-soft)] px-1.5 text-xs font-semibold text-[var(--app-accent)] transition-colors hover:border-[var(--app-accent)] hover:bg-[var(--app-panel)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-ring)] disabled:cursor-not-allowed disabled:border-[var(--app-border)] disabled:bg-[var(--app-panel-alt)] disabled:text-[var(--app-text-muted)] disabled:opacity-60"
+              className="inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md border border-[var(--app-border)] bg-[var(--app-panel)] px-1.5 text-xs font-semibold text-[var(--app-text)] transition-colors hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-ring)] disabled:cursor-not-allowed disabled:border-[var(--app-border)] disabled:bg-[var(--app-panel-alt)] disabled:text-[var(--app-text-muted)] disabled:opacity-60"
               onClick={() => void handleDownload(file._id)}
               disabled={disabled}
             >
@@ -1661,7 +1674,7 @@ export default function ReportsPage() {
               ) : (
                 fileActionIcon(variant)
               )}
-              <span className="min-w-0 text-left leading-4">{label}</span>
+              <span className="leading-4">{label}</span>
             </button>
           );
         })}
@@ -1730,7 +1743,7 @@ export default function ReportsPage() {
 
     return (
       <div
-        className="flex w-full flex-wrap items-center justify-end gap-1.5"
+        className="flex w-full flex-wrap items-center gap-1"
         role="group"
         aria-label={`Actions for ${previewTitle}`}
       >
@@ -1823,16 +1836,15 @@ export default function ReportsPage() {
           type="button"
           aria-label={`Delete report ${previewTitle}`}
           title="Permanently delete this report"
-          className={`${REPORT_ACTION_CLASS_NAME} border-transparent bg-transparent text-[var(--app-danger)] hover:border-[var(--app-danger-border)] hover:bg-[var(--app-danger-soft)]`}
+          className={`${REPORT_ACTION_CLASS_NAME} ml-auto w-7 border-transparent bg-transparent px-0 text-[var(--app-danger)] hover:border-[var(--app-danger-border)] hover:bg-[var(--app-danger-soft)]`}
           onClick={() => void handleDelete(group)}
           disabled={deletingKey === group.key}
         >
           {deletingKey === group.key ? (
             <RefreshCw className="size-3.5 shrink-0 animate-spin" />
           ) : (
-            <Trash2 className="size-3.5 shrink-0" />
+            <Trash2 className="size-4 shrink-0" />
           )}
-          Delete
         </button> : null}
       </div>
     );
@@ -1868,7 +1880,8 @@ export default function ReportsPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-[1600px] min-w-0 space-y-4 overflow-x-hidden px-4 py-5 sm:px-5 lg:px-7 lg:py-6">
+    // Full width beside the menu (owner, 2026-10-31: "use dead space").
+    <main className="mx-auto w-full min-w-0 space-y-4 overflow-x-hidden px-4 py-5 sm:px-5 lg:px-6 lg:py-5">
       <header className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
@@ -1905,8 +1918,10 @@ export default function ReportsPage() {
         rows on screen is always explained by the tab you are standing on — the
         same treatment the Incoming queue uses.
       */}
+      {/* One toolbar line on wide screens: the tabs, then the filters. */}
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
       <div
-        className="inline-flex gap-1 self-start rounded-lg bg-[var(--app-panel-alt)] p-1"
+        className="inline-flex shrink-0 gap-1 self-start rounded-lg bg-[var(--app-panel-alt)] p-1 xl:self-auto"
         role="tablist"
         aria-label="Queue"
       >
@@ -1966,7 +1981,7 @@ export default function ReportsPage() {
       <section
         id="report-filter-controls"
         aria-label="Report filters"
-        className={`${filtersOpen ? "grid" : "hidden"} gap-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-2.5 shadow-[var(--app-shadow-card)] sm:grid-cols-2 xl:grid xl:grid-cols-[minmax(260px,1.5fr)_minmax(150px,.72fr)_minmax(170px,.82fr)_130px_auto]`}
+        className={`${filtersOpen ? "grid" : "hidden"} gap-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-2.5 shadow-[var(--app-shadow-card)] sm:grid-cols-2 xl:grid xl:flex-1 xl:grid-cols-[minmax(260px,1.5fr)_minmax(150px,.72fr)_minmax(170px,.82fr)_130px_auto] xl:gap-2 xl:border-0 xl:bg-transparent xl:p-0 xl:shadow-none`}
       >
         <label className="relative block">
           <span className="sr-only">Search reports</span>
@@ -2030,6 +2045,7 @@ export default function ReportsPage() {
           Reset
         </button>
       </section>
+      </div>
 
       {loading ? (
         <section
@@ -2121,7 +2137,8 @@ export default function ReportsPage() {
                   ) : null}
 
                   <div className="mt-3.5 flex flex-col gap-3 border-t border-[var(--app-border)] pt-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+                    {/* Never squeezed: the files and actions beside it wrap instead. */}
+                    <div className="grid shrink-0 grid-cols-2 gap-x-8 gap-y-3">
                       <div className="flex min-w-0 gap-2.5">
                         <Boxes className="mt-0.5 size-[18px] shrink-0 text-[var(--app-text-muted)]" strokeWidth={1.8} />
                         <dl>
@@ -2156,14 +2173,18 @@ export default function ReportsPage() {
               <table className="w-full min-w-[1120px] table-fixed border-collapse text-left">
                 <caption className="sr-only">Generated reports</caption>
                 <colgroup>
+                  {/*
+                    Files and Actions get the room, so a row's chips and buttons
+                    sit on as few lines as possible. The report type is shown
+                    under the report's name instead of in a column of its own.
+                  */}
                   <col className="w-[19%]" />
-                  <col className="w-[5%]" />
+                  <col className="w-[4%]" />
                   <col className="w-[8%]" />
                   <col className="w-[8%]" />
-                  <col className="w-[9%]" />
                   <col className="w-[8%]" />
-                  <col className="w-[20%]" />
-                  <col className="w-[23%]" />
+                  <col className="w-[28%]" />
+                  <col className="w-[25%]" />
                 </colgroup>
                 <thead className="bg-[var(--app-panel-soft)] text-xs font-semibold text-[var(--app-text-muted)]">
                   <tr>
@@ -2171,7 +2192,6 @@ export default function ReportsPage() {
                       "Report",
                       "Lots",
                       "Market value",
-                      "Type",
                       "Created",
                       "Status",
                       "Files",
@@ -2216,7 +2236,9 @@ export default function ReportsPage() {
                                 {title}
                               </p>
                               <p className="mt-0.5 truncate text-xs text-[var(--app-text-muted)]">
-                                {subtitle}
+                                {subtitle === reportTypeColumnLabel(group.type)
+                                  ? subtitle
+                                  : `${reportTypeColumnLabel(group.type)} · ${subtitle}`}
                               </p>
                               {group.isMergedReport ? (
                                 <p className="mt-0.5 text-[11px] font-semibold text-[var(--app-accent)]">
@@ -2231,9 +2253,6 @@ export default function ReportsPage() {
                         </td>
                         <td className="border-r border-[var(--app-border)] px-3 py-2.5 text-sm font-medium text-[var(--app-text)]">
                           {group.fairMarketValue || "—"}
-                        </td>
-                        <td className="border-r border-[var(--app-border)] px-3 py-2.5 text-sm text-[var(--app-text)]">
-                          {reportTypeColumnLabel(group.type)}
                         </td>
                         <td className="border-r border-[var(--app-border)] px-3 py-2.5">
                           <p className="text-sm text-[var(--app-text)]">
