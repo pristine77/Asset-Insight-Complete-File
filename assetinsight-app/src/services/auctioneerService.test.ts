@@ -502,3 +502,13 @@ describe('Proposal list', () => {
     await expect(auctioneerService.markProposalItemsNotFound('list-work', ['L1'])).rejects.toBe(refusal);
   });
 });
+
+/*
+ * Owner, 2026-10-31: "US sales come through as USD" and the valuation must be
+ * done in the right currency. The sale's currency arrives with the contract;
+ * only a three-letter code is taken.
+ */
+it.each([['USD', 'USD'], ['usd', 'USD'], ['US dollars', undefined], [undefined, undefined]])('reads the sale currency %j as %j', (currency, expected) => {
+  const parsed = parseAuctioneerSetup({ ...fixture(), contract: { ...fixture().contract, currency } });
+  expect(parsed.contract.currency).toBe(expected);
+});

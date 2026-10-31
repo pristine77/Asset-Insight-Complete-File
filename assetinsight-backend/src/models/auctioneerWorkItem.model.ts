@@ -35,6 +35,8 @@ export interface IAuctioneerContractSnapshot {
   eventTitle?: string;
   eventDate?: string;
   location?: string;
+  /** The sale's currency from Auctioneer 2.0, e.g. "USD" (owner, 2026-10-31: "US sales come through as USD"). */
+  currency?: string;
   categories?: string;
   hasScheduleA?: boolean;
   hasUnknownLots?: boolean;
@@ -261,6 +263,7 @@ const ContractSnapshotSchema = new Schema<IAuctioneerContractSnapshot>(
     eventTitle: { type: String },
     eventDate: { type: String },
     location: { type: String },
+    currency: { type: String },
     categories: { type: String },
     hasScheduleA: { type: Boolean },
     hasUnknownLots: { type: Boolean },

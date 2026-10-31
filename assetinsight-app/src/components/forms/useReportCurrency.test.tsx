@@ -26,3 +26,12 @@ it('ignores a superseded report location response', async () => {
   await act(() => first('GBP'));
   expect(result.current.currency).toBe('USD');
 });
+it('starts in the sale currency and keeps it through a form reset (owner, 2026-10-31)', async () => {
+  const { result } = await renderHook(() => useReportCurrency({ visible: true, initialCurrency: 'USD', location: 'Regina, Saskatchewan' }));
+  expect(result.current.currency).toBe('USD');
+  await act(() => result.current.resetCurrency('USD'));
+  expect(result.current.currency).toBe('USD');
+  expect(detectReportCurrency).not.toHaveBeenCalled();
+  await act(() => result.current.resetCurrency());
+  await waitFor(() => expect(result.current.currency).toBe('GBP'));
+});

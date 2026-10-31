@@ -1,6 +1,7 @@
 import api from './api';
 import type { UploadContinuationReservation } from './durableContinuationTypes';
 import { captureAuthOperation } from './authSessionOperation';
+import { normalizeReportCurrency } from '../utils/reportCurrency';
 
 export type AuctioneerReportType = 'asset' | 'lotListing';
 export type AuctioneerWorkItemStatus =
@@ -144,6 +145,8 @@ export interface AuctioneerWorkItemSetup {
     eventTitle: string;
     eventDate?: string;
     location: string;
+    /** The sale's currency from Auctioneer 2.0, e.g. "USD" (owner, 2026-10-31: "US sales come through as USD"). */
+    currency?: string;
     categories?: string;
   };
   lots: AuctioneerSourceLot[];
@@ -236,6 +239,8 @@ export function parseAuctioneerSetup(value: unknown): AuctioneerWorkItemSetup {
       customerName: value.contract.customerName || '',
       eventTitle: value.contract.eventTitle || '',
       location: value.contract.location || '',
+      // Only a three-letter code; anything else leaves the form's own detection in charge.
+      currency: normalizeReportCurrency(value.contract.currency) || undefined,
     },
     lots: (value.lots as Record<string, unknown>[]).map(parseSourceLotScheduleA),
     // Older servers send neither field: nothing is required and nothing is offered.

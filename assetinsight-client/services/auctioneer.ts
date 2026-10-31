@@ -120,6 +120,8 @@ export type AuctioneerWorkItemSetup = {
     eventTitle: string;
     eventDate?: string;
     location: string;
+    /** The sale's currency from Auctioneer 2.0, e.g. "USD" (owner, 2026-10-31: "US sales come through as USD"). */
+    currency?: string;
     categories?: string;
   };
   lots: AuctioneerSourceLot[];
@@ -663,6 +665,10 @@ function normalizeSetup(value: unknown): AuctioneerWorkItemSetup {
         contract.saleLocation,
         event.location
       ),
+      // Only a three-letter code; anything else leaves the form's own detection in charge.
+      currency: /^[A-Z]{3}$/.test(textValue(contract.currency).toUpperCase())
+        ? textValue(contract.currency).toUpperCase()
+        : undefined,
       categories:
         textValue(raw.categories, contract.categories, snapshot.categories) ||
         undefined,

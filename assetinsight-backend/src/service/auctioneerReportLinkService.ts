@@ -280,7 +280,9 @@ export function applyCanonicalAuctioneerDetails(
   // date remain canonical, but a field worker may refine the actual sale/site
   // location before generating the report.
   details.location = details.location || contract.location || "";
-  details.currency = details.currency || "CAD";
+  // The sale's currency from Auctioneer 2.0 when the form sent none (owner,
+  // 2026-10-31: "US sales come through as USD"); CAD only when neither did.
+  details.currency = details.currency || contract.currency || "CAD";
 
   if (item.selectedReportType === "asset") {
     details.client_name = details.client_name || contract.customerName || "";

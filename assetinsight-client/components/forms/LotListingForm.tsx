@@ -386,7 +386,10 @@ export default function LotListingForm({
     string | null
   >(null);
   const [language, setLanguage] = useState<"en" | "fr" | "es">(continuationDetails?.language ?? "en");
-  const [currency, setCurrency] = useState(continuationDetails?.currency ?? currencyForReportLocation(continuationDetails?.location || importedLocation) ?? "CAD");
+  // The sale's currency from Auctioneer 2.0 comes before reading the address
+  // (owner, 2026-10-31: "US sales come through as USD"); a continued form keeps
+  // the currency the user already chose.
+  const [currency, setCurrency] = useState(continuationDetails?.currency ?? auctioneer?.contract.currency ?? currencyForReportLocation(continuationDetails?.location || importedLocation) ?? "CAD");
   const currencyTouchedRef = useRef(Boolean(auctioneer || continuationDetails?.currency));
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuationDetails?.bankPhotosEnabled ?? (false));
   const [watermarkImages, setWatermarkImages] = useState(continuationDetails?.watermarkImages ?? (false));
@@ -1274,7 +1277,7 @@ export default function LotListingForm({
       auctioneer ? "Imported from Auctioneer" : "Detecting current location..."
     );
     setLanguage("en");
-    setCurrency(currencyForReportLocation(importedLocation) || "CAD");
+    setCurrency(auctioneer?.contract.currency || currencyForReportLocation(importedLocation) || "CAD");
     currencyTouchedRef.current = Boolean(auctioneer);
     setBankPhotosEnabled(false);
     setWatermarkImages(false);

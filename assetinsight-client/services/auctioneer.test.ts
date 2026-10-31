@@ -251,6 +251,22 @@ describe("AuctioneerService incoming", () => {
     expect(setup.reportId).toBeUndefined();
   });
 
+  /*
+   * Owner, 2026-10-31: "US sales come through as USD" and the valuation must be
+   * done in the right currency. The sale's currency arrives with the contract;
+   * only a three-letter code is taken.
+   */
+  it.each([["usd", "USD"], ["CAD", "CAD"], ["US dollars", undefined], [undefined, undefined]])(
+    "reads the sale currency %j from the contract as %j",
+    async (currency, expected) => {
+      vi.mocked(API.get).mockResolvedValueOnce({
+        data: { data: { workItemId: "work-1", contract: { id: "contract-1", contractNo: "825639", currency } } },
+      });
+      const setup = await AuctioneerService.getSetup("work-1");
+      expect(setup.contract.currency).toBe(expected);
+    },
+  );
+
   it.each([true, false, undefined, "true"])("trusts only a boolean upload-resume capability: %j", async (canResumeUpload) => {
     vi.mocked(API.get).mockResolvedValueOnce({ data: { data: { workItemId: "work-1", canResumeUpload } } });
     const setup = await AuctioneerService.getSetup("work-1");

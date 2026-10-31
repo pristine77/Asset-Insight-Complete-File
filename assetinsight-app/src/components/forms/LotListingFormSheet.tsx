@@ -119,7 +119,9 @@ const LotListingFormSheet = ({
   const [location, setLocation] = useState(() => normalizeHiddenLocation(continuation?.location ?? auctioneer?.contract.location).location);
   const [latitude, setLatitude] = useState<number | undefined>(continuation?.latitude);
   const [longitude, setLongitude] = useState<number | undefined>(continuation?.longitude);
-  const { currency, setCurrency, resetCurrency } = useReportCurrency({ initialCurrency: continuation?.currency, location, latitude, longitude, visible, paused: Boolean(draftIdToLoad) });
+  // A continued form keeps its chosen currency; otherwise the sale's currency
+  // from Auctioneer 2.0 comes before reading the address (owner, 2026-10-31).
+  const { currency, setCurrency, resetCurrency } = useReportCurrency({ initialCurrency: continuation?.currency ?? auctioneer?.contract.currency, location, latitude, longitude, visible, paused: Boolean(draftIdToLoad) });
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuation?.bankPhotosEnabled ?? false);
   const [watermarkImages, setWatermarkImages] = useState(continuation?.watermarkImages ?? DEFAULT_IMAGE_WATERMARK);
   const [auctionCloseContract, setAuctionCloseContract] = useState(false);
@@ -1327,7 +1329,7 @@ const LotListingFormSheet = ({
     setCaptureMode('online'); setManualSubmissionRequired(false); setLocalSavedAt(undefined); setLocalSaveError(undefined); setUploadPaused(false);
     setContractNo('');
     setSalesDate(isoDate(new Date()));
-    resetCurrency();
+    resetCurrency(auctioneer?.contract.currency);
     setLocation(normalizeHiddenLocation().location);
     setLatitude(undefined);
     setLongitude(undefined);

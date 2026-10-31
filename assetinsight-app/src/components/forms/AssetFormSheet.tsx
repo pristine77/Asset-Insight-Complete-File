@@ -151,7 +151,10 @@ const AssetFormSheet = ({
     ? normalizeHiddenLocation(continuation.location, continuation.latitude, continuation.longitude)
     : auctioneer ? normalizeHiddenLocation(auctioneer.contract.location) : null);
   const { currency, setCurrency, resetCurrency, detecting: currencyLoading } = useReportCurrency({
-    initialCurrency: continuation?.currency, location: hiddenLocation?.location,
+    // A continued form keeps its chosen currency; otherwise the sale's currency
+    // from Auctioneer 2.0 comes before reading the address (owner, 2026-10-31:
+    // "US sales come through as USD").
+    initialCurrency: continuation?.currency ?? auctioneer?.contract.currency, location: hiddenLocation?.location,
     latitude: hiddenLocation?.latitude, longitude: hiddenLocation?.longitude, visible, paused: Boolean(draftIdToLoad),
   });
 
@@ -1575,7 +1578,7 @@ const AssetFormSheet = ({
     setInspectionDate(isoDate(new Date()));
     setContractNo('');
     setLanguage('en');
-    resetCurrency();
+    resetCurrency(auctioneer?.contract.currency);
     setPreparedFor('');
     setFactorsAgeCondition('');
     setFactorsQuality('');

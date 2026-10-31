@@ -429,7 +429,10 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   >(null);
   const [contractNo, setContractNo] = useState(continuationDetails?.contractNo ?? (auctioneer?.contract.contractNo || ""));
   const [language, setLanguage] = useState<"en" | "fr" | "es">(continuationDetails?.language ?? "en");
-  const [currency, setCurrency] = useState(continuationDetails?.currency ?? currencyForReportLocation(continuationDetails?.location || importedLocation) ?? (auctioneer ? "CAD" : ""));
+  // The sale's currency from Auctioneer 2.0 comes before reading the address
+  // (owner, 2026-10-31: "US sales come through as USD"); a continued form keeps
+  // the currency the user already chose.
+  const [currency, setCurrency] = useState(continuationDetails?.currency ?? auctioneer?.contract.currency ?? currencyForReportLocation(continuationDetails?.location || importedLocation) ?? (auctioneer ? "CAD" : ""));
   const [currencyTouched, setCurrencyTouched] = useState(Boolean(auctioneer || continuationDetails?.currency));
   const [currencyLoading, setCurrencyLoading] = useState(false);
   const [includeDamageAnalysis, setIncludeDamageAnalysis] = useState(continuationDetails?.includeDamageAnalysis ?? (true));
@@ -639,6 +642,10 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   locationStateRef.current = { location, latitude, longitude };
   const currencyTouchedRef = useRef(currencyTouched);
   currencyTouchedRef.current = currencyTouched;
+  // True once the inspection location is typed by hand, false again when the
+  // browser's position names it: only a typed address drops a currency that
+  // was read from the browser's position.
+  const locationTypedRef = useRef(false);
 
   const formStateRef = useRef<{ formData: AssetDraftFormData; lots: MixedLot[] }>({
     formData: currentFormData,
@@ -1320,21 +1327,17 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     }
   }, [user, appraiser, appraisalCompany]);
 
-  const applyLocaleFallbackCurrency = () => {
-    const languageTag = navigator.language || "en-CA";
-    const region = (languageTag.split("-")[1] || "").toUpperCase();
-    const currencies: Record<string, string> = {
-      US: "USD", CA: "CAD", GB: "GBP", AU: "AUD", NZ: "NZD",
-      IN: "INR", LK: "LKR", JP: "JPY", CN: "CNY", SG: "SGD",
-      AE: "AED", SA: "SAR", ZA: "ZAR", NG: "NGN", PH: "PHP",
-      MY: "MYR", TH: "THB", ID: "IDR", KR: "KRW", HK: "HKD",
-      AR: "ARS", CL: "CLP", CO: "COP", PE: "PEN", TR: "TRY",
-      EG: "EGP", KE: "KES", GH: "GHS", VN: "VND", FR: "EUR",
-      DE: "EUR", ES: "EUR", IT: "EUR", NL: "EUR", IE: "EUR",
-      PT: "EUR", BE: "EUR",
-    };
+  /*
+   * No location to read the currency from (access denied, unavailable or
+   * unnamed). This used to fall back to the browser's language, and most
+   * Windows PCs in Canada report "en-US", so Canadian reports came out in USD
+   * (owner, 2026-10-31: CAD and USD not identified correctly). The device's
+   * language says nothing about where the inspection is: the currency is left
+   * for the user to choose, and Save asks for one ("Choose a currency.").
+   */
+  const leaveCurrencyToChoose = () => {
     if (!currencyTouchedRef.current) {
-      setCurrency((current) => current || currencies[region] || "CAD");
+      setCurrency((current) => current || "");
     }
   };
 
@@ -1356,7 +1359,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
         setLocationStatus(
           "Browser coordinates were unavailable. Re-detect or enter the location manually."
         );
-        if (detectCurrency) applyLocaleFallbackCurrency();
+        if (detectCurrency) leaveCurrencyToChoose();
       }
       return;
     }
@@ -1387,6 +1390,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       }
 
       setLocation(resolved.location);
+      locationTypedRef.current = false;
       setLatitude(coordinates.latitude);
       setLongitude(coordinates.longitude);
       setLocationAttribution(
@@ -1429,7 +1433,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
           ? "The location name could not be refreshed. Keeping the previous location."
           : "The browser coordinates could not be named. Re-detect or enter the location manually."
       );
-      if (detectCurrency) applyLocaleFallbackCurrency();
+      if (detectCurrency) leaveCurrencyToChoose();
     } finally {
       if (locationLookupAbortRef.current === controller) {
         locationLookupAbortRef.current = null;
@@ -1447,7 +1451,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     if (!navigator.geolocation) {
       setLocationStatus("Browser location access is unavailable");
       if (detectCurrency) {
-        applyLocaleFallbackCurrency();
+        leaveCurrencyToChoose();
         setCurrencyLoading(false);
       }
       return;
@@ -1472,7 +1476,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
           setLocationStatus(
             "Browser location access was denied or is unavailable"
           );
-          if (detectCurrency) applyLocaleFallbackCurrency();
+          if (detectCurrency) leaveCurrencyToChoose();
         }
         if (detectCurrency) setCurrencyLoading(false);
       },
@@ -1522,9 +1526,10 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     );
     setContractNo(auctioneer?.contract.contractNo || "");
     setLanguage("en");
-    setCurrency(currencyForReportLocation(importedLocation) || (auctioneer ? "CAD" : ""));
+    setCurrency(auctioneer?.contract.currency || currencyForReportLocation(importedLocation) || (auctioneer ? "CAD" : ""));
     setCurrencyTouched(Boolean(auctioneer));
     currencyTouchedRef.current = Boolean(auctioneer);
+    locationTypedRef.current = false;
     setCurrencyLoading(false);
     currencyPromptedRef.current = false;
     setIncludeDamageAnalysis(true);
@@ -2648,6 +2653,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
                       locationLookupAbortRef.current?.abort();
                       locationLookupAbortRef.current = null;
                       setLocation(event.target.value);
+                      locationTypedRef.current = true;
                       setLatitude(null);
                       setLongitude(null);
                       setLocationAttribution(null);
@@ -2658,7 +2664,15 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
                     onBlur={(event) => {
                       if (currencyTouchedRef.current) return;
                       const detected = currencyForReportLocation(event.target.value);
-                      if (detected) setCurrency(detected);
+                      if (detected) {
+                        setCurrency(detected);
+                      } else if (locationTypedRef.current && event.target.value.trim()) {
+                        // A typed address replaces the browser's own position, so
+                        // a currency read from that position no longer applies:
+                        // the address decides, or the user chooses (owner,
+                        // 2026-10-31).
+                        setCurrency("");
+                      }
                     }}
                   />
                 </FormField>

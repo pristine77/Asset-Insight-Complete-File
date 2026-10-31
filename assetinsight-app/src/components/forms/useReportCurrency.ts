@@ -17,11 +17,13 @@ export default function useReportCurrency({ initialCurrency, location, latitude,
     setDetecting(false);
     setValue(normalizeReportCurrency(value) || value.toUpperCase());
   }, []);
-  const resetCurrency = useCallback(() => {
-    protectedRef.current = false;
+  /** Back to the start; a known starting currency (the sale's) is kept rather than re-detected. */
+  const resetCurrency = useCallback((startingCurrency?: unknown) => {
+    const known = normalizeReportCurrency(startingCurrency);
+    protectedRef.current = Boolean(known);
     generation.current++;
     setDetecting(false);
-    setValue('CAD');
+    setValue(known || 'CAD');
     setResetEpoch(epoch => epoch + 1);
   }, []);
   useEffect(() => {
