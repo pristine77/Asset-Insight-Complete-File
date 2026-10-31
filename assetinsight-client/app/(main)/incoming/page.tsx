@@ -60,6 +60,21 @@ function displayDate(value?: string) {
   return formatCalendarDate(value);
 }
 
+/*
+   An empty field in the queue: a quiet dash on screen, "Not supplied" to a
+   screen reader. Five columns of the words "Not supplied" buried the values
+   that were there (owner, 2026-10-31: "Clean up this UI"). The selected
+   contract's panel still spells it out.
+*/
+function Missing() {
+  return (
+    <span className={styles.missing} title="Not supplied">
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">Not supplied</span>
+    </span>
+  );
+}
+
 function ownerLabel(item: AuctioneerIncomingItem) {
   if (!item.claimedBy) return "another user";
   if (typeof item.claimedBy === "string") return "another user";
@@ -388,20 +403,45 @@ export default function IncomingPage() {
     selected?.status === "claimed" &&
     Boolean(selected.workItemId);
 
+  /*
+     Layout (owner, 2026-10-31: "allow the table to occupy more space. Use dead
+     space"): the title and the queue counts share one compact header instead of
+     two cards, the page uses the full width beside the menu, and the contract
+     panel opens beside the table only when a contract is selected rather than
+     holding a third of the width for a "select a contract" placeholder.
+  */
   return (
-    <div className="app-page app-page-stack">
-      <header className={`app-surface ${styles.header}`}>
-        <div>
+    <div className={`app-page app-page-stack ${styles.page}`}>
+      <header className={styles.header}>
+        <div className={styles.headingBlock}>
           <span className="app-kicker">Auctioneer workspace</span>
-          <h1 className="app-title" style={{ marginTop: 5 }}>
+          <h1 className="app-title" style={{ marginTop: 3 }}>
             Incoming
           </h1>
-          <p className="app-subtitle">
-            Review the Auctioneer lots assigned to you, claim a workflow, and
-            continue existing work without losing queue context.
+          <p className={styles.headerNote}>
+            Contracts assigned to you in Auctioneer. Claim one to start its
+            report, or continue one you already have.
           </p>
         </div>
-        <div className={styles.headerActions}>
+        <div className={styles.headerSide}>
+          <dl className={styles.stats} aria-label="Queue summary">
+            <div className={styles.stat}>
+              <dt>Available</dt>
+              <dd>{availableCount}</dd>
+            </div>
+            <div className={styles.stat}>
+              <dt>Claimed by you</dt>
+              <dd>{mineCount}</dd>
+            </div>
+            <div className={styles.stat}>
+              <dt>Assigned</dt>
+              <dd>{items.length}</dd>
+            </div>
+          </dl>
+          <span className={styles.live} title="Updates every minute while this page is visible">
+            <span className={styles.liveDot} aria-hidden />
+            Live
+          </span>
           <button
             className="app-button app-button--secondary"
             disabled={isValidating}
@@ -433,25 +473,7 @@ export default function IncomingPage() {
         </div>
       ) : null}
 
-      <section className={`app-surface ${styles.summary}`} aria-label="Queue summary">
-        <div className={styles.summaryItem}>
-          Available batches{" "}
-          <span className={styles.summaryValue}>{availableCount}</span>
-        </div>
-        <div className={styles.summaryItem}>
-          Claimed by you <span className={styles.summaryValue}>{mineCount}</span>
-        </div>
-        <div className={styles.summaryItem}>
-          Assigned batches{" "}
-          <span className={styles.summaryValue}>{items.length}</span>
-        </div>
-        <div className={styles.live}>
-          <span className={styles.liveDot} aria-hidden />
-          Updates every minute while this page is visible
-        </div>
-      </section>
-
-      <section className={styles.workspace}>
+      <section className={styles.workspace} data-panel={Boolean(selected)}>
         <div className={`app-surface ${styles.tableSurface}`}>
           <div className={styles.tableHeader}>
             <div>
@@ -459,7 +481,7 @@ export default function IncomingPage() {
               <p className={styles.tableSubtitle}>
                 {queueTab === "completed"
                   ? "Reports already sent back to Auctioneer. Select a contract to check whether more lots can be added."
-                  : "Each row contains only the lots assigned to your account."}
+                  : "Only the lots assigned to you. Select a contract to claim or continue it."}
               </p>
             </div>
             {/*
@@ -539,7 +561,7 @@ export default function IncomingPage() {
                     <th>Consignor</th>
                     <th>Salesperson</th>
                     <th>Event</th>
-                    <th>Assigned lots</th>
+                    <th className={styles.lotsCell}>Assigned lots</th>
                     <th>Status</th>
                     <th aria-label="Actions" />
                   </tr>
@@ -560,33 +582,39 @@ export default function IncomingPage() {
                           <div className={styles.contractNo}>
                             {item.contractNo || "Number unavailable"}
                           </div>
-                          <div className={styles.contractMeta}>
-                            {item.location || "Location not supplied"}
-                          </div>
+                          {item.location ? (
+                            <div className={styles.contractMeta}>{item.location}</div>
+                          ) : null}
                         </td>
                         <td
                           className={styles.descriptionCell}
                           data-label="Description"
                           title={item.description || undefined}
                         >
-                          {item.description || "Not supplied"}
+                          {item.description || <Missing />}
                         </td>
                         <td className={styles.contactCell} data-label="Customer">
-                          {item.customerName || "Not supplied"}
+                          {item.customerName || <Missing />}
                         </td>
                         <td className={styles.contactCell} data-label="Consignor">
-                          {item.consignorName || "Not supplied"}
+                          {item.consignorName || <Missing />}
                         </td>
                         <td className={styles.contactCell} data-label="Salesperson">
-                          {item.salespersonName || "Not supplied"}
+                          {item.salespersonName || <Missing />}
                         </td>
-                        <td data-label="Event">
-                          <div>{item.eventTitle || "Not supplied"}</div>
-                          <div className={styles.contractMeta}>
-                            {displayDate(item.eventDate)}
-                          </div>
+                        <td className={styles.eventCell} data-label="Event">
+                          {item.eventTitle || item.eventDate ? (
+                            <>
+                              <div>{item.eventTitle || <Missing />}</div>
+                              {item.eventDate ? (
+                                <div className={styles.contractMeta}>{displayDate(item.eventDate)}</div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <Missing />
+                          )}
                         </td>
-                        <td data-label="Assigned lots">
+                        <td className={styles.lotsCell} data-label="Assigned lots">
                           {item.lotCount}{" "}
                           <span className={styles.contractMeta}>
                             {item.proposalList ? "Proposal list" : item.kind === "scheduleA" ? "Schedule A" : "Unknown"}
@@ -826,12 +854,7 @@ export default function IncomingPage() {
                 </div>
               </div>
             </>
-          ) : (
-            <div className={styles.emptyPanel}>
-              Select a contract from the queue to review details and available
-              actions.
-            </div>
-          )}
+          ) : null}
         </aside>
       </section>
 

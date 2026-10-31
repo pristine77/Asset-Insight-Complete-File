@@ -588,9 +588,14 @@ describe("Incoming", () => {
     mocks.getIncoming.mockResolvedValue([claimedItem]);
     renderIncoming();
 
+    // The queue shows a quiet dash and tells a screen reader "Not supplied"
+    // (owner 2026-10-31: "Clean up this UI"); the panel below spells it out.
     const table = await screen.findByRole("table");
     for (const role of ["Description", "Consignor", "Salesperson"]) {
-      expect(table.querySelector(`td[data-label="${role}"]`)).toHaveTextContent(/^Not supplied$/);
+      const cell = table.querySelector(`td[data-label="${role}"]`);
+      expect(cell?.querySelector('[aria-hidden="true"]')).toHaveTextContent(/^—$/);
+      expect(cell?.querySelector(".sr-only")).toHaveTextContent(/^Not supplied$/);
+      expect(cell?.firstElementChild).toHaveAttribute("title", "Not supplied");
     }
     expect(within(table).getByRole("cell", { name: "Northfield Plant Ltd" })).toHaveAttribute("data-label", "Customer");
 
@@ -601,6 +606,21 @@ describe("Incoming", () => {
     }
     const customer = within(panel).getAllByRole("term").find((term) => term.textContent === "Customer");
     expect(customer?.nextElementSibling).toHaveTextContent("Northfield Plant Ltd");
+  });
+
+  it("gives the table the width until a contract is selected", async () => {
+    // Owner 2026-10-31: "allow the table to occupy more space. Use dead space".
+    mocks.getIncoming.mockResolvedValue([claimedItem]);
+    renderIncoming();
+
+    await screen.findByRole("table");
+    const panel = screen.getByRole("complementary", { name: "Selected contract" });
+    expect(panel).toHaveAttribute("data-open", "false");
+    expect(panel).toBeEmptyDOMElement();
+    expect(panel.parentElement).toHaveAttribute("data-panel", "false");
+
+    await selectContract("CV-200");
+    expect(panel.parentElement).toHaveAttribute("data-panel", "true");
   });
 
   it("drops the previous user's rows while the next user's queue loads", async () => {

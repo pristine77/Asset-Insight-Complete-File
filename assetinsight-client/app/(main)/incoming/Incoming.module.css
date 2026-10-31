@@ -1,43 +1,71 @@
+/* The queue uses the full width beside the menu (owner, 2026-10-31). */
+.page {
+  max-width: none;
+  gap: 14px;
+}
+
+/* One compact header: title on the left, counts and Refresh on the right. */
 .header {
   display: flex;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 20px;
-  padding: 26px 28px;
+  gap: 12px 24px;
 }
 
-.headerActions {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 8px;
+.headingBlock {
+  min-width: 0;
 }
 
-.summary {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  padding: 13px 18px;
-}
-
-.summaryItem {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.headerNote {
+  margin: 4px 0 0;
   color: var(--app-text-muted);
-  font-size: 0.82rem;
+  font-size: 0.84rem;
 }
 
-.summaryValue {
+.headerSide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.stats {
+  display: flex;
+  margin: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-panel);
+}
+
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 14px;
+}
+
+.stat + .stat {
+  border-left: 1px solid var(--app-border);
+}
+
+.stat dt {
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+}
+
+.stat dd {
+  margin: 0;
   color: var(--app-text-strong);
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 740;
+  font-variant-numeric: tabular-nums;
 }
 
 .live {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   color: var(--app-text-muted);
   font-size: 0.75rem;
 }
@@ -49,12 +77,17 @@
   background: var(--app-success);
 }
 
+/* The table alone until a contract is selected; then its panel beside it. */
 .workspace {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 16px;
+}
+
+.workspace[data-panel="true"] {
+  grid-template-columns: minmax(0, 1fr) 340px;
 }
 
 .tableSurface {
@@ -67,8 +100,8 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 18px 20px;
+  gap: 10px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--app-border);
 }
 
@@ -141,9 +174,21 @@
 }
 
 .descriptionCell {
-  min-width: 140px;
-  max-width: 240px;
+  min-width: 160px;
+  max-width: 380px;
   overflow-wrap: anywhere;
+}
+
+.eventCell {
+  min-width: 150px;
+}
+
+.lotsCell {
+  white-space: nowrap;
+}
+
+.missing {
+  color: var(--app-text-subtle);
 }
 
 @media (min-width: 768px) {
@@ -353,16 +398,6 @@
   gap: 8px;
 }
 
-.emptyPanel {
-  min-height: 330px;
-  display: grid;
-  place-items: center;
-  padding: 28px;
-  color: var(--app-text-muted);
-  font-size: 0.84rem;
-  text-align: center;
-}
-
 .emptyTable {
   min-height: 310px;
   display: grid;
@@ -406,23 +441,16 @@
   font-weight: 650;
 }
 
+/* Wide screens: no empty panel holding space while nothing is selected. */
+@media (min-width: 1181px) {
+  .detailPanel[data-open="false"] {
+    display: none;
+  }
+}
+
 @media (max-width: 1180px) {
-  .header {
-    padding: 20px;
-  }
-
-  .summary {
-    align-items: flex-start;
-    flex-wrap: wrap;
-    gap: 10px 18px;
-  }
-
-  .live {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .workspace {
+  .workspace,
+  .workspace[data-panel="true"] {
     display: block;
   }
 
@@ -488,11 +516,22 @@
     flex-direction: column;
   }
 
-  .headerActions {
+  .headerSide {
     width: 100%;
   }
 
-  .headerActions > button {
+  .stats {
+    width: 100%;
+  }
+
+  .stat {
+    flex: 1;
+    flex-direction: column;
+    gap: 0;
+    padding: 6px 10px;
+  }
+
+  .headerSide > button {
     flex: 1;
   }
 }
