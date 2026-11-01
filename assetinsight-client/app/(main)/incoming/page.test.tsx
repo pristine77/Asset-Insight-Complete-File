@@ -596,7 +596,10 @@ describe("Incoming", () => {
       expect(cell?.querySelector('[aria-hidden="true"]')).toHaveTextContent(/^—$/);
       expect(cell?.querySelector(".sr-only")).toHaveTextContent(/^Not supplied$/);
       expect(cell?.firstElementChild).toHaveAttribute("title", "Not supplied");
+      // A phone leaves empty fields out of the card (owner 2026-11-01).
+      expect(cell).toHaveAttribute("data-empty", "true");
     }
+    expect(table.querySelector('td[data-label="Customer"]')).not.toHaveAttribute("data-empty");
     expect(within(table).getByRole("cell", { name: "Northfield Plant Ltd" })).toHaveAttribute("data-label", "Customer");
 
     const panel = await selectContract("CV-200");

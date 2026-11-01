@@ -508,6 +508,135 @@
     min-width: 0;
     max-width: none;
   }
+
+  /*
+     Phone: each contract is a short card instead of nine stacked label/value
+     pairs (owner, 2026-11-01: "See how each job is long? Can you make it well
+     align and shorter?"). The row wraps its cells:
+       825291                     [Your report]  ->
+       Finance Testing · 15 Sept 2026
+       Description, when there is one
+       CUSTOMER Femi J   SALESPERSON Riley M   1 Schedule A
+     Empty fields are left out (data-empty) rather than shown as dashes.
+  */
+  /*
+     Each job is its own raised card on a light ground, with a gap between
+     cards (owner, 2026-11-01: "let the divider be a bit more obvious", "give it
+     a bit 2d feel"). tbody > tr.row outranks the shared last-row rule that
+     drops the bottom border.
+  */
+  .incomingTable tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+    background: var(--app-panel-alt);
+  }
+
+  .incomingTable tbody > tr.row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--app-border-strong);
+    border-radius: 10px;
+    background: var(--app-panel);
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.06),
+      0 3px 8px rgba(15, 23, 42, 0.07);
+  }
+
+  .incomingTable tbody > tr.row[data-selected="true"] {
+    border-color: var(--app-accent);
+    background: var(--app-accent-soft);
+    box-shadow:
+      inset 3px 0 0 var(--app-accent),
+      0 3px 8px rgba(15, 23, 42, 0.08);
+  }
+
+  .incomingTable .row > td {
+    width: auto;
+    padding: 0;
+    font-size: 0.84rem;
+  }
+
+  .incomingTable .row > td::before {
+    content: none;
+  }
+
+  .incomingTable .row > td[data-empty="true"] {
+    display: none;
+  }
+
+  .incomingTable .primaryCell {
+    order: 1;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .incomingTable .statusCell {
+    order: 2;
+  }
+
+  .incomingTable .actionCell {
+    order: 3;
+  }
+
+  /* A line break after the arrow: the first line is always contract | status | arrow. */
+  .incomingTable .row::after {
+    content: "";
+    order: 3;
+    flex-basis: 100%;
+    height: 0;
+  }
+
+  .incomingTable .eventCell {
+    order: 4;
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .eventCell > div {
+    display: inline;
+  }
+
+  .eventCell > div + div::before {
+    content: " · ";
+  }
+
+  .incomingTable .descriptionCell {
+    order: 5;
+    flex-basis: 100%;
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--app-text-muted);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .incomingTable .contactCell {
+    order: 6;
+  }
+
+  .incomingTable .row > .contactCell::before {
+    content: attr(data-label);
+    display: inline;
+    margin-right: 5px;
+    color: var(--app-text-muted);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .incomingTable .lotsCell {
+    order: 7;
+  }
+
+  .incomingTable .rowAction {
+    width: 32px;
+    min-height: 32px;
+  }
 }
 
 @media (max-width: 540px) {

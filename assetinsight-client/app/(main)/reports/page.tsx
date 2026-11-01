@@ -2090,14 +2090,19 @@ export default function ReportsPage() {
         </section>
       ) : (
         <>
-          <ul className="divide-y divide-[var(--app-border)] overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] shadow-[var(--app-shadow-card)] min-[1440px]:hidden">
+          {/*
+            Phones and narrower screens: each report is its own raised card with
+            a gap between, as on Incoming (owner, 2026-11-01: "A bit clearer
+            divider and little 2d feel").
+          */}
+          <ul className="grid gap-2.5 min-[1440px]:hidden">
             {paginatedGroups.map((group) => {
               const { status, deliveryStatus, title, subtitle, thumbnailTitle } =
                 reportPresentation(group);
               return (
                 <li
                   key={group.key}
-                  className="app-render-row p-3.5 sm:p-4"
+                  className="app-render-row rounded-xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] p-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_3px_8px_rgba(15,23,42,0.07)] sm:p-4"
                   style={{
                     contentVisibility: "auto",
                     containIntrinsicSize: "260px",

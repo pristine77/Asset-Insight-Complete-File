@@ -586,23 +586,29 @@ export default function IncomingPage() {
                             <div className={styles.contractMeta}>{item.location}</div>
                           ) : null}
                         </td>
+                        {/*
+                          data-empty: a phone hides the cell instead of showing a
+                          dash, so each contract is a short card (owner,
+                          2026-11-01: "make it well align and shorter").
+                        */}
                         <td
                           className={styles.descriptionCell}
                           data-label="Description"
+                          data-empty={item.description ? undefined : "true"}
                           title={item.description || undefined}
                         >
                           {item.description || <Missing />}
                         </td>
-                        <td className={styles.contactCell} data-label="Customer">
+                        <td className={styles.contactCell} data-label="Customer" data-empty={item.customerName ? undefined : "true"}>
                           {item.customerName || <Missing />}
                         </td>
-                        <td className={styles.contactCell} data-label="Consignor">
+                        <td className={styles.contactCell} data-label="Consignor" data-empty={item.consignorName ? undefined : "true"}>
                           {item.consignorName || <Missing />}
                         </td>
-                        <td className={styles.contactCell} data-label="Salesperson">
+                        <td className={styles.contactCell} data-label="Salesperson" data-empty={item.salespersonName ? undefined : "true"}>
                           {item.salespersonName || <Missing />}
                         </td>
-                        <td className={styles.eventCell} data-label="Event">
+                        <td className={styles.eventCell} data-label="Event" data-empty={item.eventTitle || item.eventDate ? undefined : "true"}>
                           {item.eventTitle || item.eventDate ? (
                             <>
                               <div>{item.eventTitle || <Missing />}</div>
@@ -620,13 +626,13 @@ export default function IncomingPage() {
                             {item.proposalList ? "Proposal list" : item.kind === "scheduleA" ? "Schedule A" : "Unknown"}
                           </span>
                         </td>
-                        <td data-label="Status">
+                        <td className={styles.statusCell} data-label="Status">
                           <span className={styles.status} data-tone={status.tone}>
                             {blocked ? <LockKeyhole size={12} aria-hidden /> : null}
                             {status.label}
                           </span>
                         </td>
-                        <td data-label="">
+                        <td className={styles.actionCell} data-label="">
                           <button
                             className={`app-button app-button--icon ${styles.rowAction}`}
                             aria-label={`Review ${item.contractNo || "contract"}`}
