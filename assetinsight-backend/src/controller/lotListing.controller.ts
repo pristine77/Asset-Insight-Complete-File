@@ -1,4 +1,4 @@
-import { previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
+import { assertSavedReportCurrency, previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { optionalCaptureId } from "../service/captureInventoryService.js";
 import { getCanonicalLotListingPreview, hasRecoverableFailedPreview } from "../utils/reportPreviewAvailability.js";
@@ -147,6 +147,7 @@ const resolveIncludeDamageAnalysis = (value: any, fallback = true): boolean => {
 const normalizeValuationMethods = normalizeLotListingValuationMethods;
 
 const normalizeLotListingPreviewData = (previewData: any, listing: any) => {
+  assertSavedReportCurrency(listing, listing?.preview_data, previewData);
   // Preview edits may omit generated CR disclaimer fields. Preserve existing values
   // unless the client explicitly replaces them so unrelated edits are non-destructive.
   const existingPreviewData = (listing?.preview_data as any) || {};

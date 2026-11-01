@@ -12,6 +12,7 @@ describe("report currencies", () => {
     expect(currencyForReportLocation("Canada / United States border")).toBeUndefined();
     expect(currencyForReportLocation("Ontario, California, United States")).toBe("USD");
     expect(currencyForReportLocation("Belfast, Northern Ireland")).toBe("GBP");
+    expect(currencyForReportLocation("Manchester, Great Britain")).toBe("GBP");
     expect(currencyForReportLocation("Santa Fe, New Mexico, United States")).toBe("USD");
   });
   /*

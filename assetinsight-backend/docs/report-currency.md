@@ -14,7 +14,8 @@ to do its valuation in the correct currency").
    USD; a contract not yet on a sale goes by the currency it was written in).
    `normalizeAuctioneer2Contract` reads it, the work item's contract snapshot
    stores it, the setup returns it, and `applyCanonicalAuctioneerDetails` uses
-   it when a form sends none.
+   it when a form sends none. Older claimed work uses the currency from the
+   same frozen raw contract snapshot in both setup and report creation.
 3. Otherwise the inspection location decides: the country named in it, then a
    Canadian postal code or a US state code with its ZIP, then a province/state
    name or a ", SK" / ", ND" style code (`currencyForReportLocation`, the same
@@ -33,9 +34,14 @@ The preview shows the report's currency and does not change it.
 `utils/reportCurrencyLock.ts`:
 
 - `previewWithReportCurrency` fills the currency into every preview GET.
-- `keepSavedReportCurrency` runs on every Asset and Lot Listing preview save
-  (owner, assigned-approval and draft paths): the preview's currency is reset
-  to the one the report was valued in, whatever the request carried.
+- Raw owner, assigned-approval, upload and draft submission requests are checked
+  before normalization or money/workflow changes. A different or invalid currency,
+  or a new pending conversion receipt from an older open page, receives HTTP 409
+  `REPORT_CURRENCY_LOCKED` with instructions to reload and review unsaved edits.
+- `keepSavedReportCurrency` repeats validation at persistence. Same-currency edits,
+  explicit zero values, missing legacy currency fields and old read markers work.
+  An identical receipt already stored on the report is historical provenance and
+  may be echoed by an older client on an ordinary same-currency save.
 - `syncAssetPreviewDataToRoot` no longer copies a preview currency onto the
   report.
 
@@ -47,5 +53,7 @@ request. Its endpoints `POST /api/asset/:id/preview/currency-conversion`,
 `/api/lot-listing/:id/preview/currency-conversion` and
 `/api/reports/assigned-approvals/:id/preview/currency-conversion` no longer
 exist. Reports converted while it was live keep their converted amounts and
-currency; the leftover `currency_conversion` and `_currency_base_revision`
-fields are stripped from incoming saves and never written again.
+currency. GET responses omit `currency_conversion` and `_currency_base_revision`
+without changing storage. Accepted ordinary saves strip these retired transport
+fields; pending conversions are rejected before any values can be relabelled.
+Existing reports are not automatically converted or regenerated.

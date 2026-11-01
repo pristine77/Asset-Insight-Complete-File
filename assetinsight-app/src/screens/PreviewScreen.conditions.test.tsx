@@ -121,6 +121,8 @@ it.each(['Asset', 'LotListing'] as const)('shows the %s currency with nothing to
   });
   await render(<PreviewScreen reportId="currency-kept" reportType={reportType} mode="pending" onBack={onBack} />);
   await screen.findByLabelText('Lot 1 title');
+  expect(screen.getByTestId('preview-currency')).toHaveTextContent('USD');
+  expect(screen.getByText('Set when the report was created. All values are in this currency.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Preview target currency' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Convert report currency' })).toBeNull();
   await fireEvent.changeText(screen.getByLabelText('Lot 1 title'), 'Edited title');

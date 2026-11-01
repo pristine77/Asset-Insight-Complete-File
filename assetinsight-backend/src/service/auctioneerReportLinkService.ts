@@ -1,3 +1,4 @@
+import { savedContractCurrency } from "../utils/auctioneerSaleCurrency.js";
 /**
  * Maintains the durable association between an Auctioneer work item and its generated
  * report. Conditional updates prevent relinking after a competing submission wins, and
@@ -282,7 +283,7 @@ export function applyCanonicalAuctioneerDetails(
   details.location = details.location || contract.location || "";
   // The sale's currency from Auctioneer 2.0 when the form sent none (owner,
   // 2026-10-31: "US sales come through as USD"); CAD only when neither did.
-  details.currency = details.currency || contract.currency || "CAD";
+  details.currency = details.currency || savedContractCurrency(item) || "CAD";
 
   if (item.selectedReportType === "asset") {
     details.client_name = details.client_name || contract.customerName || "";

@@ -389,8 +389,8 @@ export default function LotListingForm({
   // The sale's currency from Auctioneer 2.0 comes before reading the address
   // (owner, 2026-10-31: "US sales come through as USD"); a continued form keeps
   // the currency the user already chose.
-  const [currency, setCurrency] = useState(continuationDetails?.currency ?? auctioneer?.contract.currency ?? currencyForReportLocation(continuationDetails?.location || importedLocation) ?? "CAD");
-  const currencyTouchedRef = useRef(Boolean(auctioneer || continuationDetails?.currency));
+  const [currency, setCurrency] = useState(normalizeReportCurrency(continuationDetails?.currency) || normalizeReportCurrency(auctioneer?.contract.currency) || currencyForReportLocation(continuationDetails?.location || importedLocation) || "");
+  const currencyTouchedRef = useRef(Boolean(normalizeReportCurrency(continuationDetails?.currency) || normalizeReportCurrency(auctioneer?.contract.currency)));
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuationDetails?.bankPhotosEnabled ?? (false));
   const [watermarkImages, setWatermarkImages] = useState(continuationDetails?.watermarkImages ?? (false));
   /*
@@ -471,6 +471,8 @@ export default function LotListingForm({
   const draftSaveAbortRef = useRef<AbortController | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
   const locationRequestGenerationRef = useRef(0);
+  const currencyDetectionRequestRef = useRef<number | null>(null);
+  const currencyDetectionResultRef = useRef<{ generation: number; currency: string; location: string } | null>(null);
   const locationLookupAbortRef = useRef<AbortController | null>(null);
   const [cancellingOperation, setCancellingOperation] = useState(false);
   const statusCallbackRef = useRef(onDraftStatusChange);
@@ -542,6 +544,15 @@ export default function LotListingForm({
   const locationStateRef = useRef({ location, latitude, longitude });
   locationStateRef.current = { location, latitude, longitude };
 
+  const isCurrencyDetectionPending = useCallback(() => {
+    const generation = currencyDetectionRequestRef.current;
+    if (currencyTouchedRef.current || generation === null || generation !== locationRequestGenerationRef.current) return false;
+    const result = currencyDetectionResultRef.current;
+    // Resolving the request is not enough: Submit must see React's committed
+    // currency/location snapshot, rather than its previous render's values.
+    return result?.generation !== generation || snapshotRef.current?.currency !== result.currency || snapshotRef.current?.location !== result.location;
+  }, []);
+
   const resolveCoordinatesToLocation = useCallback(
     async ({
       coordinates,
@@ -561,6 +572,7 @@ export default function LotListingForm({
         )
       ) {
         if (requestGeneration === locationRequestGenerationRef.current) {
+          if (currencyDetectionRequestRef.current === requestGeneration) currencyDetectionRequestRef.current = null;
           setLocationStatus(
             "Browser coordinates were unavailable. Re-detect or enter the location manually."
           );
@@ -568,6 +580,7 @@ export default function LotListingForm({
         return;
       }
       if (requestGeneration !== locationRequestGenerationRef.current) return;
+      if (!currencyTouchedRef.current) currencyDetectionRequestRef.current = requestGeneration;
 
       const hadReadableLocation =
         !restored &&
@@ -598,6 +611,7 @@ export default function LotListingForm({
         setLocation(resolved.location);
         if (!currencyTouchedRef.current) {
           const detected = normalizeReportCurrency(resolved.currency) || currencyForReportLocation(resolved.location);
+          currencyDetectionResultRef.current = { generation: requestGeneration, currency: detected || "", location: resolved.location };
           setCurrency(detected || "");
         }
         setLocationAttribution(
@@ -632,6 +646,7 @@ export default function LotListingForm({
             : "The browser coordinates could not be named. Re-detect or enter the location manually."
         );
       } finally {
+        if (currencyDetectionRequestRef.current === requestGeneration && currencyDetectionResultRef.current?.generation !== requestGeneration) currencyDetectionRequestRef.current = null;
         if (locationLookupAbortRef.current === controller) {
           locationLookupAbortRef.current = null;
         }
@@ -642,10 +657,13 @@ export default function LotListingForm({
 
   const requestCurrentLocation = useCallback(() => {
     const requestGeneration = ++locationRequestGenerationRef.current;
+    currencyDetectionRequestRef.current = currencyTouchedRef.current ? null : requestGeneration;
+    currencyDetectionResultRef.current = null;
     locationLookupAbortRef.current?.abort();
     locationLookupAbortRef.current = null;
 
     if (typeof navigator === "undefined" || !navigator.geolocation) {
+      currencyDetectionRequestRef.current = null;
       setLocationStatus("Browser location access is unavailable");
       return;
     }
@@ -664,6 +682,7 @@ export default function LotListingForm({
       },
       () => {
         if (requestGeneration === locationRequestGenerationRef.current) {
+          if (currencyDetectionRequestRef.current === requestGeneration) currencyDetectionRequestRef.current = null;
           setLocationStatus("Browser location access denied or unavailable");
         }
       },
@@ -928,7 +947,7 @@ export default function LotListingForm({
         }
       }
       setLanguage(data.language || "en");
-      setCurrency(data.currency || "CAD");
+      setCurrency(data.currency || currencyForReportLocation(data.location) || "");
       currencyTouchedRef.current = Boolean(data.currency?.trim());
       setBankPhotosEnabled(Boolean(data.bankPhotosEnabled));
       setWatermarkImages(data.watermarkImages === true);
@@ -1277,8 +1296,8 @@ export default function LotListingForm({
       auctioneer ? "Imported from Auctioneer" : "Detecting current location..."
     );
     setLanguage("en");
-    setCurrency(auctioneer?.contract.currency || currencyForReportLocation(importedLocation) || "CAD");
-    currencyTouchedRef.current = Boolean(auctioneer);
+    setCurrency(normalizeReportCurrency(auctioneer?.contract.currency) || currencyForReportLocation(importedLocation) || "");
+    currencyTouchedRef.current = Boolean(normalizeReportCurrency(auctioneer?.contract.currency));
     setBankPhotosEnabled(false);
     setWatermarkImages(false);
     setError(null);
@@ -1379,7 +1398,9 @@ export default function LotListingForm({
       if (!contractNo.trim()) {
         nextErrors.contractNo = "Enter a contract number.";
       }
-      if (!/^[A-Z]{3}$/.test(currency.trim().toUpperCase())) {
+      if (isCurrencyDetectionPending()) {
+        nextErrors.currency = "Wait for currency detection to finish, or choose a currency.";
+      } else if (!/^[A-Z]{3}$/.test(currency.trim().toUpperCase())) {
         nextErrors.currency = "Choose a currency.";
       }
       if (!hasUsableReportLocation(location)) {
@@ -1414,7 +1435,7 @@ export default function LotListingForm({
 
       return Object.keys(nextErrors).length === 0;
     },
-    [auctioneer, contractNo, currency, location, mixedLots, scheduleAParentLotId]
+    [auctioneer, contractNo, currency, isCurrencyDetectionPending, location, mixedLots, scheduleAParentLotId]
   );
 
   const clearAcceptedDraft = useCallback(async (): Promise<unknown | null> => {
@@ -2209,6 +2230,7 @@ export default function LotListingForm({
                 required
                 hint="Detected from the inspection location. Choose a different currency if needed."
                 error={errors.currency}
+                labelAction={isCurrencyDetectionPending() ? "Detecting…" : undefined}
               >
                 <CurrencySelect
                   value={currency}
@@ -2259,7 +2281,8 @@ export default function LotListingForm({
                   onBlur={(event) => {
                     if (currencyTouchedRef.current) return;
                     const detected = currencyForReportLocation(event.target.value);
-                    if (detected) { setCurrency(detected); markDirty(); }
+                    setCurrency(detected || "");
+                    markDirty();
                   }}
                   placeholder="Detecting browser location…"
                   autoComplete="off"

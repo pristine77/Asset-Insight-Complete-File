@@ -262,6 +262,7 @@ function makeAuctioneerSetup(
       eventTitle: "Imported auction",
       eventDate: "2026-09-14T10:00:00.000Z",
       location: "Imported inspection yard",
+      currency: "CAD",
     },
     lots: kind === "scheduleA" ? [
       { sourceKey: "source-1", lotId: "upstream-lot-1", submissionId: "task-1", lotNumber: "10" },
@@ -359,6 +360,90 @@ describe("LotListingForm explicit save and upload workflow", () => {
     expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("");
     fireEvent.change(screen.getByRole("combobox", { name: /Currency/i }), { target: { value: "USD" } });
     expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("USD");
+  });
+
+  it("drops an inferred currency when a typed location is unknown, and requires a choice before submitting", async () => {
+    mocks.reverseGeocode.mockResolvedValue({ location: "London, United Kingdom", currency: "GBP" });
+    mocks.enqueue.mockReturnValue(new Promise(() => {}));
+    render(<LotListingForm />);
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    await waitFor(() => expect(currency).toHaveValue("GBP"));
+    const location = screen.getByLabelText(/^Current inspection location/i);
+    fireEvent.change(location, { target: { value: "Warehouse near the old yard" } });
+    fireEvent.blur(location);
+    expect(currency).toHaveValue("");
+    addValidListing();
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+    expect(screen.getByText("Choose a currency.")).toBeInTheDocument();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.change(location, { target: { value: "Another unknown inspection yard" } });
+    fireEvent.blur(location);
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    expect(mocks.enqueue.mock.calls[0][0].details.currency).toBe("USD");
+  });
+
+  it.each(["denied", "unavailable"])("leaves currency blank when browser location is %s", async state => {
+    if (state === "unavailable") Object.defineProperty(navigator, "geolocation", { configurable: true, value: undefined });
+    else mocks.getCurrentPosition.mockImplementation((_success, error) => error({ code: 1 }));
+    render(<LotListingForm />);
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("");
+    const location = screen.getByLabelText(/^Current inspection location/i);
+    fireEvent.change(location, { target: { value: "Unmapped inspection yard" } });
+    fireEvent.blur(location);
+    addValidListing();
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+    expect(screen.getByText("Choose a currency.")).toBeInTheDocument();
+    expect(mocks.reverseGeocode).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("does not submit the previous currency while a newer location is being resolved", async () => {
+    const older = deferred<{ location: string; currency: string }>(), newer = deferred<{ location: string; currency: string }>();
+    mocks.enqueue.mockReturnValue(new Promise(() => {}));
+    render(<LotListingForm />);
+    await waitForResolvedLotLocation(); addValidListing();
+    mocks.reverseGeocode.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    const redetect = screen.getByRole("button", { name: "Re-detect" });
+    fireEvent.click(redetect); fireEvent.click(redetect);
+    await act(async () => older.reject(new Error("Old lookup failed")));
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+    expect(screen.getByText("Wait for currency detection to finish, or choose a currency.")).toBeInTheDocument();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    await act(async () => { newer.resolve({ location: "Austin, Texas, United States", currency: "USD" }); await newer.promise; });
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("USD");
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    expect(mocks.enqueue.mock.calls[0][0].details.currency).toBe("USD");
+  });
+
+  it("prefers the sale currency to its address and retains a continued choice ahead of the sale", () => {
+    const auctioneer = makeAuctioneerSetup();
+    auctioneer.contract = { ...auctioneer.contract, currency: "USD", location: "Regina, Saskatchewan, Canada" };
+    const view = render(<LotListingForm auctioneer={auctioneer} />);
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("USD");
+    expect(mocks.getCurrentPosition).not.toHaveBeenCalled();
+    view.unmount();
+    render(<LotListingForm auctioneer={auctioneer} continuationDetails={{ currency: "EUR", location: "Warehouse near the old yard" }} />);
+    expect(screen.getByRole("combobox", { name: /Currency/i })).toHaveValue("EUR");
+  });
+
+  it("requires a currency for an imported unknown location and can infer a later typed address", () => {
+    const auctioneer = makeAuctioneerSetup();
+    delete auctioneer.contract.currency;
+    render(<LotListingForm auctioneer={auctioneer} />);
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    expect(currency).toHaveValue("");
+    expect(mocks.getCurrentPosition).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Add test media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create Lot Listing" }));
+    expect(screen.getByText("Choose a currency.")).toBeInTheDocument();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    const location = screen.getByLabelText(/^Current inspection location/i);
+    fireEvent.change(location, { target: { value: "Austin, TX 78701" } });
+    fireEvent.blur(location);
+    expect(currency).toHaveValue("USD");
   });
 
   it("does not replace the selected currency with a late automatic location currency", async () => {

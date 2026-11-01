@@ -100,7 +100,7 @@ function setup(type: AuctioneerReportType = 'asset'): AuctioneerWorkItemSetup {
   return {
     workItemId: 'work-parent', cycleKey: 'cycle-parent', kind: 'scheduleA', reportType: type,
     clientSubmissionId: 'submission-parent', status: 'claimed', reportId: null,
-    contract: { id: 'contract-id', contractNo: '93530.3-A', customerName: 'Incoming customer', eventTitle: 'Fall sale', eventDate: '2026-09-20', location: 'Auction yard' },
+    contract: { id: 'contract-id', contractNo: '93530.3-A', customerName: 'Incoming customer', eventTitle: 'Fall sale', eventDate: '2026-09-20', currency: 'CAD', location: 'Auction yard' },
     lots: [{ sourceKey: 'upstream-key', lotId: 'upstream-lot', submissionId: 'upstream-submission', lotNumber: '157' }],
   };
 }
@@ -1864,4 +1864,18 @@ describe.each(['asset', 'lotListing'] as const)('%s Proposal list', type => {
     expect(screen.getByTestId('mock-lot-count').props.children).toBe(0);
     expect(screen.queryByText('Contract 93530.3-A · Proposal list')).toBeNull();
   });
+});
+
+
+it.each(['asset', 'lotListing'] as const)('%s requires a currency for an older Incoming sale with no currency or recognizable location', async type => {
+  const current = setup(type); delete current.contract.currency;
+  const saved = draft(type); delete (saved.formData as any).currency;
+  jest.mocked(auctioneerService.getSetup).mockResolvedValue(current);
+  jest.mocked(AutoSaveService.getDraft).mockResolvedValue(saved as any);
+  const Form = type === 'asset' ? AssetFormSheet : LotListingFormSheet;
+  await render(<Form visible auctioneer={current} draftIdToLoad="local-parent" onClose={jest.fn()} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Create Lot & Close' })).toBeEnabled());
+  await fireEvent.press(screen.getByRole('button', { name: 'Create Lot & Close' }));
+  expect(Alert.alert).toHaveBeenCalledWith('Currency required', 'Choose a currency before submitting.');
+  expect(assetService.createAssetReport).not.toHaveBeenCalled(); expect(lotListingService.createLotListing).not.toHaveBeenCalled();
 });

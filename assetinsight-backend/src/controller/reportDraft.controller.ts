@@ -1,3 +1,4 @@
+import { assertSavedReportCurrency } from "../utils/reportCurrencyLock.js";
 /**
  * Authenticated autosave-draft and draft-media transport layer.
  *
@@ -815,6 +816,9 @@ export const promoteReportDraftPreview = async (
       });
     }
 
+    if (req.body?.preview_data && typeof req.body.preview_data === "object") {
+      assertSavedReportCurrency(report, report.preview_data, req.body.preview_data);
+    }
     const submit = req.body?.submit === true;
     if (draft.promotedAt) {
       if (

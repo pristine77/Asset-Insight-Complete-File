@@ -150,7 +150,7 @@ const AssetFormSheet = ({
   const [hiddenLocation, setHiddenLocation] = useState<HiddenLocationSnapshot | null>(() => continuation
     ? normalizeHiddenLocation(continuation.location, continuation.latitude, continuation.longitude)
     : auctioneer ? normalizeHiddenLocation(auctioneer.contract.location) : null);
-  const { currency, setCurrency, resetCurrency, detecting: currencyLoading } = useReportCurrency({
+  const { currency, setCurrency, resetCurrency, detecting: currencyLoading, currencyForSubmission } = useReportCurrency({
     // A continued form keeps its chosen currency; otherwise the sale's currency
     // from Auctioneer 2.0 comes before reading the address (owner, 2026-10-31:
     // "US sales come through as USD").
@@ -829,6 +829,12 @@ const AssetFormSheet = ({
       return;
     }
 
+    if (!currencyForSubmission() || currencyForSubmission() !== currency) {
+      setErrors(previous => ({ ...previous, currency: 'Choose a currency before creating a preview.' }));
+      setActiveStep('details');
+      Alert.alert('Currency required', currencyLoading ? 'Wait for currency detection, or choose a currency.' : 'Choose a currency before creating a preview.');
+      return;
+    }
     const operation = createUploadOperation();
     const attemptOwner = OfflineCaptureStore.getOwnerId();
     setSavingDraftPreview(true);
@@ -874,6 +880,7 @@ const AssetFormSheet = ({
     awaitingDraft,
     savingDraftPreview,
     submitting,
+    currency, currencyLoading, currencyForSubmission,
   ]);
 
   // Auto-save form data and images
@@ -1055,7 +1062,7 @@ const AssetFormSheet = ({
     if (!effectiveDate) e.effectiveDate = 'Required';
     if (!appraisalPurpose.trim()) e.appraisalPurpose = 'Required';
     if (!appraiser.trim()) e.appraiser = 'Required';
-    if (!currency || !/^[A-Z]{3}$/.test(currency)) e.currency = 'Use 3-letter code';
+    if (!currencyForSubmission()) e.currency = 'Choose a currency.';
     if (lots.length === 0) e.lots = 'Add at least one lot with images';
 
     setErrors(e);
@@ -1073,6 +1080,13 @@ const AssetFormSheet = ({
     if (submissionLockRef.current || saveLock.current || awaitingDraft || submitting || uploadAcceptedRef.current || auctioneerControl?.accepted) return;
     if (options.nextLot && captureMode === 'offline') return;
     if (saveOnly) { await handleSaveOfflineAndClose(); return; }
+    const submissionCurrency = currencyForSubmission();
+    if (!submissionCurrency || submissionCurrency !== currency) {
+      setErrors(previous => ({ ...previous, currency: 'Choose a currency before submitting.' }));
+      setActiveStep('details');
+      Alert.alert('Currency required', currencyLoading ? 'Wait for currency detection, or choose a currency.' : 'Choose a currency before submitting.');
+      return;
+    }
     if (auctioneer && (options.forceNew || !hasValidAuctioneerLotStructure(auctioneer, lots))) return;
     if (options.replaceSubmissionId && (auctioneer || submissionIdRef.current !== options.replaceSubmissionId)) return;
     if (options.newSubmissionFromId && (auctioneer || submissionIdRef.current !== options.newSubmissionFromId)) return;
@@ -1296,7 +1310,7 @@ const AssetFormSheet = ({
         appraisal_company: appraisalCompany.trim() || undefined,
 
         // Settings
-        currency: currency.toUpperCase(),
+        currency: submissionCurrency,
         language: language,
         grouping_mode: 'mixed',
 
@@ -2145,11 +2159,11 @@ const AssetFormSheet = ({
       {!compactAuctioneerActions ? <TouchableOpacity
         style={[
           styles.submitButtonDetails,
-          (submitting || (!saveOnly && lots.reduce((sum, lot) => sum + lot.files.length + lot.extraFiles.length, 0) === 0)) && styles.submitButtonDisabled,
+          (submitting || (!saveOnly && currencyLoading) || (!saveOnly && lots.reduce((sum, lot) => sum + lot.files.length + lot.extraFiles.length, 0) === 0)) && styles.submitButtonDisabled,
         ]}
         onPress={() => void handleSubmit()}
         accessibilityRole="button" accessibilityLabel={saveOnly ? 'Save offline asset report' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit asset report'}
-        disabled={submitting || (!saveOnly && lots.reduce((sum, lot) => sum + lot.files.length + lot.extraFiles.length, 0) === 0)}>
+        disabled={submitting || (!saveOnly && currencyLoading) || (!saveOnly && lots.reduce((sum, lot) => sum + lot.files.length + lot.extraFiles.length, 0) === 0)}>
         {submitting ? (
           <>
             <ActivityIndicator color="#fff" size="small" />
@@ -2361,11 +2375,11 @@ const AssetFormSheet = ({
           {!compactAuctioneerActions ? <TouchableOpacity
             style={[
               styles.submitButton,
-              (submitting || (!saveOnly && totalImages === 0)) && styles.submitButtonDisabled,
+              (submitting || (!saveOnly && currencyLoading) || (!saveOnly && totalImages === 0)) && styles.submitButtonDisabled,
             ]}
             onPress={() => void handleSubmit()}
             accessibilityRole="button" accessibilityLabel={saveOnly ? 'Save offline asset report' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit asset report'}
-            disabled={submitting || (!saveOnly && totalImages === 0)}>
+            disabled={submitting || (!saveOnly && currencyLoading) || (!saveOnly && totalImages === 0)}>
             {submitting ? (
               <>
                 <ActivityIndicator color="#fff" size="small" />
@@ -2406,8 +2420,8 @@ const AssetFormSheet = ({
           </View>
         </View>
         {compactAuctioneerActions && auctioneer ? <AuctioneerFormHeader setup={auctioneer}
-          disabled={submitting || savingDraftPreview || !lots.some((lot) => lot.files.length > 0)}
-          closeDisabled={submitting || savingDraftPreview || !lots.some((lot) => lot.files.length + lot.extraFiles.length > 0)}
+          disabled={submitting || savingDraftPreview || currencyLoading || !lots.some((lot) => lot.files.length > 0)}
+          closeDisabled={submitting || savingDraftPreview || currencyLoading || !lots.some((lot) => lot.files.length + lot.extraFiles.length > 0)}
           submitting={submitting} paused={uploadPaused}
           onPress={() => void handleSubmit({ nextLot: true })}
           onSubmit={() => void handleSubmit()} /> : null}

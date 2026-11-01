@@ -53,4 +53,23 @@ describe("the sale currency from Auctioneer 2.0", () => {
     applyCanonicalAuctioneerDetails(unknown, item());
     expect(unknown.currency).toBe("CAD");
   });
+  it.each(["asset", "lotListing"])("uses the same raw frozen sale currency for setup and canonical %s creation on an older claim", (selectedReportType) => {
+    const item: any = {
+      _id: "68a12c24f3c7f07935f6d111", kind: "scheduleA", selectedReportType,
+      clientSubmissionId: "old-claim", contract: { id: "contract-1", contractNo: "C-100" },
+      snapshot: { contract: { saleCurrency: " usd " }, lots: [{ sourceKey: "opaque-source-1", lotId: "lot-1", submissionId: "submission-1" }] },
+    };
+    const details: Record<string, any> = { mixed_lots: [{ count: 1, source_key: "opaque-source-1" }] };
+    expect(savedContractCurrency(item)).toBe("USD");
+    applyCanonicalAuctioneerDetails(details, item);
+    expect(details.currency).toBe(savedContractCurrency(item));
+    const explicit = { ...details, currency: "CAD" };
+    applyCanonicalAuctioneerDetails(explicit, item);
+    expect(explicit.currency).toBe("CAD");
+    item.snapshot.contract = { currency: "not a currency" };
+    const unknown: Record<string, any> = { mixed_lots: [{ count: 1, source_key: "opaque-source-1" }] };
+    applyCanonicalAuctioneerDetails(unknown, item);
+    expect(unknown.currency).toBe("CAD");
+  });
+
 });

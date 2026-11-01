@@ -432,8 +432,8 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   // The sale's currency from Auctioneer 2.0 comes before reading the address
   // (owner, 2026-10-31: "US sales come through as USD"); a continued form keeps
   // the currency the user already chose.
-  const [currency, setCurrency] = useState(continuationDetails?.currency ?? auctioneer?.contract.currency ?? currencyForReportLocation(continuationDetails?.location || importedLocation) ?? (auctioneer ? "CAD" : ""));
-  const [currencyTouched, setCurrencyTouched] = useState(Boolean(auctioneer || continuationDetails?.currency));
+  const [currency, setCurrency] = useState(normalizeReportCurrency(continuationDetails?.currency) || normalizeReportCurrency(auctioneer?.contract.currency) || currencyForReportLocation(continuationDetails?.location || importedLocation) || "");
+  const [currencyTouched, setCurrencyTouched] = useState(Boolean(normalizeReportCurrency(continuationDetails?.currency) || normalizeReportCurrency(auctioneer?.contract.currency)));
   const [currencyLoading, setCurrencyLoading] = useState(false);
   const [includeDamageAnalysis, setIncludeDamageAnalysis] = useState(continuationDetails?.includeDamageAnalysis ?? (true));
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuationDetails?.bankPhotosEnabled ?? (false));
@@ -642,6 +642,8 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   locationStateRef.current = { location, latitude, longitude };
   const currencyTouchedRef = useRef(currencyTouched);
   currencyTouchedRef.current = currencyTouched;
+  const currencyDetectionRequestRef = useRef<number | null>(null);
+  const currencyDetectionResultRef = useRef<{ generation: number; currency: string; location: string } | null>(null);
   // True once the inspection location is typed by hand, false again when the
   // browser's position names it: only a typed address drops a currency that
   // was read from the browser's position.
@@ -1356,6 +1358,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   }) {
     if (!isValidBrowserCoordinates(coordinates.latitude, coordinates.longitude)) {
       if (requestGeneration === locationRequestGenerationRef.current) {
+        if (currencyDetectionRequestRef.current === requestGeneration) currencyDetectionRequestRef.current = null;
         setLocationStatus(
           "Browser coordinates were unavailable. Re-detect or enter the location manually."
         );
@@ -1364,6 +1367,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       return;
     }
     if (requestGeneration !== locationRequestGenerationRef.current) return;
+    if (!currencyTouchedRef.current) currencyDetectionRequestRef.current = requestGeneration;
 
     const hadReadableLocation =
       !restored &&
@@ -1408,7 +1412,10 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       const detectedCurrency = normalizeReportCurrency(resolved.currency) || currencyForReportLocation(resolved.location);
       // A readable location with an unrecognized currency is not evidence of
       // CAD (or the browser locale). Ask for an explicit choice instead.
-      if (!currencyTouchedRef.current) setCurrency(detectedCurrency || "");
+      if (!currencyTouchedRef.current) {
+        currencyDetectionResultRef.current = { generation: requestGeneration, currency: detectedCurrency || "", location: resolved.location };
+        setCurrency(detectedCurrency || "");
+      }
       if (restored) {
         restoredLocationMigrationDirtyRef.current = true;
         saveRevisionRef.current =
@@ -1435,6 +1442,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       );
       if (detectCurrency) leaveCurrencyToChoose();
     } finally {
+      if (currencyDetectionRequestRef.current === requestGeneration && currencyDetectionResultRef.current?.generation !== requestGeneration) currencyDetectionRequestRef.current = null;
       if (locationLookupAbortRef.current === controller) {
         locationLookupAbortRef.current = null;
       }
@@ -1445,10 +1453,13 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     detectCurrency = false,
   }: { detectCurrency?: boolean } = {}) => {
     const requestGeneration = ++locationRequestGenerationRef.current;
+    currencyDetectionRequestRef.current = currencyTouchedRef.current ? null : requestGeneration;
+    currencyDetectionResultRef.current = null;
     locationLookupAbortRef.current?.abort();
     locationLookupAbortRef.current = null;
     if (detectCurrency) setCurrencyLoading(true);
     if (!navigator.geolocation) {
+      currencyDetectionRequestRef.current = null;
       setLocationStatus("Browser location access is unavailable");
       if (detectCurrency) {
         leaveCurrencyToChoose();
@@ -1473,6 +1484,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       },
       () => {
         if (requestGeneration === locationRequestGenerationRef.current) {
+          if (currencyDetectionRequestRef.current === requestGeneration) currencyDetectionRequestRef.current = null;
           setLocationStatus(
             "Browser location access was denied or is unavailable"
           );
@@ -1526,9 +1538,9 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     );
     setContractNo(auctioneer?.contract.contractNo || "");
     setLanguage("en");
-    setCurrency(auctioneer?.contract.currency || currencyForReportLocation(importedLocation) || (auctioneer ? "CAD" : ""));
-    setCurrencyTouched(Boolean(auctioneer));
-    currencyTouchedRef.current = Boolean(auctioneer);
+    setCurrency(normalizeReportCurrency(auctioneer?.contract.currency) || currencyForReportLocation(importedLocation) || "");
+    setCurrencyTouched(Boolean(normalizeReportCurrency(auctioneer?.contract.currency)));
+    currencyTouchedRef.current = Boolean(normalizeReportCurrency(auctioneer?.contract.currency));
     locationTypedRef.current = false;
     setCurrencyLoading(false);
     currencyPromptedRef.current = false;
@@ -1728,7 +1740,15 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     if (!effectiveDate) nextErrors.effectiveDate = "Effective date is required.";
     if (!appraisalPurpose.trim()) nextErrors.appraisalPurpose = "Appraisal purpose is required.";
     if (!appraiser.trim()) nextErrors.appraiser = "Appraiser is required.";
-    if (!/^[A-Z]{3}$/.test(currency)) nextErrors.currency = "Choose a currency.";
+    const currencyDetectionGeneration = currencyDetectionRequestRef.current;
+    const currencyResult = currencyDetectionResultRef.current;
+    if (!currencyTouchedRef.current && currencyDetectionGeneration !== null &&
+      currencyDetectionGeneration === locationRequestGenerationRef.current &&
+      (currencyResult?.generation !== currencyDetectionGeneration ||
+        formStateRef.current.formData.currency !== currencyResult.currency ||
+        formStateRef.current.formData.location !== currencyResult.location)) {
+      nextErrors.currency = "Wait for currency detection to finish, or choose a currency.";
+    } else if (!/^[A-Z]{3}$/.test(currency)) nextErrors.currency = "Choose a currency.";
     if (!hasUsableReportLocation(location)) {
       nextErrors.location =
         "Wait for browser location detection or enter the inspection location.";

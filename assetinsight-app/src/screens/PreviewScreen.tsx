@@ -1683,7 +1683,7 @@ const PreviewScreen = ({
             {renderDateInput("Effective Date", "effective_date")}
             {renderDateInput("Inspection Date", "inspection_date")}
             {/* Shown, never changed: a report keeps the currency it was valued in (owner, 2026-10-31). */}
-            <View style={styles.fieldContainer}><Text style={styles.fieldLabel}>Currency</Text><Text testID="preview-currency">{previewData?.currency || "CAD"}</Text></View>
+            <View style={styles.fieldContainer}><Text style={styles.fieldLabel}>Currency</Text><Text testID="preview-currency">{previewData?.currency || "CAD"}</Text><Text style={styles.fieldHelp}>Set when the report was created. All values are in this currency.</Text></View>
             {renderInput("Total Appraised Value", "total_appraised_value", "$0.00")}
           </View>
         </View>
@@ -2124,6 +2124,11 @@ const PreviewScreen = ({
           </View>
           <View style={styles.sectionContent}>
             {renderInput("Contract Number *", "contract_no", "Contract number")}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>Currency</Text>
+              <Text testID="preview-currency">{previewData?.currency || "CAD"}</Text>
+              <Text style={styles.fieldHelp}>Set when the report was created. All values are in this currency.</Text>
+            </View>
             <TouchableOpacity
               style={styles.checkboxRow}
               onPress={() => updateField("bank_photos_enabled", !bankPhotosEnabled)}

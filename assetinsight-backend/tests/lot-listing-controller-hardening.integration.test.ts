@@ -385,7 +385,7 @@ describe("Lot Listing controller hardening", () => {
       contract_no: "  Assigned   Lot  Updated  ",
       sales_date: "2026-10-15T00:00:00.000Z",
       location: "Saskatoon, SK",
-      currency: "usd",
+      currency: "cad",
       valuation_methods: ["olv", "FML", "olv"],
       total_value: 1_250,
     };
@@ -403,8 +403,6 @@ describe("Lot Listing controller hardening", () => {
       contract_no: "  Assigned   Lot  Updated  ",
       contract_key: "assigned lot updated",
       location: "Saskatoon, SK",
-      // A save never changes the currency the listing was valued in (owner,
-      // 2026-10-31; utils/reportCurrencyLock.ts): "usd" above is ignored.
       currency: "CAD",
       total_value: 1_250,
       valuation_methods: ["OLV", "FML"],

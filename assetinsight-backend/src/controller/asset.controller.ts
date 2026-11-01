@@ -1,4 +1,4 @@
-import { previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
+import { assertSavedReportCurrency, previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { productionReportOwnerFilter } from "../service/reviewReportPolicy.js";
 import { optionalCaptureId } from "../service/captureInventoryService.js";
@@ -286,6 +286,7 @@ function buildComparableAssetPreviewData(
   const previousPreviewData = clonePlain(report?.preview_data || {});
   const candidate = submittedPreviewData || previousPreviewData;
   if (!candidate || typeof candidate !== "object") return null;
+  assertSavedReportCurrency(report, report.preview_data, candidate);
   const signatureResult = sanitizeAssetPreviewSignature(candidate);
   if (signatureResult.message) return null;
   const lotNumberResult = normalizePreviewLotNumbers(
@@ -1629,6 +1630,7 @@ export const updatePreviewData = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    assertSavedReportCurrency(report, report.preview_data, preview_data);
     const signatureResult = sanitizeAssetPreviewSignature(preview_data);
     if (signatureResult.message) {
       return res.status(400).json({ message: signatureResult.message });
@@ -1811,6 +1813,7 @@ export const uploadPreviewLotImages = async (req: AuthRequest, res: Response) =>
       return res.status(400).json({ message: "Preview data is missing" });
     }
 
+    assertSavedReportCurrency(report, report.preview_data, candidatePreviewData);
     const signatureResult = sanitizeAssetPreviewSignature(candidatePreviewData);
     if (signatureResult.message) {
       await cleanupMulterFiles(uploadedFiles);
@@ -2030,6 +2033,7 @@ export const refreshPreviewSpecPdf = async (req: AuthRequest, res: Response) => 
     }
 
     const previousPreviewData = clonePlain(report.preview_data);
+    assertSavedReportCurrency(report, report.preview_data, report.preview_data as any);
     const signatureResult = sanitizeAssetPreviewSignature(report.preview_data as any);
     if (signatureResult.message) {
       return res.status(400).json({ message: signatureResult.message });
@@ -2146,6 +2150,7 @@ export const submitForApproval = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    assertSavedReportCurrency(report, report.preview_data, submittedPreviewData as any);
     const signatureResult = sanitizeAssetPreviewSignature(submittedPreviewData as any);
     if (signatureResult.message) {
       return res.status(400).json({ message: signatureResult.message });
@@ -2605,6 +2610,7 @@ export const resubmitReport = async (req: AuthRequest, res: Response) => {
     }
 
     const previousPreviewData = report.preview_data || {};
+    assertSavedReportCurrency(report, report.preview_data, preview_data || previousPreviewData);
     const signatureResult = sanitizeAssetPreviewSignature(preview_data || previousPreviewData);
     if (signatureResult.message) {
       return res.status(400).json({ message: signatureResult.message });

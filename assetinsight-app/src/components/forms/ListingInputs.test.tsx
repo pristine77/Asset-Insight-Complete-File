@@ -22,7 +22,10 @@ jest.mock('../../context/ThemeContext', () => ({ useAppTheme: () => ({ colors: {
 jest.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-CA', regionCode: 'CA' }] }));
 jest.mock('./CameraCapture', () => ({ __esModule: true, default: () => null }));
 jest.mock('../camera/NativeAuctionCameraScreen', () => ({ __esModule: true, default: () => null }));
-jest.mock('./LotManager', () => ({ __esModule: true, default: () => null }));
+jest.mock('./LotManager', () => ({ __esModule: true, default: ({ setLots }: any) => {
+  const { TouchableOpacity, Text } = require('react-native');
+  return <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add isolated currency photo" onPress={() => setLots([{ id: 'currency-photo', mode: 'single_lot', files: [{ uri: 'file:///currency-photo.jpg', name: 'currency-photo.jpg', type: 'image/jpeg' }], extraFiles: [], coverIndex: 0 }])}><Text>Add fixture photo</Text></TouchableOpacity>;
+} }));
 jest.mock('../../services/api', () => ({ __esModule: true, default: { get: jest.fn(), put: jest.fn(), post: jest.fn() } }));
 jest.mock('../../services/assetService', () => ({ __esModule: true, default: { createAssetReport: jest.fn() } }));
 jest.mock('../../services/lotListingService', () => ({ __esModule: true, default: { createLotListing: jest.fn() } }));
@@ -171,4 +174,45 @@ it('keeps a saved manual Asset location when optional GPS resolves later', async
     formData: expect.objectContaining({ location: 'Toronto inspection yard', latitude: 43.65, longitude: -79.38 }),
   }));
   await view.unmount();
+});
+
+
+it.each(['asset', 'lotListing'] as const)('%s refuses an unknown currency before starting an upload or analysis', async type => {
+  const Form = type === 'asset' ? AssetFormSheet : LotListingFormSheet;
+  await render(<Form visible onClose={jest.fn()} />);
+  if (type === 'asset') await fireEvent.press(screen.getByText('Next: Add Images'));
+  await fireEvent.press(screen.getByRole('button', { name: 'Add isolated currency photo' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: type === 'asset' ? 'Submit asset report' : 'Submit lot listing' })).toBeEnabled());
+  await fireEvent.press(screen.getByRole('button', { name: type === 'asset' ? 'Submit asset report' : 'Submit lot listing' }));
+  expect(Alert.alert).toHaveBeenCalledWith('Currency required', 'Choose a currency before submitting.');
+  expect(assetService.createAssetReport).not.toHaveBeenCalled(); expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+});
+
+it.each(['asset', 'lotListing'] as const)('%s blocks pending currency detection and retains an explicit choice against its late result', async type => {
+  let finish!: (response: any) => void;
+  jest.mocked(getHiddenCurrentLocation).mockResolvedValueOnce({ location: 'Current Browser Location', latitude: 47, longitude: -103 });
+  jest.mocked(api.post).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const Form = type === 'asset' ? AssetFormSheet : LotListingFormSheet;
+  await render(<Form visible onClose={jest.fn()} />);
+  if (type === 'asset') await fireEvent.press(screen.getByText('Next: Add Images'));
+  await fireEvent.press(screen.getByRole('button', { name: 'Add isolated currency photo' }));
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith('/location/reverse-geocode', expect.anything(), expect.anything()));
+  const label = type === 'asset' ? 'Submit asset report' : 'Submit lot listing';
+  expect(screen.getByRole('button', { name: label })).toBeDisabled();
+  await fireEvent.press(screen.getByRole('button', { name: label }));
+  expect(assetService.createAssetReport).not.toHaveBeenCalled(); expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+  if (type === 'asset') await fireEvent.press(screen.getByText('Back'));
+  await fireEvent.press(screen.getByRole('button', { name: 'Currency code, required' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'USD' }));
+  await act(() => finish({ data: { data: { currency: 'CAD' } } }));
+  expect(screen.getByRole('button', { name: 'Currency code, required' })).toHaveAccessibilityValue({ text: 'USD' });
+});
+
+it.each(['asset', 'lotListing'] as const)('%s can still save an incomplete offline capture without inventing a currency', async type => {
+  const Form = type === 'asset' ? AssetFormSheet : LotListingFormSheet;
+  await render(<Form visible onClose={jest.fn()} />);
+  await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
+  expect(AutoSaveService.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ formData: expect.objectContaining({ currency: '', captureMode: 'offline' }) }));
+  expect(assetService.createAssetReport).not.toHaveBeenCalled(); expect(lotListingService.createLotListing).not.toHaveBeenCalled();
 });

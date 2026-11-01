@@ -23,10 +23,22 @@ export async function persistAssetPreviewDataPreservingProposalValuation(input: 
   previousPreviewData?: Record<string, any>;
   proposalValuationRevision?: number;
 }) {
-  const next = input.previewData || {};
+  const current = await AssetReport.findById(input.reportId)
+    .select("currency preview_data")
+    .lean();
+  if (!current) {
+    throw Object.assign(new Error("The report changed. Reload the preview and retry."), {
+      code: "PV_PREVIEW_WRITE_CONFLICT", statusCode: 409,
+    });
+  }
+  const next = JSON.parse(JSON.stringify(input.previewData || {}));
+  keepSavedReportCurrency(current, current.preview_data as any, next);
   const previous = input.previousPreviewData || {};
   const set: Record<string, unknown> = {};
-  const unset: Record<string, 1> = {};
+  const unset: Record<string, 1> = {
+    "preview_data.currency_conversion": 1,
+    "preview_data._currency_base_revision": 1,
+  };
 
   for (const [key, value] of Object.entries(next)) {
     if (SERVER_OWNED_PREVIEW_FIELDS.has(key) || !safePreviewKey(key)) continue;

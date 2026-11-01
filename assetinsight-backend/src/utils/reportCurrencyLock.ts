@@ -1,40 +1,62 @@
-/**
- * A report's currency is decided when the report is created, and stays.
- *
- * OWNER, 2026-10-31: the preview currency conversion was removed ("The software
- * has to do its valuation in the correct currency"; "remove completely"). The
- * currency is chosen at creation — the Auctioneer 2.0 sale's currency, else the
- * inspection address — and the valuation is produced in it (utils/assetPrompts.ts
- * asks for every value in the report's currency). Changing it afterwards would
- * either relabel values valued in another currency or need a conversion, so a
- * preview save never changes it: whatever currency a save carries, the report
- * keeps the one it was valued in.
- */
+import { isDeepStrictEqual } from "node:util";
 
-type CurrencyHolder = { currency?: unknown } | null | undefined;
+/** Preview currency conversion is retired. Creation chooses the valuation currency. */
+type CurrencyHolder = { currency?: unknown; currency_conversion?: unknown } | null | undefined;
 
-/** The currency the report was valued in: its saved preview's, else its own, else CAD. */
-export function savedReportCurrency(report: CurrencyHolder, previousPreview?: CurrencyHolder): string {
-  return String(previousPreview?.currency || report?.currency || "CAD").trim().toUpperCase();
+function currencyCode(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const code = value.trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : undefined;
 }
 
-/** The preview with the report's currency filled in, for screens that show it. */
+/** The saved preview takes precedence; legacy previews fall back to the root. */
+export function savedReportCurrency(report: CurrencyHolder, previousPreview?: CurrencyHolder): string {
+  return currencyCode(previousPreview?.currency) || currencyCode(report?.currency) || "CAD";
+}
+
+/** Refreshed clients must not echo retired conversion transport metadata. */
 export function previewWithReportCurrency<T extends Record<string, any>>(
   report: CurrencyHolder,
   preview: T | null | undefined,
 ): T & { currency: string } {
-  return { ...(preview || ({} as T)), currency: savedReportCurrency(report, preview) };
+  const result = { ...(preview || ({} as T)), currency: savedReportCurrency(report, preview) };
+  delete result.currency_conversion;
+  delete result._currency_base_revision;
+  return result;
 }
 
 /**
- * Applied to every preview save: the saved currency, and none of the removed
- * conversion's fields (a page still open from before the removal may send them).
+ * Check the raw request before normalizing or changing root/preview money.
+ * A pending old-client conversion already contains converted numbers, so merely
+ * replacing its label would corrupt them. An unchanged historical receipt is
+ * harmless on an ordinary same-currency edit; a read marker alone is not a conversion.
  */
+export function assertSavedReportCurrency(
+  report: CurrencyHolder,
+  previousPreview: CurrencyHolder,
+  nextPreview: Record<string, any>,
+): void {
+  const savedCurrency = savedReportCurrency(report, previousPreview);
+  const requested = nextPreview?.currency;
+  const changedCurrency = requested !== undefined && currencyCode(requested) !== savedCurrency;
+  const conversion = nextPreview?.currency_conversion;
+  const pendingConversion = conversion != null &&
+    (previousPreview?.currency_conversion == null ||
+      !isDeepStrictEqual(conversion, previousPreview.currency_conversion));
+  if (changedCurrency || pendingConversion) {
+    throw Object.assign(new Error(
+      `This report was valued in ${savedCurrency}. Preview currency conversion is no longer available. Reload the preview to restore its saved amounts, then review and re-enter any unsaved edits in ${savedCurrency}. No changes were saved.`
+    ), { code: "REPORT_CURRENCY_LOCKED", statusCode: 409 });
+  }
+}
+
+/** Applied again at persistence, after raw-request validation in each controller. */
 export function keepSavedReportCurrency(
   report: CurrencyHolder,
   previousPreview: CurrencyHolder,
   nextPreview: Record<string, any>,
 ): void {
+  assertSavedReportCurrency(report, previousPreview, nextPreview);
   nextPreview.currency = savedReportCurrency(report, previousPreview);
   delete nextPreview.currency_conversion;
   delete nextPreview._currency_base_revision;

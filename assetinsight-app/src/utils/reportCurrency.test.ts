@@ -54,3 +54,12 @@ it('chooses nothing when the address points both ways or nowhere', () => {
   expect(currencyForReportLocation('turn left on the gravel road')).toBeNull();
   expect(currencyForReportLocation('Regina, SK, Minot, ND')).toBeNull();
 });
+
+it.each([
+  ['Canadian, Texas, United States', 'USD'], ['Canadian County, Oklahoma', 'USD'],
+  ['Colombo, Sri Lanka', 'LKR'], ['Shanghai, China', 'CNY'], ['Singapore', 'SGD'],
+  ['Dubai, United Arab Emirates', 'AED'], ['Johannesburg, South Africa', 'ZAR'],
+  ['São Paulo, Brazil', 'BRL'], ['Luxembourg', 'EUR'], ['Cardiff, U.K.', 'GBP'], ['Great Britain', 'GBP'],
+])('matches website country detection without treating Canadian as a country: %s', (location, currency) => {
+  expect(currencyForReportLocation(location)).toBe(currency);
+});

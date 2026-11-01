@@ -295,6 +295,7 @@ function makeAuctioneerSetup(
       eventTitle: "Imported auction",
       eventDate: "2026-09-14T10:00:00.000Z",
       location: "Imported inspection yard",
+      currency: "CAD",
     },
     lots: kind === "scheduleA" ? [
       { sourceKey: "source-1", lotId: "upstream-lot-1", submissionId: "task-1", lotNumber: "10" },
@@ -336,7 +337,10 @@ function makeAssetResumeDraft(
 }
 
 describe("AssetForm manual save and submission workflow", () => {
+  const originalWorkflowScrollIntoView = HTMLElement.prototype.scrollIntoView;
   beforeEach(() => {
+    // Validation may focus a newly remounted input after its 80 ms timer.
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, writable: true, value: vi.fn() });
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.isForegroundRequired.mockReturnValue(false);
     mocks.createDraftId.mockReturnValue("asset-workflow-draft");
@@ -363,6 +367,11 @@ describe("AssetForm manual save and submission workflow", () => {
       value: { getCurrentPosition: mocks.geolocation },
     });
     window.localStorage.clear();
+  });
+
+  afterAll(() => {
+    if (originalWorkflowScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: originalWorkflowScrollIntoView });
+    else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
 
   afterEach(() => {
@@ -1145,6 +1154,62 @@ describe("AssetForm manual save and submission workflow", () => {
     await act(async () => { lookup.resolve({ location: "London, United Kingdom", currency: "GBP" }); await lookup.promise; });
     expect(currency).toHaveValue("EUR");
     expect(screen.getByLabelText(/^Inspection location/i)).toHaveValue("London, United Kingdom");
+  });
+
+  it("waits for an automatic currency lookup before submitting a previously resolved report", async () => {
+    const lookup = deferred<{ location: string; currency: string }>();
+    mocks.enqueue.mockReturnValue(new Promise(() => {}));
+    render(<AssetForm />);
+    await waitForResolvedAssetLocation();
+    fireEvent.change(screen.getByLabelText(/Client name/i), { target: { value: "Workflow Client" } });
+    fireEvent.change(screen.getByLabelText(/Appraisal purpose/i), { target: { value: "Insurance valuation" } });
+    addTestMedia();
+    const currencyField = screen.getByRole("combobox", { name: /Currency/i });
+    currencyField.scrollIntoView = vi.fn();
+    mocks.reverseGeocode.mockReturnValueOnce(lookup.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Re-detect" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+    expect(document.getElementById("asset-currency-error")).toHaveTextContent("Wait for currency detection to finish, or choose a currency.");
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    await waitFor(() => expect(currencyField.scrollIntoView).toHaveBeenCalled());
+    await act(async () => { lookup.resolve({ location: "Austin, Texas, United States", currency: "USD" }); await lookup.promise; });
+    fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    expect(mocks.enqueue.mock.calls[0][0].details.currency).toBe("USD");
+  });
+
+  it("allows an explicit manual currency while an unrelated location re-detection is pending", async () => {
+    const lookup = deferred<{ location: string; currency: string }>();
+    mocks.enqueue.mockReturnValue(new Promise(() => {}));
+    render(<AssetForm />);
+    await waitForResolvedAssetLocation(); fillRequiredReportFields(); addTestMedia();
+    mocks.reverseGeocode.mockReturnValueOnce(lookup.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Re-detect" }));
+    fireEvent.change(screen.getByRole("combobox", { name: /Currency/i }), { target: { value: "EUR" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+    await waitFor(() => expect(mocks.enqueue).toHaveBeenCalledOnce());
+    expect(mocks.enqueue.mock.calls[0][0].details.currency).toBe("EUR");
+    await act(async () => { lookup.resolve({ location: "London, United Kingdom", currency: "GBP" }); await lookup.promise; });
+    expect(document.getElementById("asset-currency")).toHaveValue("EUR");
+  });
+
+  it("requires a currency for an imported unknown location and can infer a later typed address", async () => {
+    const auctioneer = makeAuctioneerSetup();
+    delete auctioneer.contract.currency;
+    render(<AssetForm auctioneer={auctioneer} />);
+    const currency = screen.getByRole("combobox", { name: /Currency/i });
+    currency.scrollIntoView = vi.fn();
+    expect(currency).toHaveValue("");
+    expect(mocks.geolocation).not.toHaveBeenCalled();
+    addTestMedia();
+    fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+    expect(document.getElementById("asset-currency-error")).toHaveTextContent("Choose a currency.");
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    await waitFor(() => expect(currency.scrollIntoView).toHaveBeenCalled());
+    const location = screen.getByLabelText(/^Inspection location/i);
+    fireEvent.change(location, { target: { value: "Austin, TX 78701" } });
+    fireEvent.blur(location);
+    expect(currency).toHaveValue("USD");
   });
 
   it("infers a currency for a manually entered country until the user overrides it", async () => {

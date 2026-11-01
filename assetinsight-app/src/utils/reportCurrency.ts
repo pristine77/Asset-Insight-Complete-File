@@ -54,21 +54,29 @@ export function northAmericanCurrency(value: string): 'CAD' | 'USD' | null {
  * nothing.
  */
 export function currencyForReportLocation(location: unknown): string | null {
-  const text = String(location || '');
-  // "New Mexico" is a state, not the country; "Northern Ireland" is the UK.
+  if (typeof location !== 'string') return null;
+  const text = location.trim().replace(/\s+/g, ' ');
+  // Avoid lookbehind for the phone's JavaScript engine, keeping the same
+  // country rules as the website. "Canadian" is a place/adjective, not Canada.
   const countries = text.replace(/\bNew Mexico\b/gi, ' ');
   const withoutNorthernIreland = countries.replace(/\bNorthern Ireland\b/gi, ' ');
   const named: Array<[RegExp, string]> = [
-    [/\b(Canada|Canadian)\b/i, 'CAD'],
-    [/\b(United States|USA|U\.S\.A\.?)\b/i, 'USD'],
-    [/\b(United Kingdom|UK|Great Britain|England|Scotland|Wales|Northern Ireland)\b/i, 'GBP'],
-    [/\b(Australia)\b/i, 'AUD'],
-    [/\b(New Zealand)\b/i, 'NZD'],
-    [/\b(France|Germany|Spain|Italy|Ireland|Portugal|Netherlands|Belgium|Austria|Finland|Greece)\b/i, 'EUR'],
-    [/\b(Switzerland)\b/i, 'CHF'],
-    [/\b(Japan)\b/i, 'JPY'],
-    [/\b(India)\b/i, 'INR'],
-    [/\b(Mexico)\b/i, 'MXN'],
+    [/\bCanada\b/i, 'CAD'],
+    [/\b(United States(?: of America)?|USA|U\.S\.A\.?)\b/i, 'USD'],
+    [/\b(United Kingdom|Great Britain|UK|U\.K\.?|England|Scotland|Wales|Northern Ireland)\b/i, 'GBP'],
+    [/\bAustralia\b/i, 'AUD'],
+    [/\bNew Zealand\b/i, 'NZD'],
+    [/\b(France|Germany|Spain|Italy|Ireland|Portugal|Netherlands|Belgium|Austria|Finland|Greece|Luxembourg)\b/i, 'EUR'],
+    [/\bSwitzerland\b/i, 'CHF'],
+    [/\bJapan\b/i, 'JPY'],
+    [/\bIndia\b/i, 'INR'],
+    [/\bSri Lanka\b/i, 'LKR'],
+    [/\bMexico\b/i, 'MXN'],
+    [/\bChina\b/i, 'CNY'],
+    [/\bSingapore\b/i, 'SGD'],
+    [/\b(United Arab Emirates|UAE)\b/i, 'AED'],
+    [/\bSouth Africa\b/i, 'ZAR'],
+    [/\bBrazil\b/i, 'BRL'],
   ];
   const explicit = new Set(named
     .filter(([pattern, code]) => pattern.test(code === 'EUR' ? withoutNorthernIreland : countries))

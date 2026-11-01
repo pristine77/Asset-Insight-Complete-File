@@ -1919,9 +1919,9 @@ export default function ReportsPage() {
         same treatment the Incoming queue uses.
       */}
       {/* One toolbar line on wide screens: the tabs, then the filters. */}
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+      <div className="flex min-w-0 flex-col gap-3 2xl:flex-row 2xl:items-center">
       <div
-        className="inline-flex shrink-0 gap-1 self-start rounded-lg bg-[var(--app-panel-alt)] p-1 xl:self-auto"
+        className="inline-flex shrink-0 gap-1 self-start rounded-lg bg-[var(--app-panel-alt)] p-1 2xl:self-auto"
         role="tablist"
         aria-label="Queue"
       >
@@ -1981,9 +1981,9 @@ export default function ReportsPage() {
       <section
         id="report-filter-controls"
         aria-label="Report filters"
-        className={`${filtersOpen ? "grid" : "hidden"} gap-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-2.5 shadow-[var(--app-shadow-card)] sm:grid-cols-2 xl:grid xl:flex-1 xl:grid-cols-[minmax(260px,1.5fr)_minmax(150px,.72fr)_minmax(170px,.82fr)_130px_auto] xl:gap-2 xl:border-0 xl:bg-transparent xl:p-0 xl:shadow-none`}
+        className={`${filtersOpen ? "grid" : "hidden"} min-w-0 gap-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-2.5 shadow-[var(--app-shadow-card)] sm:grid-cols-2 xl:grid xl:grid-cols-[minmax(0,1.5fr)_minmax(0,.72fr)_minmax(0,.82fr)_minmax(0,.65fr)_auto] xl:gap-2 xl:border-0 xl:bg-transparent xl:p-0 xl:shadow-none 2xl:flex-1`}
       >
-        <label className="relative block">
+        <label className="relative block min-w-0">
           <span className="sr-only">Search reports</span>
           <Search className="pointer-events-none absolute left-3.5 top-1/2 size-[18px] -translate-y-1/2 text-[var(--app-text-muted)]" />
           <input

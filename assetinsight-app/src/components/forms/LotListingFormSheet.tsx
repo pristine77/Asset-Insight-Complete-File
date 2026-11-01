@@ -121,7 +121,7 @@ const LotListingFormSheet = ({
   const [longitude, setLongitude] = useState<number | undefined>(continuation?.longitude);
   // A continued form keeps its chosen currency; otherwise the sale's currency
   // from Auctioneer 2.0 comes before reading the address (owner, 2026-10-31).
-  const { currency, setCurrency, resetCurrency } = useReportCurrency({ initialCurrency: continuation?.currency ?? auctioneer?.contract.currency, location, latitude, longitude, visible, paused: Boolean(draftIdToLoad) });
+  const { currency, setCurrency, resetCurrency, detecting: currencyLoading, currencyForSubmission } = useReportCurrency({ initialCurrency: continuation?.currency ?? auctioneer?.contract.currency, location, latitude, longitude, visible, paused: Boolean(draftIdToLoad) });
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuation?.bankPhotosEnabled ?? false);
   const [watermarkImages, setWatermarkImages] = useState(continuation?.watermarkImages ?? DEFAULT_IMAGE_WATERMARK);
   const [auctionCloseContract, setAuctionCloseContract] = useState(false);
@@ -675,6 +675,12 @@ const LotListingFormSheet = ({
       return;
     }
 
+    if (!currencyForSubmission() || currencyForSubmission() !== currency) {
+      setErrors(previous => ({ ...previous, currency: 'Choose a currency before creating a preview.' }));
+      setDetailsExpanded(true);
+      Alert.alert('Currency required', currencyLoading ? 'Wait for currency detection, or choose a currency.' : 'Choose a currency before creating a preview.');
+      return;
+    }
     const operation = createUploadOperation();
     const attemptOwner = OfflineCaptureStore.getOwnerId();
     setSavingDraftPreview(true);
@@ -721,6 +727,7 @@ const LotListingFormSheet = ({
     awaitingDraft,
     savingDraftPreview,
     submitting,
+    currency, currencyLoading, currencyForSubmission,
   ]);
 
   useEffect(() => {
@@ -852,6 +859,7 @@ const LotListingFormSheet = ({
   const validateForm = (): boolean => {
     const e: Record<string, string> = {};
     if (!contractNo.trim()) e.contractNo = 'Required';
+    if (!currencyForSubmission()) e.currency = 'Choose a currency.';
     const totalImages = lots.reduce((sum, lot) => sum + lot.files.length + (lot.extraFiles?.length || 0), 0);
     if (totalImages === 0) e.images = 'Add at least one image';
 
@@ -918,6 +926,13 @@ const LotListingFormSheet = ({
     if (submissionLockRef.current || saveLock.current || awaitingDraft || submitting || uploadAcceptedRef.current || auctioneerControl?.accepted) return;
     if (options.nextLot && captureMode === 'offline') return;
     if (saveOnly) { await handleSaveOfflineAndClose(); return; }
+    const submissionCurrency = currencyForSubmission();
+    if (!submissionCurrency || submissionCurrency !== currency) {
+      setErrors(previous => ({ ...previous, currency: 'Choose a currency before submitting.' }));
+      setDetailsExpanded(true);
+      Alert.alert('Currency required', currencyLoading ? 'Wait for currency detection, or choose a currency.' : 'Choose a currency before submitting.');
+      return;
+    }
     if (auctioneer && (options.forceNew || !hasValidAuctioneerLotStructure(auctioneer, lots))) return;
     if (options.replaceSubmissionId && (auctioneer || submissionIdRef.current !== options.replaceSubmissionId)) return;
     if (options.newSubmissionFromId && (auctioneer || submissionIdRef.current !== options.newSubmissionFromId)) return;
@@ -1092,7 +1107,7 @@ const LotListingFormSheet = ({
         contract_no: contractNo.trim(),
         sales_date: salesDate,
         location: location.trim(),
-        currency,
+        currency: submissionCurrency,
         latitude,
         longitude,
         include_damage_analysis: true,
@@ -1441,10 +1456,10 @@ const LotListingFormSheet = ({
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel={saveOnly ? 'Save offline lot listing' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit lot listing'}
-                  style={[styles.submitBtn, auctioneer && styles.importedSubmitBtn, ((!saveOnly && !canTapSubmit) || savingDraftPreview) && styles.submitBtnDisabled]}
+                  style={[styles.submitBtn, auctioneer && styles.importedSubmitBtn, ((!saveOnly && (!canTapSubmit || currencyLoading)) || savingDraftPreview) && styles.submitBtnDisabled]}
                   onPress={() => void handleSubmit()}
                   hitSlop={HEADER_HIT_SLOP}
-                  disabled={(!saveOnly && !canTapSubmit) || submitting || savingDraftPreview}>
+                  disabled={(!saveOnly && (!canTapSubmit || currencyLoading)) || submitting || savingDraftPreview}>
                   {submitting ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
@@ -1459,8 +1474,8 @@ const LotListingFormSheet = ({
           </View>}
         </View>
         {compactAuctioneerActions && auctioneer ? <AuctioneerFormHeader setup={auctioneer}
-          disabled={!canSubmit || submitting || savingDraftPreview}
-          closeDisabled={!canSubmit || submitting || savingDraftPreview}
+          disabled={!canSubmit || currencyLoading || submitting || savingDraftPreview}
+          closeDisabled={!canSubmit || currencyLoading || submitting || savingDraftPreview}
           submitting={submitting} paused={uploadPaused}
           onPress={() => void handleSubmit('LottingBoard', { nextLot: true })}
           onSubmit={() => void handleSubmit()} /> : null}
@@ -1645,7 +1660,8 @@ const LotListingFormSheet = ({
                 <View style={styles.fieldContainerSmall}>
                   <Text style={styles.fieldLabelSmall}>Currency</Text>
                   <CurrencySelect value={currency} onChange={setCurrency} disabled={submitting || savingDraftPreview} />
-                  <Text style={styles.fieldLabelSmall}>Detected from inspection location; change it if needed.</Text>
+                  <Text style={styles.fieldLabelSmall}>{currencyLoading ? 'Detecting currency… Choose it yourself if needed.' : 'Detected from inspection location; choose a currency if it is unknown.'}</Text>
+                  {errors.currency ? <Text style={styles.errorText}>{errors.currency}</Text> : null}
                 </View>
                 <View style={styles.fieldContainerSmall}>
                   <Text style={styles.fieldLabelSmall}>Contract # *</Text>
@@ -1789,7 +1805,7 @@ const LotListingFormSheet = ({
               <TouchableOpacity
                 style={[styles.destinationButton, styles.lottingButton, !canSubmit && styles.destinationButtonDisabled]}
                 onPress={() => handleSubmit('LottingBoard')}
-                disabled={!canSubmit || submitting}
+                disabled={!canSubmit || currencyLoading || submitting}
                 activeOpacity={0.88}>
                 {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="send" size={18} color="#fff" />}
                 <Text style={styles.destinationButtonText}>Send to Lotting Board</Text>
@@ -1797,7 +1813,7 @@ const LotListingFormSheet = ({
               <TouchableOpacity
                 style={[styles.destinationButton, styles.opTodoButton, !canSubmit && styles.destinationButtonDisabled]}
                 onPress={() => handleSubmit('OpToDoBoard')}
-                disabled={!canSubmit || submitting}
+                disabled={!canSubmit || currencyLoading || submitting}
                 activeOpacity={0.88}>
                 {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="tool" size={18} color="#fff" />}
                 <Text style={styles.destinationButtonText}>Send to Op To-Do</Text>

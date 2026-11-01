@@ -100,7 +100,7 @@ function incomingSetup(type: AuctioneerReportType): AuctioneerWorkItemSetup {
   return {
     workItemId: 'work-parent', cycleKey: 'cycle-parent', kind: 'scheduleA', reportType: type,
     clientSubmissionId: 'submission-parent', status: 'claimed', reportId: null,
-    contract: { id: 'contract-id', contractNo: '93530.3-A', customerName: 'Incoming customer', eventTitle: 'Fall sale', eventDate: '2026-09-20', location: 'Auction yard' },
+    contract: { id: 'contract-id', contractNo: '93530.3-A', customerName: 'Incoming customer', eventTitle: 'Fall sale', eventDate: '2026-09-20', currency: 'CAD', location: 'Auction yard' },
     lots: [{ sourceKey: 'upstream-key', lotId: 'upstream-lot', submissionId: 'upstream-submission', lotNumber: '157' }],
   };
 }

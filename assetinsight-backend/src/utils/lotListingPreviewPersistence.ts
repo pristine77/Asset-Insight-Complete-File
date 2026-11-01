@@ -2,7 +2,7 @@ import { resolvePhotoWatermark } from "./photoWatermarkPolicy.js";
 import { getExplicitCoordinates } from "./auctionLocations.js";
 import { normalizeReportContractKey } from "./reportContractIdentity.js";
 import { normalizeLotListingValuationMethods } from "./lotListingValuationMethods.js";
-import { keepSavedReportCurrency } from "./reportCurrencyLock.js";
+import { assertSavedReportCurrency, keepSavedReportCurrency } from "./reportCurrencyLock.js";
 
 function clonePlain<T>(value: T): T {
   return value ? JSON.parse(JSON.stringify(value)) : value;
@@ -43,6 +43,7 @@ export function buildLotListingPreviewPersistence(
   set: Record<string, unknown>;
   unset: Record<string, 1>;
 } {
+  assertSavedReportCurrency(listing, listing?.preview_data, nextPreviewData);
   const valuationMethods = normalizeLotListingValuationMethods(
     nextPreviewData?.valuation_methods,
     normalizeLotListingValuationMethods(listing?.valuation_methods)

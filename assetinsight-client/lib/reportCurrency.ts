@@ -74,7 +74,7 @@ export function currencyForReportLocation(value: unknown): string | undefined {
   const regions: Array<[RegExp, string]> = [
     [/\bcanada\b/, "CAD"],
     [/\b(?:united states(?: of america)?|usa|u\.s\.a\.?)\b/, "USD"],
-    [/\b(?:united kingdom|england|scotland|wales|northern ireland|uk|u\.k\.?)\b/, "GBP"],
+    [/\b(?:united kingdom|great britain|england|scotland|wales|northern ireland|uk|u\.k\.?)\b/, "GBP"],
     [/\bnew zealand\b/, "NZD"], [/\baustralia\b/, "AUD"],
     [/\bindia\b/, "INR"], [/\bsri lanka\b/, "LKR"],
     [/\b(?:germany|france|spain|italy|netherlands|belgium|portugal|austria|finland|greece|luxembourg)\b|(?<!northern )\bireland\b/, "EUR"],

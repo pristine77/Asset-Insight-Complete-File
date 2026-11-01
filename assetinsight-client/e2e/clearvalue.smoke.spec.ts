@@ -1619,8 +1619,30 @@ test("Incoming opens an existing report from the queue", async ({ page }) => {
     .click();
   await page.getByRole("button", { name: "Open report" }).click();
 
-  await expect(page).toHaveURL(/\/reports$/);
+  await expect(page).toHaveURL(/\/reports\?search=CV-E2E-100$/);
+  await expect(page.getByRole("searchbox", { name: "Search reports", exact: true })).toHaveValue("CV-E2E-100");
   await expect(
     page.getByRole("heading", { level: 1, name: "My reports" })
   ).toBeVisible();
+});
+
+test("My Reports filters fit inside the page beside the open desktop sidebar", async ({ page }) => {
+  await initializeTheme(page, "light");
+  await mockAuthenticatedApi(page);
+  await page.goto("/reports");
+  if (page.viewportSize()!.width < 1280) {
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
+  }
+  const filters = page.getByRole("region", { name: "Report filters" });
+  await expect(filters).toBeVisible();
+  const bounds = await filters.boundingBox();
+  expect(bounds).not.toBeNull();
+  for (const control of await filters.locator("input, select, button").all()) {
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(bounds!.x - 1);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(Math.min(bounds!.x + bounds!.width, page.viewportSize()!.width) + 1);
+  }
+  await expect(filters.getByRole("combobox", { name: "Rows per page" })).toBeVisible();
+  await expect(filters.getByRole("button", { name: "Reset", exact: true })).toBeVisible();
 });

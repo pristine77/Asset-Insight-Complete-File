@@ -1,4 +1,4 @@
-import { previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
+import { assertSavedReportCurrency, previewWithReportCurrency } from "../utils/reportCurrencyLock.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 /**
  * Approver queue and report-decision HTTP boundary.
@@ -347,7 +347,8 @@ function sendAssignedPreviewMutationError(
   return res.status(500).json({ message: fallbackMessage });
 }
 
-function normalizeAssignedAssetPreviewData(nextPreviewData: any, previousPreviewData: any) {
+function normalizeAssignedAssetPreviewData(nextPreviewData: any, previousPreviewData: any, report: any) {
+  assertSavedReportCurrency(report, previousPreviewData, nextPreviewData);
   const signatureResult = sanitizeAssetPreviewSignature(nextPreviewData);
   if (signatureResult.message) return { message: signatureResult.message };
 
@@ -887,8 +888,10 @@ function normalizeAssignedRealEstatePreviewData(nextPreviewData: any) {
 
 function normalizeAssignedLotListingPreviewData(
   nextPreviewData: any,
-  previousPreviewData: any
+  previousPreviewData: any,
+  report: any
 ) {
+  assertSavedReportCurrency(report, previousPreviewData, nextPreviewData);
   if (!nextPreviewData || typeof nextPreviewData !== "object" || Array.isArray(nextPreviewData)) {
     return { message: "preview_data is required" };
   }
@@ -999,9 +1002,9 @@ export const updateAssignedAssetApprovalPreview = async (req: any, res: Response
     const previousPreviewData = clonePlain(report.preview_data || {});
     const normalized =
       found.reportType === "Asset"
-        ? normalizeAssignedAssetPreviewData(preview_data, previousPreviewData)
+        ? normalizeAssignedAssetPreviewData(preview_data, previousPreviewData, report)
         : found.reportType === "LotListing"
-          ? normalizeAssignedLotListingPreviewData(preview_data, previousPreviewData)
+          ? normalizeAssignedLotListingPreviewData(preview_data, previousPreviewData, report)
           : normalizeAssignedRealEstatePreviewData(preview_data);
     if (normalized.message) return res.status(400).json({ message: normalized.message });
 
@@ -1066,11 +1069,11 @@ export const resubmitAssignedAssetApprovalPreview = async (req: any, res: Respon
     const previousPreviewData = clonePlain(report.preview_data || {});
     const normalized =
       found.reportType === "Asset"
-        ? normalizeAssignedAssetPreviewData(req.body?.preview_data || previousPreviewData, previousPreviewData)
+        ? normalizeAssignedAssetPreviewData(req.body?.preview_data || previousPreviewData, previousPreviewData, report)
         : found.reportType === "LotListing"
           ? normalizeAssignedLotListingPreviewData(
               req.body?.preview_data || previousPreviewData,
-              previousPreviewData
+              previousPreviewData, report
             )
           : normalizeAssignedRealEstatePreviewData(req.body?.preview_data || previousPreviewData);
     if (normalized.message) return res.status(400).json({ message: normalized.message });
@@ -1398,11 +1401,11 @@ export const uploadAssignedAssetApprovalPreviewLotImages = async (req: any, res:
       found.reportType === "LotListing"
         ? normalizeAssignedLotListingPreviewData(
             candidatePreviewData,
-            previousPreviewData
+            previousPreviewData, report
           )
         : normalizeAssignedAssetPreviewData(
             candidatePreviewData,
-            previousPreviewData
+            previousPreviewData, report
           );
     if (normalized.message) {
       await cleanupMulterFiles(uploadedFiles);
@@ -1541,11 +1544,11 @@ export const refreshAssignedAssetApprovalPreviewSpecPdf = async (req: any, res: 
       found.reportType === "LotListing"
         ? normalizeAssignedLotListingPreviewData(
             report.preview_data,
-            previousPreviewData
+            previousPreviewData, report
           )
         : normalizeAssignedAssetPreviewData(
             report.preview_data,
-            previousPreviewData
+            previousPreviewData, report
           );
     if (normalized.message) return res.status(400).json({ message: normalized.message });
     report.preview_data = normalized.data;

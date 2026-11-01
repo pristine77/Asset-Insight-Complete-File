@@ -1,3 +1,5 @@
+import { auctioneerSaleCurrency, savedContractCurrency } from "../utils/auctioneerSaleCurrency.js";
+export { auctioneerSaleCurrency, savedContractCurrency } from "../utils/auctioneerSaleCurrency.js";
 /**
  * Coordinates Auctioneer2 intake, claim ownership, report linkage, readiness, and queue
  * handoff. Atomic conditional updates enforce one active claim/report type per incoming
@@ -194,18 +196,6 @@ function firstValue(record: Auctioneer2Record, paths: string[]): unknown {
   return undefined;
 }
 
-/**
- * The sale's currency as Auctioneer 2.0 sends it (owner, 2026-10-31: "US sales
- * come through as USD"). Auctioneer 2.0 decides it the way it bills the sale's
- * invoices; only a three-letter code is taken, so anything else leaves the
- * report's own detection in charge.
- */
-export function auctioneerSaleCurrency(record: Auctioneer2Record | null | undefined): string | undefined {
-  if (!record || typeof record !== "object") return undefined;
-  const code = textValue(record, ["currency", "saleCurrency"])?.toUpperCase();
-  return code && /^[A-Z]{3}$/.test(code) ? code : undefined;
-}
-
 function textValue(record: Auctioneer2Record, paths: string[]): string | undefined {
   const value = firstValue(record, paths);
   if (typeof value === "string") {
@@ -241,19 +231,6 @@ function contractContactNames(source: unknown, contractId: string): ContractCont
     }
   }
   return names;
-}
-
-/**
- * The sale's currency for a claimed work item: the saved one, else the one in
- * the frozen raw contract copy (items claimed before it was saved), else none.
- */
-export function savedContractCurrency(workItem: {
-  contract: { currency?: string };
-  snapshot?: { contract?: unknown };
-}): string | undefined {
-  if (workItem.contract.currency) return workItem.contract.currency;
-  const raw = workItem.snapshot?.contract;
-  return isRecord(raw) ? auctioneerSaleCurrency(raw) : undefined;
 }
 
 function savedContractContactNames(workItem: {
