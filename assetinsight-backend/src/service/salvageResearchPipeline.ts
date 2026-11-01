@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { prepareSalvagePhotos, salvagePhotoBatches, SALVAGE_MAX_PHOTOS } from "./salvageImagePreparation.js";
+import { damageMarksByPhoto, type SalvageDamageMark } from "../utils/salvageDamageMarks.js";
 import { fetchSalvageEvidence, fetchSalvageExchangeRate, safeSalvageEvidenceUrl, salvageProvincialGuidanceExcerpt } from "./salvageEvidenceFetch.js";
 import { applySalvageVehicleDetails, buildSalvageAssessment, normalizeSalvageAssessmentInputs, projectSalvageAssessmentLegacyFields, type SalvageAssessmentInputs, type SalvagePhotoFinding } from "./salvageAssessment.js";
 import { buildSalvageVehicleDetails, canonicalSalvageVehiclePhotoFactField, normalizeSalvageVehicleOverrides, salvageVehiclePhotoPrompt } from "./salvageVehicleDetails.js";
@@ -83,7 +84,16 @@ export interface EnterpriseSalvageAssessmentOptions {
   checkpoint?: SalvageResearchCheckpoint;
   onCheckpoint: (checkpoint: SalvageResearchCheckpoint) => Promise<void>;
   onProgress?: (stage: string, percent: number) => Promise<void>;
+  /** Areas the appraiser looped on photos as damage (utils/salvageDamageMarks.ts). */
+  damageMarks?: SalvageDamageMark[];
 }
+
+/*
+  Told only to batches that contain a marked photo (owner, 2026-11-01: "so the
+  software knows exactly where the damage is and concentrates on the marked
+  area"). The loops are drawn on the photo, so they must not be read as damage.
+*/
+const DAMAGE_MARK_INSTRUCTION = `The appraiser drew red freehand loops on some photos to mark damage. A loop is a marking added by the appraiser, not a feature of the vehicle and not damage itself. Inspect each marked area first: after such a photo, close-ups of its marked areas follow at full detail, labelled with the photo ID and area number. Describe the damage inside every marked area and the repair it suggests, citing that photo ID. Still report other damage that is clearly visible outside the loops.`;
 
 function publicSubject(inputs: SalvageAssessmentInputs, findings: SalvagePhotoFinding[] = []): Json {
   // An explicit whitelist excludes names, e-mail, telephone, claim IDs, private address and VIN.
@@ -203,7 +213,9 @@ export async function runEnterpriseSalvageAssessment(options: EnterpriseSalvageA
     }));
   // Keep existing checkpoint hashes compatible; overrides are derived after the
   // immutable request hash, so a worker restart never gets a fresh paid run.
-  const inputHash = hash([supplied, options.imageUrls]);
+  // Marks join the hash only when present, so reports without marks keep their saved checkpoints;
+  // changed marks start a fresh inspection rather than reusing one made for other loops.
+  const inputHash = hash(options.damageMarks?.length ? [supplied, options.imageUrls, options.damageMarks] : [supplied, options.imageUrls]);
   supplied = { ...supplied, vehicleOverrides: normalizeSalvageVehicleOverrides({ ...legacyVehicle, ...supplied.vehicleOverrides }) };
   const checkpoint = options.checkpoint ? structuredClone(options.checkpoint) : newSalvageResearchCheckpoint(inputHash);
   if (checkpoint.schemaVersion !== 1 || checkpoint.inputHash !== inputHash) throw new Error("The saved research checkpoint does not match these report inputs.");
@@ -221,6 +233,7 @@ export async function runEnterpriseSalvageAssessment(options: EnterpriseSalvageA
   try {
     await progress("Inspecting uploaded photo evidence", 32);
     const batches = salvagePhotoBatches(options.imageUrls);
+    const marksByPhoto = damageMarksByPhoto(options.damageMarks, options.imageUrls.length);
     for (const batch of batches) {
       const stage = `photos-${batch.startIndex}`;
       const indexes = batch.urls.map((_, index) => batch.startIndex + index);
@@ -229,12 +242,20 @@ export async function runEnterpriseSalvageAssessment(options: EnterpriseSalvageA
       if (completed?.result) raw = completed.result;
       else {
         execution.assertRemaining();
-        const prepared = await prepareSalvagePhotos(batch.urls, { maxEncodedBytes: 12 * 1024 * 1024 });
-        const content: any[] = [{ type: "input_text", text: `Inspect each photo separately. This request contains uploaded photos ${batch.startIndex + 1}–${batch.startIndex + batch.urls.length} of ${options.imageUrls.length} total; other photos are handled in separate batches and must not be described as missing from the report. IDs correspond to original upload order. Inspect ALL photos including the final serial/engine plate. Transcribe VIN/serial/mileage only when readable; return null when unclear. Never infer year, engine, trim, displacement or equipment from VIN decoding, a typical model specification, supplied text or web knowledge. Evidence for each value must describe the visible feature or quote the exact readable label from that SAME photo. Never fill fields merely because they are marked required in a catalogue. Keep observations tied to exact photo IDs. Identify visible damage and unpriced repair tasks only; do not invent labour hours or part prices. Every supplied photo ID must appear once. ${salvageVehiclePhotoPrompt} Return text in ${cleanText(options.snapshot.language, 10) || "en"}.` }];
-        prepared.forEach((photo, index) => content.push({ type: "input_text", text: photoId(indexes[index]) },
-          { type: "input_image", detail: "high", image_url: `data:image/jpeg;base64,${photo.buffer.toString("base64")}` }));
+        const batchMarks = indexes.map((index) => marksByPhoto[index]);
+        const batchHasMarks = batchMarks.some((mark) => mark?.loops.length);
+        const prepared = await prepareSalvagePhotos(batch.urls, { maxEncodedBytes: (batchHasMarks ? 16 : 12) * 1024 * 1024, damageMarks: batchMarks, damageCloseUps: true });
+        const content: any[] = [{ type: "input_text", text: `${batchHasMarks ? DAMAGE_MARK_INSTRUCTION + " " : ""}Inspect each photo separately. This request contains uploaded photos ${batch.startIndex + 1}–${batch.startIndex + batch.urls.length} of ${options.imageUrls.length} total; other photos are handled in separate batches and must not be described as missing from the report. IDs correspond to original upload order. Inspect ALL photos including the final serial/engine plate. Transcribe VIN/serial/mileage only when readable; return null when unclear. Never infer year, engine, trim, displacement or equipment from VIN decoding, a typical model specification, supplied text or web knowledge. Evidence for each value must describe the visible feature or quote the exact readable label from that SAME photo. Never fill fields merely because they are marked required in a catalogue. Keep observations tied to exact photo IDs. Identify visible damage and unpriced repair tasks only; do not invent labour hours or part prices. Every supplied photo ID must appear once. ${salvageVehiclePhotoPrompt} Return text in ${cleanText(options.snapshot.language, 10) || "en"}.` }];
+        prepared.forEach((photo, index) => {
+          content.push({ type: "input_text", text: photoId(indexes[index]) },
+            { type: "input_image", detail: "high", image_url: `data:image/jpeg;base64,${photo.buffer.toString("base64")}` });
+          (photo.damageCrops || []).forEach((crop, area) => content.push(
+            { type: "input_text", text: `${photoId(indexes[index])} marked damage area ${area + 1} of ${photo.damageCrops!.length} (close-up)` },
+            { type: "input_image", detail: "high", image_url: `data:image/jpeg;base64,${crop.toString("base64")}` }));
+        });
         raw = (await execution.json(stage, { instructions: BASE_INSTRUCTIONS, input: [{ role: "user", content }],
-          reasoning: { effort: "medium" }, max_output_tokens: 6500, text: format("salvage_photo_observations", PHOTO_SCHEMA) }, { imageCount: prepared.length })).data;
+          reasoning: { effort: "medium" }, max_output_tokens: 6500, text: format("salvage_photo_observations", PHOTO_SCHEMA) },
+          { imageCount: prepared.length, closeUpCount: prepared.reduce((sum, photo) => sum + (photo.damageCrops?.length || 0), 0) })).data;
       }
       findings.push(...photoResults(raw, indexes));
       checkpoint.stages[`repairSuggestions-${batch.startIndex}`] = Array.isArray(raw.repairSuggestions) ? raw.repairSuggestions.slice(0, 20) : [];

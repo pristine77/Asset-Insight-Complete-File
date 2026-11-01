@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document } from "mongoose";
 import type { SalvageAssessmentInputs, SalvageAssessmentV2 } from "../service/salvageAssessment.js";
+import type { SalvageDamageMark } from "../utils/salvageDamageMarks.js";
 
 export interface ISalvageReport extends Document {
   user: mongoose.Schema.Types.ObjectId;
@@ -26,6 +27,8 @@ export interface ISalvageReport extends Document {
   appraiser_comments: string;
   next_report_due: Date;
   imageUrls: string[];
+  /** Damage the appraiser looped on photos, by upload position (utils/salvageDamageMarks.ts). */
+  damage_marks?: SalvageDamageMark[];
   aiExtractedDetails: Record<string, any>;
   comparableItems: {
     title: string;
@@ -123,6 +126,7 @@ const SalvageReportSchema: Schema = new Schema(
     appraiser_comments: { type: String, required: true },
     next_report_due: { type: Date, required: true },
     imageUrls: [{ type: String }],
+    damage_marks: { type: [Schema.Types.Mixed], default: undefined },
     aiExtractedDetails: { type: Schema.Types.Mixed },
     comparableItems: [
       {

@@ -33,6 +33,7 @@ import { normalizeSalvageReportData, formatSalvageDate } from "../salvageReportD
 import { presentSalvageSnapshot } from "../salvagePresentation.js";
 import { salvageReportSections, safeSalvageReportLink, salvageReportRowNeedsSplit, type SalvageReportSection } from "../salvageReportSections.js";
 import { prepareSalvagePhotos } from "../salvageImagePreparation.js";
+import { damageMarksByPhoto } from "../../utils/salvageDamageMarks.js";
 
 // Report-local layout defaults: do not change Asset or Real Estate templates.
 const mm = (value: number) => Math.round(value * 1440 / 25.4);
@@ -405,7 +406,11 @@ export async function generateSalvageDocx(reportData: any): Promise<Buffer> {
   const imageUrls: string[] = Array.isArray((reportData as any)?.imageUrls)
     ? (reportData as any).imageUrls
     : [];
-  const photos = await prepareSalvagePhotos(imageUrls);
+  // The report prints each photo with its damage loops drawn on (owner, 2026-11-01).
+  const damageMarks = (reportData as any)?.damage_marks;
+  const photos = damageMarks?.length
+    ? await prepareSalvagePhotos(imageUrls, { damageMarks: damageMarksByPhoto(damageMarks, imageUrls.length) })
+    : await prepareSalvagePhotos(imageUrls);
 
   // Comparables table
   const comps = Array.isArray(reportData?.comparableItems)

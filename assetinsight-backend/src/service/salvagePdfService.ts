@@ -15,6 +15,7 @@ import { normalizeSalvageReportData, formatSalvageDate } from "./salvageReportDa
 import { presentSalvageSnapshot } from "./salvagePresentation.js";
 import { salvageReportSections, safeSalvageReportLink, salvageReportRowNeedsSplit } from "./salvageReportSections.js";
 import { prepareSalvagePhotos } from "./salvageImagePreparation.js";
+import { damageMarksByPhoto } from "../utils/salvageDamageMarks.js";
 import { renderSalvagePdfWithContents, salvagePdfPrintOptions } from "./salvagePdfLayout.js";
 
 // Helper to format dates using the current context language (en/fr/es)
@@ -143,7 +144,10 @@ async function renderSalvageReport(
     const sanitizedData = JSON.parse(JSON.stringify(reportData));
     // Embed bounded copies rather than asking Chromium to fetch remote photos or
     // rely on HEIC browser support. All originals remain linked to the report.
-    const preparedPhotos = coverPhotos ?? await prepareSalvagePhotos(reportData.imageUrls);
+    // The report prints each photo with its damage loops drawn on (owner, 2026-11-01).
+    const preparedPhotos = coverPhotos ?? (reportData.damage_marks?.length
+      ? await prepareSalvagePhotos(reportData.imageUrls, { damageMarks: damageMarksByPhoto(reportData.damage_marks, (reportData.imageUrls || []).length) })
+      : await prepareSalvagePhotos(reportData.imageUrls));
     sanitizedData.imageUrls = preparedPhotos.map((photo) => `data:image/jpeg;base64,${photo.buffer.toString("base64")}`);
     const reportPhotos = preparedPhotos.map((photo, index) => ({
       src: sanitizedData.imageUrls[index] as string,

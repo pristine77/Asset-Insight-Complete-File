@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuthContext } from "@/context/AuthContext";
 import { SalvageService, SALVAGE_MAX_IMAGES, type SalvageDetails, type SalvageAssessmentInputs } from "@/services/salvage";
-import { X, Upload, Camera, Download, LoaderCircle, CheckCircle2 } from "lucide-react";
+import { X, Upload, Camera, Download, LoaderCircle, CheckCircle2, Check, FileText, MapPin, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import SalvageCamera from "./salvage/SalvageCamera";
-import ImageAnnotatorModal from "./salvage/ImageAnnotatorModal";
+import ImageAnnotatorModal, { type AnnotatorAction, type DamageLoop } from "./salvage/ImageAnnotatorModal";
 import { salvageSystemText } from "@/lib/salvagePresentation";
+import CollapsibleSection from "./real-estate/CollapsibleSection";
+import { FIELD_CLASS } from "./real-estate/Field";
 
 type Props = {
   onSuccess?: (message?: string) => void;
@@ -27,6 +29,26 @@ const ASSESSMENT_CONTEXT_FIELDS = [
 const initialAssessment = (): Partial<SalvageAssessmentInputs> => ({ province: null, market: null,
   effectiveDate: isoDate(new Date()), lossType: null, documentedBrand: null, brandProvince: null,
   condition: null, damageDescription: null, currency: "CAD" });
+
+/**
+ * A photo drawn on in the editor: the clean photo, what was drawn (to reopen it
+ * editable), its damage loops (sent with the report) and the marked copy shown
+ * as its thumbnail. The upload itself carries no loops; the server draws them.
+ */
+type PhotoEdit = { original: File; actions: AnnotatorAction[]; damageLoops: DamageLoop[]; displayFile: File };
+
+/*
+   One labelled field: the label and its control are siblings in their own
+   wrapper, the label naming the control (htmlFor), in the app's field style.
+*/
+function SalvageField({ id, label, span, children }: { id: string; label: string; span?: "full"; children: React.ReactNode }) {
+  return (
+    <div className={`grid min-w-0 content-start gap-1.5 ${span === "full" ? "col-span-full" : ""}`}>
+      <label htmlFor={id} className="text-[13px] font-semibold text-[var(--app-text)]">{label}</label>
+      {children}
+    </div>
+  );
+}
 
 export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, onReportAccepted }: Props) {
   const { user } = useAuthContext();
@@ -64,6 +86,12 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
   const [annotOpen, setAnnotOpen] = useState(false);
   const [annotIndex, setAnnotIndex] = useState<number | null>(null);
   const [annotFile, setAnnotFile] = useState<File | null>(null);
+  /*
+    What was drawn on each photo, by position (owner, 2026-11-01: damage loops).
+    The clean original is kept so reopening a photo shows its marks again,
+    still editable, instead of drawing over marks already flattened into it.
+  */
+  const [photoEdits, setPhotoEdits] = useState<(PhotoEdit | undefined)[]>([]);
 
   // Upload acceptance is not report completion. Generation continues in the
   // backend after HTTP 202, with the existing email/approval workflow.
@@ -116,12 +144,13 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
   }
 
   useEffect(() => {
-    const urls = images.map((file) => URL.createObjectURL(file));
+    // Thumbnails show a marked photo with its loops; the upload stays clean.
+    const urls = images.map((file, index) => URL.createObjectURL(photoEdits[index]?.displayFile || file));
     setPreviews(urls);
     return () => {
       urls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [images]);
+  }, [images, photoEdits]);
 
   async function downloadAllImagesZip() {
     try {
@@ -152,11 +181,12 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
   function removeImage(index: number) {
     if (submissionInFlightRef.current) return;
     setImages((prev) => prev.filter((_, i) => i !== index));
+    setPhotoEdits((prev) => prev.filter((_, i) => i !== index));
   }
 
   function openAnnotator(index: number) {
     if (submissionInFlightRef.current) return;
-    const f = images[index];
+    const f = photoEdits[index]?.original || images[index];
     if (!f) return;
     setAnnotIndex(index);
     setAnnotFile(f);
@@ -204,10 +234,15 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
       setError(null);
 
       submissionIdRef.current ||= crypto.randomUUID();
+      const damageMarks = images.flatMap((_, photoIndex) => {
+        const loops = photoEdits[photoIndex]?.damageLoops || [];
+        return loops.length ? [{ photoIndex, loops }] : [];
+      });
       const payload: SalvageDetails = {
         ...details,
         currency: "CAD",
         client_submission_id: submissionIdRef.current,
+        ...(damageMarks.length ? { damage_marks: damageMarks } : {}),
         report_date: details.report_date,
         date_received: details.date_received,
         next_report_due: details.next_report_due,
@@ -230,6 +265,7 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
       // Clear local form state and notify parent to close
       setImages([]);
       setPreviews([]);
+      setPhotoEdits([]);
       onSubmittingChange?.(false);
       try {
         if (res.reportId && onReportAccepted) onReportAccepted(res.reportId);
@@ -278,345 +314,116 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
     );
   }
 
+  /*
+    Layout (owner, 2026-11-01: "improve Salvage UI too", after the Real Estate
+    form): numbered section cards in working order - 1 claim and report
+    details, 2 photos (the vehicle details are read from them, so they come
+    early), 3 market and loss details, 4 contacts, 5 comments - with the app's
+    field and button styles. The fields drew an extra dark ring before; the
+    drawer's header names the form, so the repeated title card is gone. Every
+    field, label and value is as before.
+  */
   return (
     <form className="flex min-h-full flex-col" onSubmit={onSubmit}>
       <div className="relative flex min-h-full flex-col gap-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
-        <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-4 shadow-sm">
-          <div>
-            <h2 className="text-lg font-semibold text-[var(--app-text)]">Salvage Appraisal</h2>
-            <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-              Record claim details and upload photos. Review the vehicle details read from your photos in the preview.
-            </p>
-          </div>
-        </div>
-
         {!submitting && error && (
-          <div role="alert" className="rounded-lg border border-[var(--app-danger-border)] bg-[var(--app-danger-soft)] p-3 text-sm text-[var(--app-danger)]">
+          <div role="alert" className="app-alert app-alert--error">
             {error}
           </div>
         )}
 
-        {/* Report & File Info */}
-        <section className="space-y-3">
-          <h3 className="text-sm font-medium text-[var(--app-text)]">Report Details</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Report Date
-              </label>
-              <input
-                type="date"
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.report_date}
-                onChange={(e) => handleChange("report_date", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Date Received
-              </label>
-              <input
-                type="date"
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.date_received}
-                onChange={(e) => handleChange("date_received", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Next Report Due
-              </label>
-              <input
-                type="date"
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.next_report_due}
-                onChange={(e) =>
-                  handleChange("next_report_due", e.target.value)
-                }
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                File Number
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.file_number}
-                onChange={(e) => handleChange("file_number", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Claim Number
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.claim_number}
-                onChange={(e) => handleChange("claim_number", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Policy Number
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.policy_number}
-                onChange={(e) => handleChange("policy_number", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Language
-              </label>
-              <select
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.language || "en"}
-                onChange={(e) =>
-                  handleChange("language", e.target.value as any)
-                }
-              >
+        <CollapsibleSection step={1} title="Claim and report details" description="The file and claim this report is for, and its dates." icon={<FileText />}>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-3">
+            <SalvageField id="salvage-file-number" label="File Number">
+              <input id="salvage-file-number" className={FIELD_CLASS} value={details.file_number} onChange={(e) => handleChange("file_number", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-claim-number" label="Claim Number">
+              <input id="salvage-claim-number" className={FIELD_CLASS} value={details.claim_number} onChange={(e) => handleChange("claim_number", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-policy-number" label="Policy Number">
+              <input id="salvage-policy-number" className={FIELD_CLASS} value={details.policy_number} onChange={(e) => handleChange("policy_number", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-report-date" label="Report Date">
+              <input id="salvage-report-date" type="date" className={FIELD_CLASS} value={details.report_date} onChange={(e) => handleChange("report_date", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-date-received" label="Date Received">
+              <input id="salvage-date-received" type="date" className={FIELD_CLASS} value={details.date_received} onChange={(e) => handleChange("date_received", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-next-report-due" label="Next Report Due">
+              <input id="salvage-next-report-due" type="date" className={FIELD_CLASS} value={details.next_report_due} onChange={(e) => handleChange("next_report_due", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-language" label="Language">
+              <select id="salvage-language" className={FIELD_CLASS} value={details.language || "en"} onChange={(e) => handleChange("language", e.target.value as any)}>
                 <option value="en">English</option>
                 <option value="fr">Français</option>
                 <option value="es">Español</option>
               </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Assessment currency
-              </label>
-              <input
-                type="text"
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] placeholder:text-[var(--app-text-muted)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value="CAD — Canadian dollars"
-                readOnly
-                aria-label="Assessment currency"
-              />
-            </div>
+            </SalvageField>
+            <SalvageField id="salvage-currency" label="Assessment currency">
+              <input id="salvage-currency" type="text" className={`${FIELD_CLASS} bg-[var(--app-panel-alt)] text-[var(--app-text-muted)]`} value="CAD — Canadian dollars" readOnly aria-label="Assessment currency" />
+            </SalvageField>
           </div>
-        </section>
+        </CollapsibleSection>
 
-        <section className="rounded-lg border border-[var(--app-info-border,var(--app-border))] bg-[var(--app-info-soft)] p-3" aria-labelledby="salvage-photo-details-heading">
-          <h3 id="salvage-photo-details-heading" className="text-sm font-semibold text-[var(--app-text)]">Vehicle details come from your photos</h3>
-          <p className="mt-1 text-sm text-[var(--app-text-muted)]">Include a sharp VIN / serial plate photo, the dashboard odometer, engine labels and vehicle badges. We only show details readable in the uploaded images. Missing details show “Cannot find from image” in the preview, where you can enter or correct them.</p>
-        </section>
-
-        <section className="space-y-3" aria-labelledby="salvage-assessment-heading">
-          <h3 id="salvage-assessment-heading" className="text-sm font-medium text-[var(--app-text)]">Canadian market & loss details</h3>
-          <p className="text-xs text-[var(--app-text-muted)]">Enter verified facts; leave anything unknown blank. Market and date identify the comparable search area. A documented brand must match the registration or inspection evidence—it must not be guessed from damage.</p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {ASSESSMENT_CONTEXT_FIELDS.map((field) => (
-              <div key={field.key}>
-                <label htmlFor={`salvage-${field.key}`} className="block text-xs font-medium text-[var(--app-text-muted)]">{field.label}</label>
-                <input id={`salvage-${field.key}`} type={field.type}
-                  className="mt-1 w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]"
-                  value={details.assessment_inputs?.[field.key] ?? ""}
-                  maxLength={field.type === "text" ? 300 : undefined}
-                  placeholder={field.type === "text" ? "Unknown / not provided" : undefined}
-                  onChange={(event) => handleAssessmentChange(field.key, event.target.value)} />
-              </div>
-            ))}
-            {([['province', 'Market province / territory'], ['brandProvince', 'Brand document province / territory']] as const).map(([key, label]) => (
-              <div key={key}>
-                <label htmlFor={`salvage-${key}`} className="block text-xs font-medium text-[var(--app-text-muted)]">{label}</label>
-                <select id={`salvage-${key}`} className="mt-1 w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)]" value={details.assessment_inputs?.[key] ?? ""} onChange={(event) => handleAssessmentChange(key, event.target.value)}>
-                  <option value="">Unknown</option>{PROVINCES.map((province) => <option key={province} value={province}>{province}</option>)}
-                </select>
-              </div>
-            ))}
-          </div>
-          {([['condition', 'Pre-loss condition (if known)'], ['damageDescription', 'Observed damage']] as const).map(([key, label]) => (
-            <div key={key}>
-              <label htmlFor={`salvage-${key}`} className="block text-xs font-medium text-[var(--app-text-muted)]">{label}</label>
-              <textarea id={`salvage-${key}`} rows={2} maxLength={key === "condition" ? 4000 : 8000}
-                className="mt-1 w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]"
-                value={details.assessment_inputs?.[key] ?? ""} onChange={(event) => handleAssessmentChange(key, event.target.value)} />
-            </div>
-          ))}
-        </section>
-
-        {/* Parties & Contacts */}
-        <section className="space-y-3">
-          <h3 className="text-sm font-medium text-[var(--app-text)]">Contacts</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Appraiser Name
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.appraiser_name}
-                onChange={(e) => handleChange("appraiser_name", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Appraiser Phone
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.appraiser_phone}
-                onChange={(e) =>
-                  handleChange("appraiser_phone", e.target.value)
-                }
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Appraiser Email
-              </label>
-              <input
-                type="email"
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.appraiser_email}
-                onChange={(e) =>
-                  handleChange("appraiser_email", e.target.value)
-                }
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Adjuster Name
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.adjuster_name}
-                onChange={(e) => handleChange("adjuster_name", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Insured Name
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.insured_name}
-                onChange={(e) => handleChange("insured_name", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-                Company Name
-              </label>
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-                value={details.company_name}
-                onChange={(e) => handleChange("company_name", e.target.value)}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-              Company Address
-            </label>
+        <CollapsibleSection step={2} title="Photos" description={`Up to ${SALVAGE_MAX_IMAGES} photos. Choose Mark damage on a photo and draw a loop around each damaged area; the software inspects inside the loops closely.`} icon={<Camera />}>
+          <div className="grid gap-3">
+            <section className="rounded-lg border border-[var(--app-info-border,var(--app-border))] bg-[var(--app-info-soft)] px-3 py-2.5" aria-labelledby="salvage-photo-details-heading">
+              <h3 id="salvage-photo-details-heading" className="text-sm font-semibold text-[var(--app-text)]">Vehicle details come from your photos</h3>
+              <p className="mt-1 text-sm text-[var(--app-text-muted)]">Include a sharp VIN / serial plate photo, the dashboard odometer, engine labels and vehicle badges. We only show details readable in the uploaded images. Missing details show “Cannot find from image” in the preview, where you can enter or correct them.</p>
+            </section>
             <input
-              className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-              value={details.company_address}
-              onChange={(e) => handleChange("company_address", e.target.value)}
+              ref={fileInputRef}
+              type="file"
+              aria-label="Salvage images"
+              accept="image/*"
+              multiple
+              onChange={(e) => {
+                handleImagesChange(e.target.files);
+                e.currentTarget.value = "";
+              }}
+              className="sr-only"
             />
-          </div>
-        </section>
-
-        {/* Comments */}
-        <section className="space-y-3">
-          <h3 className="text-sm font-medium text-[var(--app-text)]">Comments</h3>
-          <div>
-            <label className="block text-xs font-medium text-[var(--app-text-muted)]">
-              Appraiser Comments
-            </label>
-            <textarea
-              className="mt-1 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-sm text-[var(--app-text)] shadow-inner ring-1  focus:outline-none focus:ring-2 focus:ring-blue-300"
-              rows={3}
-              value={details.appraiser_comments}
-              onChange={(e) =>
-                handleChange("appraiser_comments", e.target.value)
-              }
-            />
-          </div>
-        </section>
-
-        {/* Images */}
-        <section className="space-y-3 pb-4 sm:pb-6">
-          <h3 className="text-sm font-medium text-[var(--app-text)]">Images (max {SALVAGE_MAX_IMAGES})</h3>
-          <input
-            ref={fileInputRef}
-            type="file"
-            aria-label="Salvage images"
-            accept="image/*"
-            multiple
-            onChange={(e) => {
-              handleImagesChange(e.target.files);
-              e.currentTarget.value = "";
-            }}
-            className="sr-only"
-          />
-          <div className="rounded-lg border border-dashed border-[var(--app-border)] bg-[var(--app-panel)] from-white/70 to-gray-50/50 p-5 text-center  shadow-inner">
-            <Upload className="mx-auto h-8 w-8 text-[var(--app-text-muted)]" />
-            <p className="mt-2 text-sm text-[var(--app-text-muted)]">Add images</p>
-            <div className="mt-3 flex flex-wrap justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={images.length >= SALVAGE_MAX_IMAGES}
-                className="app-button app-button--secondary"
-              >
-                <Upload className="h-4 w-4" />
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={images.length >= SALVAGE_MAX_IMAGES} className="app-button app-button--secondary">
+                <Upload className="h-4 w-4" aria-hidden="true" />
                 Select Images
               </button>
-              <button
-                type="button"
-                onClick={() => setCameraOpen(true)}
-                disabled={images.length >= SALVAGE_MAX_IMAGES}
-                className="app-button app-button--secondary"
-              >
-                <Camera className="h-4 w-4" />
-              Open Camera
-            </button>
-            <button
-              type="button"
-              onClick={downloadAllImagesZip}
-              disabled={images.length === 0}
-              className="inline-flex items-center gap-2 rounded-xl bg-[var(--app-panel)] px-4 py-2.5 text-sm font-semibold text-[var(--app-text)] border border-[var(--app-border)] shadow disabled:opacity-50 cursor-pointer"
-              title="Download images as ZIP"
-            >
-              <Download className="h-4 w-4" />
-              Download ZIP
-            </button>
-          </div>
-          <p className="mt-1 text-xs text-[var(--app-text-muted)]">Up to {SALVAGE_MAX_IMAGES} images. All selected photos are included in your submission.</p>
-        </div>
-        <p className="text-xs text-[var(--app-text-muted)]">Selected: {images.length}/{SALVAGE_MAX_IMAGES} photos</p>
-          {images.length > 0 && (
-            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-2 shadow ring-1  ">
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              <button type="button" onClick={() => setCameraOpen(true)} disabled={images.length >= SALVAGE_MAX_IMAGES} className="app-button app-button--secondary">
+                <Camera className="h-4 w-4" aria-hidden="true" />
+                Open Camera
+              </button>
+              <button type="button" onClick={downloadAllImagesZip} disabled={images.length === 0} className="app-button" title="Download images as ZIP">
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Download ZIP
+              </button>
+              <p className="ml-auto text-xs font-semibold tabular-nums text-[var(--app-text-muted)]">Selected: {images.length}/{SALVAGE_MAX_IMAGES} photos</p>
+            </div>
+            {images.length > 0 ? (
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
                 {previews.map((src, idx) => (
-                  <div
-                    key={idx}
-                    className="relative group overflow-hidden rounded-xl shadow-md transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-sm"
-                  >
-                    { }
+                  <div key={idx} className="group relative overflow-hidden rounded-lg border border-[var(--app-border)]">
                     <img
                       src={src}
                       alt={images[idx]?.name || `image-${idx + 1}`}
-                      className="h-28 w-full object-cover cursor-crosshair"
+                      className="h-24 w-full cursor-crosshair object-cover"
                       onClick={() => openAnnotator(idx)}
                     />
-                    {/* Edit overlay button */}
+                    {photoEdits[idx]?.damageLoops.length ? (
+                      <span className="absolute left-1.5 top-1.5 rounded-full bg-[#dc2626] px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm">
+                        {photoEdits[idx]!.damageLoops.length} damage {photoEdits[idx]!.damageLoops.length === 1 ? "area" : "areas"}
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         openAnnotator(idx);
                       }}
-                      className="absolute left-1 bottom-1 rounded-full bg-black/70 px-2 py-1 text-[11px] text-white shadow-sm hover:bg-black/80 transition cursor-pointer"
+                      className="absolute bottom-1.5 left-1.5 cursor-pointer rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-black/80"
                       aria-label="Edit image"
-                      title="Edit"
+                      title="Mark damage or add notes"
                     >
-                      Edit
+                      {photoEdits[idx] ? "Edit marks" : "Mark damage"}
                     </button>
                     <button
                       type="button"
@@ -625,31 +432,90 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
                         e.stopPropagation();
                         removeImage(idx);
                       }}
-                      className="absolute right-1 top-1 rounded-full bg-black/70 p-1.5 text-white shadow-sm hover:bg-black/80 transition cursor-pointer"
+                      className="absolute right-1.5 top-1.5 cursor-pointer rounded-full bg-black/65 p-1.5 text-white shadow-sm transition hover:bg-[var(--app-danger)]"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-        </section>
+            ) : (
+              <div className="flex items-center gap-3 rounded-lg border border-dashed border-[var(--app-border-strong)] bg-[var(--app-panel-alt)] p-4">
+                <Camera className="size-6 shrink-0 text-[var(--app-text-muted)]" aria-hidden="true" />
+                <p className="text-sm text-[var(--app-text-muted)]">No photos yet. Select images or open the camera.</p>
+              </div>
+            )}
+          </div>
+        </CollapsibleSection>
 
-        <div className="sticky bottom-0 z-10 mt-auto flex flex-col gap-2 border-t border-[var(--app-border)] bg-[var(--app-panel)] px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]  sm:flex-row sm:items-center">
-          <button
-            type="button"
-            className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-2.5 text-sm text-[var(--app-text-muted)] shadow hover:bg-[var(--app-panel)] transition active:translate-y-0.5 cursor-pointer"
-            onClick={onCancel}
-            disabled={submitting}
-          >
+        <CollapsibleSection step={3} title="Canadian market & loss details" description="Enter verified facts; leave anything unknown blank. Market and date identify the comparable search area. A documented brand must match the registration or inspection evidence—it must not be guessed from damage." icon={<MapPin />}>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-3">
+            {ASSESSMENT_CONTEXT_FIELDS.map((field) => (
+              <SalvageField key={field.key} id={`salvage-${field.key}`} label={field.label}>
+                <input id={`salvage-${field.key}`} type={field.type}
+                  className={FIELD_CLASS}
+                  value={details.assessment_inputs?.[field.key] ?? ""}
+                  maxLength={field.type === "text" ? 300 : undefined}
+                  placeholder={field.type === "text" ? "Unknown / not provided" : undefined}
+                  onChange={(event) => handleAssessmentChange(field.key, event.target.value)} />
+              </SalvageField>
+            ))}
+            {([['province', 'Market province / territory'], ['brandProvince', 'Brand document province / territory']] as const).map(([key, label]) => (
+              <SalvageField key={key} id={`salvage-${key}`} label={label}>
+                <select id={`salvage-${key}`} className={FIELD_CLASS} value={details.assessment_inputs?.[key] ?? ""} onChange={(event) => handleAssessmentChange(key, event.target.value)}>
+                  <option value="">Unknown</option>{PROVINCES.map((province) => <option key={province} value={province}>{province}</option>)}
+                </select>
+              </SalvageField>
+            ))}
+            {([['condition', 'Pre-loss condition (if known)'], ['damageDescription', 'Observed damage']] as const).map(([key, label]) => (
+              <SalvageField key={key} id={`salvage-${key}`} label={label} span="full">
+                <textarea id={`salvage-${key}`} rows={2} maxLength={key === "condition" ? 4000 : 8000}
+                  className={`${FIELD_CLASS} resize-y`}
+                  value={details.assessment_inputs?.[key] ?? ""} onChange={(event) => handleAssessmentChange(key, event.target.value)} />
+              </SalvageField>
+            ))}
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection step={4} title="Contacts" description="The appraiser, adjuster, insured and company named in the report." icon={<Users />}>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-3">
+            <SalvageField id="salvage-appraiser-name" label="Appraiser Name">
+              <input id="salvage-appraiser-name" className={FIELD_CLASS} value={details.appraiser_name} onChange={(e) => handleChange("appraiser_name", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-appraiser-phone" label="Appraiser Phone">
+              <input id="salvage-appraiser-phone" type="tel" className={FIELD_CLASS} value={details.appraiser_phone} onChange={(e) => handleChange("appraiser_phone", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-appraiser-email" label="Appraiser Email">
+              <input id="salvage-appraiser-email" type="email" className={FIELD_CLASS} value={details.appraiser_email} onChange={(e) => handleChange("appraiser_email", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-adjuster-name" label="Adjuster Name">
+              <input id="salvage-adjuster-name" className={FIELD_CLASS} value={details.adjuster_name} onChange={(e) => handleChange("adjuster_name", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-insured-name" label="Insured Name">
+              <input id="salvage-insured-name" className={FIELD_CLASS} value={details.insured_name} onChange={(e) => handleChange("insured_name", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-company-name" label="Company Name">
+              <input id="salvage-company-name" className={FIELD_CLASS} value={details.company_name} onChange={(e) => handleChange("company_name", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-company-address" label="Company Address" span="full">
+              <input id="salvage-company-address" className={FIELD_CLASS} value={details.company_address} onChange={(e) => handleChange("company_address", e.target.value)} />
+            </SalvageField>
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection step={5} title="Comments" description="Anything the reader of the report should know." icon={<MessageSquare />} optional>
+          <SalvageField id="salvage-appraiser-comments" label="Appraiser Comments">
+            <textarea id="salvage-appraiser-comments" className={`${FIELD_CLASS} resize-y`} rows={3} value={details.appraiser_comments} onChange={(e) => handleChange("appraiser_comments", e.target.value)} />
+          </SalvageField>
+        </CollapsibleSection>
+
+        <div className="sticky bottom-0 z-10 mt-auto flex flex-col-reverse gap-2 border-t border-[var(--app-border)] bg-[var(--app-panel)] pt-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:flex-row sm:items-center">
+          <button type="button" className="app-button" onClick={onCancel} disabled={submitting}>
             Cancel
           </button>
-          <button
-            type="submit"
-            className="app-button app-button--primary sm:ml-auto"
-            disabled={submitting}
-          >
+          <span className="hidden text-xs tabular-nums text-[var(--app-text-muted)] sm:ml-auto sm:inline">{images.length} photo{images.length === 1 ? "" : "s"} selected</span>
+          <button type="submit" className="app-button app-button--primary min-w-36" disabled={submitting}>
+            {!submitting && <Check className="size-4" aria-hidden="true" />}
             {submitting ? "Creating..." : "Create Report"}
           </button>
         </div>
@@ -670,12 +536,22 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
       <ImageAnnotatorModal
         open={annotOpen}
         file={annotFile}
+        defaultMode="damage"
+        initialActions={annotIndex != null ? photoEdits[annotIndex]?.actions : undefined}
         onClose={() => setAnnotOpen(false)}
-        onSave={(annotated) => {
-          if (annotIndex == null || submissionInFlightRef.current) return;
-          setImages((prev) =>
-            prev.map((f, i) => (i === annotIndex ? annotated : f))
-          );
+        onSave={(uploadFile, edit) => {
+          if (annotIndex == null || submissionInFlightRef.current || !annotFile || !uploadFile) return;
+          const original = annotFile;
+          // Nothing drawn: the clean photo goes up and the photo has no marks.
+          const marked = edit.actions.length > 0;
+          setImages((prev) => prev.map((f, i) => (i === annotIndex ? (marked ? uploadFile : original) : f)));
+          setPhotoEdits((prev) => {
+            const next = [...prev];
+            next[annotIndex] = marked
+              ? { original, actions: edit.actions, damageLoops: edit.damageLoops, displayFile: edit.displayFile || uploadFile }
+              : undefined;
+            return next;
+          });
           setAnnotOpen(false);
         }}
       />

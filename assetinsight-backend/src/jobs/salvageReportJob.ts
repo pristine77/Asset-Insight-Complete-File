@@ -86,6 +86,8 @@ export const runSalvagePreviewJob: ReportJobHandler = async (job, context) => {
   const facts = editableSalvageData(report.preview_data || report);
   const result = await runEnterpriseSalvageAssessment({
     snapshot: { ...facts, assessment: report.preview_data?.assessment || report.assessment, imageUrls }, imageUrls,
+    // The latest saved loops: preview edits live in preview_data (facts).
+    damageMarks: facts.damage_marks,
     checkpoint: report.research_checkpoint as SalvageResearchCheckpoint | undefined,
     onCheckpoint: async checkpoint => {
       // A reservation is persisted before a paid call. Retried jobs inherit it,

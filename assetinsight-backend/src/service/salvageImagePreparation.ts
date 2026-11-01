@@ -2,16 +2,30 @@ import axios from "axios";
 import sharp from "sharp";
 import { normalizeHeicToJpegBuffer } from "../utils/imageProcessing.js";
 import { mapWithConcurrency } from "../utils/concurrency.js";
+import { drawDamageLoops, salvageDamageCropBox, type SalvageDamageMark } from "../utils/salvageDamageMarks.js";
 
-export type SalvagePreparedPhoto = { buffer: Buffer; width: number; height: number };
+/**
+ * Damage marks (owner, 2026-11-01; utils/salvageDamageMarks.ts): a marked
+ * photo's copy has its loops drawn on, as the report prints it, and when close-
+ * ups are asked for, damageCrops holds a full-detail close-up of each loop's
+ * area, cut from the clean full-size original (not the 1600 px copy), in the
+ * order the loops were drawn.
+ */
+export type SalvagePreparedPhoto = { buffer: Buffer; width: number; height: number; damageCrops?: Buffer[] };
 export const SALVAGE_MAX_PHOTOS = 50;
 export const SALVAGE_AI_BATCH_SIZE = 10;
 
 /** Ephemeral AI/document copies only; stored originals and URL order are unchanged. */
-export async function prepareSalvagePhotos(imageUrls: string[], options: { maxEncodedBytes?: number } = {}): Promise<SalvagePreparedPhoto[]> {
+export async function prepareSalvagePhotos(imageUrls: string[], options: {
+  maxEncodedBytes?: number;
+  /** Damage marks per photo, aligned with imageUrls; their loops are drawn on the copies. */
+  damageMarks?: (SalvageDamageMark | undefined)[];
+  /** Also cut a close-up of each marked area (the analysis asks; documents do not). */
+  damageCloseUps?: boolean;
+} = {}): Promise<SalvagePreparedPhoto[]> {
   if (imageUrls.length > SALVAGE_MAX_PHOTOS) throw new Error("Salvage supports at most 50 photos; no photos were discarded.");
   let encodedBytes = 64 * 1024;
-  return mapWithConcurrency(imageUrls, 4, async (url) => {
+  return mapWithConcurrency(imageUrls, 4, async (url, index) => {
     try {
       const response = await axios.get(url, {
         responseType: "arraybuffer", timeout: 30_000, maxContentLength: 30 * 1024 * 1024,
@@ -21,9 +35,26 @@ export async function prepareSalvagePhotos(imageUrls: string[], options: { maxEn
       const result = await sharp(normalized, { limitInputPixels: 40_000_000 })
         .rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 82 }).toBuffer({ resolveWithObject: true });
-      encodedBytes += Math.ceil(result.data.length / 3) * 4;
+      const mark = options.damageMarks?.[index];
+      const buffer = mark?.loops.length ? await drawDamageLoops(result.data, result.info.width, result.info.height, mark.loops) : result.data;
+      encodedBytes += Math.ceil(buffer.length / 3) * 4;
+      let damageCrops: Buffer[] | undefined;
+      if (options.damageCloseUps && mark?.regions.length) {
+        // The loops were placed on the photo as displayed, so crop the
+        // orientation-corrected original at full resolution.
+        const oriented = await sharp(normalized, { limitInputPixels: 40_000_000 }).rotate().toBuffer({ resolveWithObject: true });
+        damageCrops = [];
+        for (const region of mark.regions) {
+          const crop = await sharp(oriented.data, { limitInputPixels: 40_000_000 })
+            .extract(salvageDamageCropBox(region, oriented.info.width, oriented.info.height))
+            .resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true })
+            .jpeg({ quality: 85 }).toBuffer();
+          encodedBytes += Math.ceil(crop.length / 3) * 4;
+          damageCrops.push(crop);
+        }
+      }
       if (encodedBytes > (options.maxEncodedBytes ?? 256 * 1024 * 1024)) throw new Error("Image preparation size limit exceeded.");
-      return { buffer: result.data, width: result.info.width, height: result.info.height };
+      return { buffer, width: result.info.width, height: result.info.height, ...(damageCrops ? { damageCrops } : {}) };
     } catch {
       // A partial report would silently lose evidence. Fail without logging URLs,
       // which may contain bearer-like data, and retain every original for retry.

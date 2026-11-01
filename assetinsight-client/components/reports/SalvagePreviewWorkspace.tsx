@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, LoaderCircle, RefreshCw, Save, Send, X } from "lucide-react";
+import { ArrowLeft, Download, Lasso, LoaderCircle, RefreshCw, Save, Send, X } from "lucide-react";
 import { ReportsService } from "@/services/reports";
-import { SalvageService, salvageHasPreview, salvageIsProcessing, salvageStatusPath, type SalvagePreviewData, type SalvageReport } from "@/services/salvage";
+import { SalvageService, salvageHasPreview, salvageIsProcessing, salvageStatusPath, type SalvageDamageMark, type SalvagePreviewData, type SalvageReport } from "@/services/salvage";
 import { salvageSystemText } from "@/lib/salvagePresentation";
 import { salvageResearchRequestId, salvageResearchRequestKey } from "@/lib/salvageResearchRequest";
 import { isSalvageAssessmentV2 } from "@/lib/salvageAssessment";
@@ -12,6 +12,8 @@ import SalvageAssessmentEditor from "./SalvageAssessmentEditor";
 import SalvageReportEnrichment from "./SalvageReportEnrichment";
 import SalvageReportContextEditor from "./SalvageReportContextEditor";
 import styles from "./SalvagePreviewWorkspace.module.css";
+import ImageAnnotatorModal from "@/components/forms/salvage/ImageAnnotatorModal";
+import { DamageLoopOverlay, marksWithLoops, photoLoops } from "./SalvageDamageLoops";
 
 type Field = readonly [key: string, label: string, type?: "date" | "textarea" | "number" | "email", readOnly?: boolean];
 const REPORT_FIELDS: Field[] = [
@@ -67,6 +69,8 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
   const [conflict, setConflict] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [photo, setPhoto] = useState<number | null>(null);
+  // The photo whose damage loops are open in the editor (owner, 2026-11-01).
+  const [markingPhoto, setMarkingPhoto] = useState<number | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const version = useRef(0);
   const dirtyRef = useRef(false);
@@ -241,6 +245,14 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
   const valuation = object(draft.valuation);
   const assessment = isSalvageAssessmentV2(draft.assessment) ? draft.assessment : null;
   const photos = report?.imageUrls || [];
+  // Damage loops are a saved report field: edited here, kept by Save changes,
+  // drawn on the report photos and re-inspected by Research again.
+  const damageMarks: SalvageDamageMark[] = Array.isArray(draft.damage_marks) ? draft.damage_marks as SalvageDamageMark[] : [];
+  const openMarking = (index: number) => {
+    if (!canEdit || conflict) return;
+    setPhoto(null);
+    setMarkingPhoto(index);
+  };
   const analysis = object(draft.aiExtractedDetails);
   const estimate = object(draft.repair_estimate);
   const parts = rows(draft.repair_items);
@@ -295,7 +307,12 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
         {section("Appraiser & company", CONTACT_FIELDS)}
         {!assessment && Object.keys(analysis).length ? <section className={styles.section}><details><summary className="cursor-pointer text-sm font-semibold">Original analysis (read-only)</summary><dl className={`${styles.analysis} mt-3`}>{Object.entries(analysis).filter(([, value]) => typeof value === "string" || typeof value === "number").map(([key, value]) => <div key={key} className="contents"><dt>{key.replaceAll("_", " ")}</dt><dd>{scalar(value)}</dd></div>)}</dl></details></section> : null}
       </> : null}
-      <section className={styles.section}><h2>Photos ({photos.length})</h2><p className={`${styles.muted} mb-3`}>Original report photos are preserved. Open a photo to inspect its details.</p><div className={styles.photos}>{photos.map((url, index) => <button key={`${url}-${index}`} type="button" className={styles.photo} onClick={() => setPhoto(index)} aria-label={`View photo ${index + 1}`}><img src={url} alt={`Report photo ${index + 1}`} loading="lazy" /><span>Photo {index + 1}</span></button>)}</div></section>
+      <section className={styles.section}><h2>Photos ({photos.length})</h2><p className={`${styles.muted} mb-3`}>Original report photos are preserved. Open a photo to see its damage loops, or to mark or change them; Save changes keeps them, the report prints them, and Research again inspects the marked areas.</p><div className={styles.photos}>{photos.map((url, index) => {
+        const loops = photoLoops(damageMarks, index);
+        return <button key={`${url}-${index}`} type="button" className={`${styles.photo} relative`} onClick={() => setPhoto(index)} aria-label={`View photo ${index + 1}`}><img src={url} alt={`Report photo ${index + 1}`} loading="lazy" />
+          {loops.length ? <span className="absolute left-1.5 top-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm" style={{ background: "#dc2626" }}>{loops.length} damage {loops.length === 1 ? "area" : "areas"}</span> : null}
+          <span>Photo {index + 1}</span></button>;
+      })}</div></section>
       <section className={styles.section}><h2>Report files</h2><p className={`${styles.muted} mb-3`}>{dirty ? "Save and submit your changes to generate updated files." : report.downloadable ? "Available files for this saved report." : processing ? "Files will appear after generation, approval and release are complete." : "Downloads become available after the required approval and release. Use Submit to generate a preview's report files."}</p><div className={styles.actions}>{FILES.map(([kind, label]) => <button key={kind} type="button" className="app-button" disabled={!report.downloadable || !report.files?.[kind] || processing || dirty || Boolean(busy) || Boolean(downloading)} onClick={() => void download(report.files![kind]!, kind)}>{downloading === kind ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />} {label}</button>)}</div></section>
       <footer className={styles.footer}><span role="status" className={styles.muted}>{busy ? "Please wait until this request finishes. Do not close the page." : dirty ? "Unsaved changes" : `Saved revision ${report.revision ?? "—"}`}</span><div className={styles.actions}>
         <button type="button" className="app-button" disabled={!canEdit || dirty || conflict || refreshing || failed} onClick={() => void run("research")}><RefreshCw className="size-4" /> Research again</button>
@@ -303,6 +320,26 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
         <button type="button" className="app-button app-button--primary" disabled={!canEdit || !salvageHasPreview(report) || dirty || conflict || refreshing || failed || !["preview", "declined", "pending_approval", "approved", "cancelled"].includes(report.status)} onClick={() => void run("submit")}><Send className="size-4" /> {busy === "submit" ? "Submitting…" : ["pending_approval", "approved", "cancelled"].includes(report.status) ? "Resubmit report" : "Submit report"}</button>
       </div></footer>
     </> : null}
-    <dialog ref={dialog} className={styles.viewer} aria-label="Report photo viewer" onCancel={() => setPhoto(null)} onClose={() => setPhoto(null)}><div className={styles.actions}><p>Photo {photo === null ? "" : photo + 1} of {photos.length}</p><button type="button" className="app-button" onClick={() => setPhoto(null)} aria-label="Close photo"><X className="size-4" /></button></div>{photo !== null && photos[photo] ? <img src={photos[photo]} alt={`Report photo ${photo + 1}`} /> : null}</dialog>
+    <dialog ref={dialog} className={styles.viewer} aria-label="Report photo viewer" onCancel={() => setPhoto(null)} onClose={() => setPhoto(null)}><div className={styles.actions}><p>Photo {photo === null ? "" : photo + 1} of {photos.length}</p>
+      {photo !== null ? <button type="button" className="app-button" disabled={!canEdit || conflict} onClick={() => openMarking(photo)}><Lasso className="size-4" /> {photoLoops(damageMarks, photo).length ? "Edit damage loops" : "Mark damage"}</button> : null}
+      <button type="button" className="app-button" onClick={() => setPhoto(null)} aria-label="Close photo"><X className="size-4" /></button></div>
+      {photo !== null && photos[photo] ? <div className="relative mx-auto mt-3 w-fit"><img src={photos[photo]} alt={`Report photo ${photo + 1}`} style={{ margin: 0 }} /><DamageLoopOverlay loops={photoLoops(damageMarks, photo)} /></div> : null}</dialog>
+    <ImageAnnotatorModal
+      open={markingPhoto !== null}
+      file={null}
+      imageUrl={markingPhoto !== null ? photos[markingPhoto] : undefined}
+      damageOnly
+      defaultMode="damage"
+      initialDamageLoops={markingPhoto !== null ? photoLoops(damageMarks, markingPhoto) : undefined}
+      onClose={() => setMarkingPhoto(null)}
+      onSave={(_, edit) => {
+        if (markingPhoto === null) return;
+        const index = markingPhoto;
+        // Replaces this photo's loops; Save changes keeps them.
+        update("damage_marks", marksWithLoops(damageMarks, index, edit.damageLoops));
+        setMarkingPhoto(null);
+        setPhoto(index);
+      }}
+    />
   </main>;
 }

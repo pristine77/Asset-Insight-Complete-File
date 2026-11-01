@@ -70,7 +70,7 @@ export class SalvageResearchExecution {
       throw new SalvageResearchLimitError("A previous provider request has an uncertain outcome. Automatic research stopped to avoid duplicate work; completed evidence is retained.");
     }
   }
-  async json(stage: string, request: SalvageResponseRequest, options: { search?: boolean; imageCount?: number } = {}): Promise<{ data: Record<string, unknown>; consultedUrls: string[]; searchPerformed: boolean }> {
+  async json(stage: string, request: SalvageResponseRequest, options: { search?: boolean; imageCount?: number; closeUpCount?: number } = {}): Promise<{ data: Record<string, unknown>; consultedUrls: string[]; searchPerformed: boolean }> {
     const completed = this.checkpoint.calls.find((c) => c.stage === stage && c.status === "complete");
     if (completed?.result) return { data: completed.result, consultedUrls: completed.consultedUrls || [], searchPerformed: completed.searchPerformed === true };
     if (completed) throw new SalvageResearchLimitError(`The saved ${stage} response could not be validated; it will not be requested again automatically.`);
@@ -79,6 +79,9 @@ export class SalvageResearchExecution {
     const textBytes = Buffer.byteLength(JSON.stringify(request).replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, "[image]"));
     if (textBytes > 180_000) throw new SalvageResearchLimitError("Research context exceeded the bounded request size.");
     if ((options.imageCount || 0) > 10) throw new SalvageResearchLimitError("Research image batch exceeded ten photos.");
+    // Close-ups of appraiser-marked damage travel beside their photos: at most
+    // four per photo (utils/salvageDamageMarks.ts), so forty per batch of ten.
+    if ((options.closeUpCount || 0) > 40) throw new SalvageResearchLimitError("Research image batch exceeded forty damage close-ups.");
     const model = salvageModel(options.search);
     await ensureSalvageModelAccess(model, Date.parse(this.checkpoint.deadlineAt));
     const call: SalvageProviderCall = { id: randomUUID(), stage, status: "reserved" };

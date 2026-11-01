@@ -7,6 +7,12 @@ export type { SalvageAssessmentInputs, SalvageAssessmentV2, SalvageComparableEvi
 // Matches the shared web/mobile backend multipart limit.
 export const SALVAGE_MAX_IMAGES = 50;
 
+export type SalvageDamageMark = {
+  photoIndex: number;
+  loops: { points: [number, number][] }[];
+  regions?: { x: number; y: number; width: number; height: number }[];
+};
+
 export type SalvageDetails = {
   report_date: string; // ISO date string (yyyy-mm-dd)
   file_number: string;
@@ -27,6 +33,12 @@ export type SalvageDetails = {
   // Background progress id (optional, server will use it if provided)
   progress_id?: string;
   client_submission_id?: string;
+  /**
+   * Damage the appraiser looped on photos (owner, 2026-11-01): per photo, by its
+   * position in the uploaded list, each loop's points as fractions of the photo.
+   * The server works out each loop's box (regions) and returns it.
+   */
+  damage_marks?: SalvageDamageMark[];
   assessment_inputs?: Partial<SalvageAssessmentInputs>;
 };
 

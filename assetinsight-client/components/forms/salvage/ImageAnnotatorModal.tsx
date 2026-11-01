@@ -2,15 +2,63 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Save, Undo2, Eraser, Type, Pencil, Palette } from "lucide-react";
+import { X, Save, Undo2, Eraser, Type, Pencil, Palette, Lasso } from "lucide-react";
 
-export type AnnotatorMode = "draw" | "text";
+export type AnnotatorMode = "draw" | "text" | "damage";
+
+/*
+  Damage marking (owner, 2026-11-01: "draw around the damaged area so the
+  software knows exactly where the damage is and concentrates on the marked
+  area"; freehand loop; the report prints the photo with the loops on it).
+  A damage loop is drawn in one fixed red, closed and numbered, so the report
+  reader and the software can tell it from ordinary pen notes.
+
+  Loops are data, not ink: the photo is uploaded clean (only pen and text
+  notes are drawn into it) and each loop goes to the server as its points, in
+  fractions of the photo (DamageLoop). The server draws the loops on the report
+  photos and on the copies the analysis sees, and sends a close-up of each
+  loop's area; so the loops stay editable in the preview and editing never
+  creates another copy of the photo. A loop drawn over an area already looped
+  replaces that loop ("one edit per damage"), so one area is inspected once.
+*/
+export const DAMAGE_COLOR = "#dc2626";
+export const MAX_DAMAGE_LOOPS = 4;
+/** A marked area as fractions of the photo's width and height, top-left origin. */
+export type DamageRegion = { x: number; y: number; width: number; height: number };
+/** A loop's points as fractions of the photo's width and height. */
+export type DamageLoop = { points: [number, number][] };
+/** Loops whose boxes overlap this much circle the same damage (the server uses the same rule). */
+const SAME_DAMAGE_OVERLAP = 0.6;
+/** The server keeps at most this many points per loop. */
+const MAX_LOOP_POINTS = 400;
 
 type Props = {
   open: boolean;
   file: File | null;
   onClose: () => void;
-  onSave: (annotatedFile: File) => void;
+  /**
+   * uploadFile: the photo to upload, with pen and text notes drawn in but not
+   * the loops (the original file itself when there are no notes); null when
+   * editing a saved report photo (damageOnly). displayFile: the photo with
+   * everything drawn, for the form's thumbnail. Plus what was drawn, so the
+   * form can reopen the clean photo with its marks still editable.
+   */
+  onSave: (uploadFile: File | null, edit: {
+    actions: AnnotatorAction[];
+    damageLoops: DamageLoop[];
+    damageRegions: DamageRegion[];
+    displayFile: File | null;
+  }) => void;
+  /** Marks drawn earlier on this photo in this form, in photo pixels. */
+  initialActions?: AnnotatorAction[];
+  /** Loops saved on a report photo (fractions), for editing in the preview. */
+  initialDamageLoops?: DamageLoop[];
+  /** A saved report photo to open instead of a local file (preview). */
+  imageUrl?: string;
+  /** Only loops can be drawn: a saved report photo itself is never changed. */
+  damageOnly?: boolean;
+  /** The tool selected when the editor opens. */
+  defaultMode?: AnnotatorMode;
 };
 
 type StrokePoint = { x: number; y: number };
@@ -22,25 +70,110 @@ type Action =
       size: number;
       points: StrokePoint[];
     }
-  | {
+    | {
       type: "text";
       color: string;
       size: number; // font size px
       text: string;
       x: number;
       y: number;
+    }
+  | {
+      type: "damage";
+      points: StrokePoint[];
     };
+
+export type AnnotatorAction = Action;
+
+/** Loop thickness scales with the photo so it stays visible in the printed report. */
+function damageLineWidth(width: number, height: number): number {
+  return Math.max(4, Math.round(Math.max(width, height) / 240));
+}
+
+function pointsBox(points: StrokePoint[]) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** A closed red loop with its number in a red disc at its top-left corner. */
+function drawDamageLoop(ctx: CanvasRenderingContext2D, points: StrokePoint[], number: number, width: number, height: number) {
+  if (points.length < 2) return;
+  const lineWidth = damageLineWidth(width, height);
+  ctx.strokeStyle = DAMAGE_COLOR;
+  ctx.lineWidth = lineWidth;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.stroke();
+  const box = pointsBox(points);
+  const r = Math.max(12, lineWidth * 2.4);
+  const cx = Math.min(Math.max(box.minX, r), width - r);
+  const cy = Math.min(Math.max(box.minY, r), height - r);
+  ctx.fillStyle = DAMAGE_COLOR;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `bold ${Math.round(r * 1.15)}px Inter, system-ui, Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(number), cx, cy + 1);
+  ctx.textAlign = "start";
+}
+
+function boxOverlap(a: ReturnType<typeof pointsBox>, b: ReturnType<typeof pointsBox>): number {
+  const width = Math.max(0, Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX));
+  const height = Math.max(0, Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY));
+  const shared = width * height;
+  const union = (a.maxX - a.minX) * (a.maxY - a.minY) + (b.maxX - b.minX) * (b.maxY - b.minY) - shared;
+  return union > 0 ? shared / union : 0;
+}
+
+/** Each damage loop's points as fractions of the photo, thinned to what the server keeps. */
+export function damageLoopsOf(actions: AnnotatorAction[], width: number, height: number): DamageLoop[] {
+  const round = (value: number) => Math.round(Math.min(1, Math.max(0, value)) * 10000) / 10000;
+  return actions.flatMap((action) => {
+    if (action.type !== "damage" || action.points.length < 3 || !width || !height) return [];
+    const step = Math.ceil(action.points.length / MAX_LOOP_POINTS);
+    const points = action.points.filter((_, index) => index % step === 0)
+      .map((p) => [round(p.x / width), round(p.y / height)] as [number, number]);
+    return points.length >= 3 ? [{ points }] : [];
+  });
+}
+
+/** Each damage loop's box as fractions of the photo (sent to the server). */
+export function damageRegionsOf(actions: AnnotatorAction[], width: number, height: number): DamageRegion[] {
+  const round = (value: number) => Math.round(Math.min(1, Math.max(0, value)) * 10000) / 10000;
+  return actions.flatMap((action) => {
+    if (action.type !== "damage" || action.points.length < 2 || !width || !height) return [];
+    const box = pointsBox(action.points);
+    const x = round(box.minX / width), y = round(box.minY / height);
+    return [{ x, y, width: round(round(box.maxX / width) - x), height: round(round(box.maxY / height) - y) }];
+  });
+}
 
 export default function ImageAnnotatorModal({
   open,
   file,
   onClose,
   onSave,
+  initialActions,
+  initialDamageLoops,
+  imageUrl,
+  damageOnly = false,
+  defaultMode = "draw",
 }: Props) {
   const TEXT_ADD_DEFAULT_SIZE = 16;
   const [imgEl, setImgEl] = useState<HTMLImageElement | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
-  const [mode, setMode] = useState<AnnotatorMode>("draw");
+  const [mode, setMode] = useState<AnnotatorMode>(defaultMode);
+  const [damageLimitReached, setDamageLimitReached] = useState(false);
   const [color, setColor] = useState<string>("#2563eb"); // cobalt
   const [size, setSize] = useState<number>(12);
   const [actions, setActions] = useState<Action[]>([]);
@@ -128,19 +261,25 @@ export default function ImageAnnotatorModal({
 
   // Load image element when file changes
   useEffect(() => {
-    if (!open || !file) return;
-    const url = URL.createObjectURL(file);
+    if (!open || (!file && !imageUrl)) return;
+    const url = file ? URL.createObjectURL(file) : imageUrl!;
     const img = new Image();
     img.onload = () => {
       setImgEl(img);
       setImageLoaded(true);
+      // Marks saved earlier on this photo come back, still editable.
+      const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+      setActions(initialActions ? initialActions.map((action) => ({ ...action }))
+        : (initialDamageLoops || []).map((loop) => ({ type: "damage" as const, points: loop.points.map(([x, y]) => ({ x: x * w, y: y * h })) })));
+      setMode(damageOnly ? "damage" : defaultMode);
+      setDamageLimitReached(false);
     };
     img.onerror = () => {
       setImageLoaded(false);
     };
     img.src = url;
     return () => {
-      URL.revokeObjectURL(url);
+      if (file) URL.revokeObjectURL(url);
       setImgEl(null);
       setImageLoaded(false);
       setActions([]);
@@ -149,7 +288,7 @@ export default function ImageAnnotatorModal({
       setPendingTextCanvasPos(null);
       setPendingTextCssPos(null);
     };
-  }, [open, file]);
+  }, [open, file, imageUrl]);
 
   // Reset viewport transform when opening/changing file
   useEffect(() => {
@@ -192,8 +331,11 @@ export default function ImageAnnotatorModal({
     // clear
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     // reapply actions
+    let damageNumber = 0;
     for (const a of actions) {
-      if (a.type === "stroke") {
+      if (a.type === "damage") {
+        drawDamageLoop(ctx, a.points, ++damageNumber, canvas.width, canvas.height);
+      } else if (a.type === "stroke") {
         ctx.strokeStyle = a.color;
         ctx.lineWidth = a.size;
         ctx.lineJoin = "round";
@@ -408,7 +550,7 @@ export default function ImageAnnotatorModal({
       }
     }
     // If not clicking on existing text
-    if (mode === "draw") {
+    if (mode === "draw" || mode === "damage") {
       setIsDrawing(true);
       setCurrentStroke([ptCanvas]);
       return;
@@ -500,7 +642,7 @@ export default function ImageAnnotatorModal({
       return;
     }
 
-    if (!isDrawing || mode !== "draw") return;
+    if (!isDrawing || (mode !== "draw" && mode !== "damage")) return;
     e.preventDefault();
     const pt = toCanvasCoords(e);
     setCurrentStroke((prev) => [...prev, pt]);
@@ -508,8 +650,8 @@ export default function ImageAnnotatorModal({
     const canvas = overlayRef.current!;
     const ctx = canvas.getContext("2d")!;
     const seg = currentStroke.concat([pt]);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size;
+    ctx.strokeStyle = mode === "damage" ? DAMAGE_COLOR : color;
+    ctx.lineWidth = mode === "damage" ? damageLineWidth(canvas.width, canvas.height) : size;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     ctx.beginPath();
@@ -555,6 +697,32 @@ export default function ImageAnnotatorModal({
       }
     }
 
+    if (mode === "damage" && isDrawing && currentStroke.length > 0) {
+      let pathLen = 0;
+      for (let i = 1; i < currentStroke.length; i++) {
+        pathLen += Math.hypot(currentStroke[i].x - currentStroke[i - 1].x, currentStroke[i].y - currentStroke[i - 1].y);
+      }
+      // A tap or tiny scribble is not a loop; clear its ink.
+      if (pathLen < 24) redraw();
+      else {
+        const box = pointsBox(currentStroke);
+        const sameIndex = actions.findIndex((a) => a.type === "damage" && boxOverlap(pointsBox(a.points), box) >= SAME_DAMAGE_OVERLAP);
+        if (sameIndex >= 0) {
+          // A redraw of an area already looped replaces that loop in its place.
+          setActions((prev) => prev.map((a, i) => (i === sameIndex ? { type: "damage", points: currentStroke } : a)));
+        } else if (actions.filter((a) => a.type === "damage").length >= MAX_DAMAGE_LOOPS) {
+          setDamageLimitReached(true);
+          redraw();
+        } else {
+          setActions((prev) => [...prev, { type: "damage", points: currentStroke }]);
+        }
+      }
+      setIsDrawing(false);
+      setCurrentStroke([]);
+      // Stay on Mark damage so several areas can be looped in a row.
+      return;
+    }
+
     if (mode === "draw" && isDrawing && currentStroke.length > 0) {
       // Compute total path length to ignore micro-strokes / accidental taps
       let pathLen = 0;
@@ -587,11 +755,13 @@ export default function ImageAnnotatorModal({
 
   function undo() {
     setActions((prev) => prev.slice(0, -1));
+    setDamageLimitReached(false);
   }
 
   function clearAll() {
     setActions([]);
     setCurrentStroke([]);
+    setDamageLimitReached(false);
   }
 
   function commitText() {
@@ -619,58 +789,57 @@ export default function ImageAnnotatorModal({
     setPendingTextCssPos(null);
   }
 
-  async function saveAnnotated() {
-    if (!imgEl) return;
-    // Compose final image at natural size
+  /** The photo with the given marks drawn in, as a JPEG file. */
+  async function renderToFile(list: AnnotatorAction[], name: string): Promise<File | null> {
+    if (!imgEl) return null;
     const out = document.createElement("canvas");
     out.width = imgEl.naturalWidth || imgEl.width;
     out.height = imgEl.naturalHeight || imgEl.height;
     const ctx = out.getContext("2d")!;
-    // base image
     ctx.drawImage(imgEl, 0, 0, out.width, out.height);
-    // overlay: redraw actions deterministically
-    for (const a of actions) {
-      if (a.type === "stroke") {
+    let damageNumber = 0;
+    for (const a of list) {
+      if (a.type === "damage") {
+        drawDamageLoop(ctx, a.points, ++damageNumber, out.width, out.height);
+      } else if (a.type === "stroke") {
         ctx.strokeStyle = a.color;
         ctx.lineWidth = a.size;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
         ctx.beginPath();
-        for (let i = 0; i < a.points.length; i++) {
-          const p = a.points[i];
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        }
+        a.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
         ctx.stroke();
       } else if (a.type === "text") {
         ctx.fillStyle = a.color;
         ctx.font = `${a.size}px Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif`;
         ctx.textBaseline = "top";
-        wrapText(
-          ctx,
-          a.text,
-          a.x,
-          a.y,
-          Math.max(200, out.width * 0.5),
-          a.size + 6
-        );
+        wrapText(ctx, a.text, a.x, a.y, Math.max(200, out.width * 0.5), a.size + 6);
       }
     }
-    const blob: Blob | null = await new Promise((resolve) =>
-      out.toBlob((b) => resolve(b), "image/jpeg", 0.92)
-    );
-    if (!blob) return;
-    const annotated = new File(
-      [blob],
-      `${
-        file?.name?.replace(/\.(jpg|jpeg|png)$/i, "") || "salvage"
-      }-annotated.jpg`,
-      { type: "image/jpeg" }
-    );
-    onSave(annotated);
+    const blob: Blob | null = await new Promise((resolve) => out.toBlob((b) => resolve(b), "image/jpeg", 0.92));
+    return blob ? new File([blob], name, { type: "image/jpeg" }) : null;
   }
 
-  if (!open || !file) return null;
+  async function saveAnnotated() {
+    if (!imgEl) return;
+    const width = imgEl.naturalWidth || imgEl.width;
+    const height = imgEl.naturalHeight || imgEl.height;
+    const damageLoops = damageLoopsOf(actions, width, height);
+    const damageRegions = damageRegionsOf(actions, width, height);
+    if (damageOnly || !file) {
+      // A saved report photo is never re-uploaded; only its loops change.
+      onSave(null, { actions, damageLoops, damageRegions, displayFile: null });
+      return;
+    }
+    const base = file.name?.replace(/\.(jpg|jpeg|png)$/i, "") || "salvage";
+    const notes = actions.filter((a) => a.type !== "damage");
+    const uploadFile = notes.length ? await renderToFile(notes, `${base}-annotated.jpg`) : file;
+    if (!uploadFile) return;
+    const displayFile = damageLoops.length ? await renderToFile(actions, `${base}-marked.jpg`) : uploadFile;
+    onSave(uploadFile, { actions, damageLoops, damageRegions, displayFile });
+  }
+
+  if (!open || (!file && !imageUrl)) return null;
 
   // compute display sizing: fit within viewport (mobile friendly)
   return createPortal(
@@ -679,6 +848,20 @@ export default function ImageAnnotatorModal({
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-2 sm:px-3 py-2 border-b border-[var(--app-border)]">
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold ring-1 ${
+                mode === "damage"
+                  ? "bg-[#dc2626] text-white ring-[#dc2626]"
+                  : "bg-[var(--app-panel)] text-[#dc2626] ring-red-200"
+              }`}
+              onClick={() => setMode("damage")}
+              title="Draw a loop around a damaged area"
+              aria-pressed={mode === "damage"}
+            >
+              <Lasso className="h-4 w-4" /> Mark damage
+            </button>
+            {!damageOnly ? <>
             <button
               type="button"
               className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ${
@@ -722,6 +905,7 @@ export default function ImageAnnotatorModal({
               />
               <span className="text-xs text-[var(--app-text-muted)] w-8">{size}px</span>
             </div>
+            </> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 ml-auto">
             <button
@@ -759,6 +943,14 @@ export default function ImageAnnotatorModal({
           </div>
         </div>
 
+        {mode === "damage" ? (
+          <p role="status" className={`border-b border-[var(--app-border)] px-3 py-1.5 text-xs ${damageLimitReached ? "font-semibold text-[#dc2626]" : "text-[var(--app-text-muted)]"}`}>
+            {damageLimitReached
+              ? `Up to ${MAX_DAMAGE_LOOPS} damaged areas per photo. Redraw over a loop to replace it, or Undo to remove one.`
+              : `Draw a loop around each damaged area (${actions.filter((a) => a.type === "damage").length} of ${MAX_DAMAGE_LOOPS} marked). Drawing over a loop replaces it. The loops print on the report photo, and the software inspects inside each one once.`}
+          </p>
+        ) : null}
+
         {/* Canvas area */}
         <div
           ref={containerRef}
@@ -784,7 +976,7 @@ export default function ImageAnnotatorModal({
             {imgEl && (
               <img
                 src={imgEl.src}
-                alt={file?.name || "image"}
+                alt={file?.name || "Report photo"}
                 className="block max-h-[70dvh] sm:max-h-[72vh] w-auto h-auto max-w-full select-none"
                 draggable={false}
               />

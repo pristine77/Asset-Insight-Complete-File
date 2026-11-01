@@ -14,6 +14,7 @@ import { readMulterFileBuffer } from "../utils/reportTempFiles.js";
 import { isSalvageAssessmentV2, normalizeSalvageAssessmentInputs, projectSalvageAssessmentLegacyFields, refreshSalvageAssessment } from "./salvageAssessment.js";
 import { normalizeSalvageVehicleOverrides, validateSalvageVehicleOverrides } from "./salvageVehicleDetails.js";
 import { normalizeSalvageReportContext, validateSalvageReportContext } from "./salvageReportEnrichment.js";
+import { normalizeSalvageDamageMarks, type SalvageDamageMark } from "../utils/salvageDamageMarks.js";
 
 export const SALVAGE_EDITABLE_FIELDS = [
   "report_date", "file_number", "date_received", "claim_number", "policy_number", "date_of_loss",
@@ -24,6 +25,8 @@ export const SALVAGE_EDITABLE_FIELDS = [
   "repair_facility_comments", "actual_cash_value", "replacement_cost", "recommended_reserve",
   "repair_items", "labour_breakdown", "labour_rate_default", "repair_estimate", "procurement_notes",
   "assumptions", "safety_concerns", "priority_level", "specialty_data", "valuation", "assessment_inputs", "report_context",
+  // Loops drawn around damage on photos; editable in the preview (utils/salvageDamageMarks.ts).
+  "damage_marks",
 ] as const;
 const structured = new Set(["repair_items", "labour_breakdown", "repair_estimate", "specialty_data", "valuation", "assessment_inputs", "report_context"]);
 const numeric = new Set(["actual_cash_value", "replacement_cost", "recommended_reserve", "labour_rate_default"]);
@@ -84,6 +87,13 @@ export function editableSalvageData(input: unknown): Record<string, any> {
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
     const value = (input as any)[key] instanceof Date ? (input as any)[key].toISOString() : (input as any)[key];
     if (value === undefined) continue;
+    if (key === "damage_marks") {
+      // Checked against the most photos a report can have here; create and
+      // preview save check again against the report's own photos.
+      try { output[key] = normalizeSalvageDamageMarks(value, 50); }
+      catch (error) { throw new SalvageWorkflowError(400, error instanceof Error ? error.message : "Invalid damage marks."); }
+      continue;
+    }
     if (structured.has(key)) {
       if (["repair_items", "labour_breakdown"].includes(key)) validateRepairRows(value, key);
       else if (!value || typeof value !== "object" || Array.isArray(value)) throw new SalvageWorkflowError(400, `Invalid ${key}.`);
@@ -183,6 +193,11 @@ export async function dispatchSalvage(reportId: string, token?: string) {
 export async function acceptSalvageReport(userId: string, raw: any, images: Express.Multer.File[]): Promise<{ report: any; reused: boolean }> {
   if (images.length > 50) throw new SalvageWorkflowError(400, "Salvage reports support at most 50 photos.");
   const details = editableSalvageData(raw);
+  if (details.damage_marks) {
+    details.damage_marks = checkedDamageMarks(details.damage_marks, images.length);
+    // No marks at all is the same submission as before marks existed (same fingerprint).
+    if (!details.damage_marks.length) delete details.damage_marks;
+  }
   const suppliedId = raw.client_submission_id || raw.progress_id || raw.progressId || raw.job_id;
   if (suppliedId !== undefined && (typeof suppliedId !== "string" || suppliedId.length > 200 || !suppliedId.trim())) throw new SalvageWorkflowError(400, "Invalid submission ID.");
   const clientId = suppliedId || randomUUID();
@@ -215,6 +230,10 @@ export async function acceptSalvageReport(userId: string, raw: any, images: Expr
   }
   await dispatchSalvage(id, jobId);
   return { report: report.toObject(), reused: false };
+}
+function checkedDamageMarks(marks: unknown, photoCount: number): SalvageDamageMark[] {
+  try { return normalizeSalvageDamageMarks(marks, photoCount); }
+  catch (error) { throw new SalvageWorkflowError(400, error instanceof Error ? error.message : "Invalid damage marks."); }
 }
 function requireRevision(report: any, baseRevision: unknown) {
   if (!Number.isInteger(baseRevision) || baseRevision !== Number(report.revision || 0)) throw new SalvageWorkflowError(409, "This report changed. Reload the latest preview before saving or submitting.", "SALVAGE_REVISION_CONFLICT");
@@ -330,6 +349,8 @@ export async function saveSalvagePreview(report: any, data: unknown, baseRevisio
   if (report.workflow_version && !report.preview_data) throw new SalvageWorkflowError(409, "Retry initial analysis before editing this report.");
   const before = salvageSnapshot(report);
   let snapshot = normalizeSalvageReportData({ ...before, ...mergeAssessmentEdits(before, data) });
+  // Loops edited in the preview must point at this report's photos.
+  if (snapshot.damage_marks !== undefined) snapshot.damage_marks = checkedDamageMarks(snapshot.damage_marks, (report.imageUrls || []).length);
   if (isSalvageAssessmentV2(before.assessment)) {
     snapshot.assessment = refreshSalvageAssessment(before.assessment, snapshot.assessment_inputs || before.assessment.inputs);
     snapshot.assessment_inputs = snapshot.assessment.inputs;
