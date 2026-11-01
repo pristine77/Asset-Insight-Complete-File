@@ -132,6 +132,8 @@ const EDITABLE_FIELDS = [
   "item_condition", "damage_description", "inspection_comments", "is_repairable",
   "repair_facility", "repair_facility_comments", "actual_cash_value", "replacement_cost",
   "recommended_reserve", "repair_estimate", "assessment_inputs", "report_context",
+  // Damage loops edited in the preview (owner, 2026-11-01); the server checks them.
+  "damage_marks",
 ] as const;
 
 export function salvageEditableData(data: SalvagePreviewData): SalvagePreviewData {

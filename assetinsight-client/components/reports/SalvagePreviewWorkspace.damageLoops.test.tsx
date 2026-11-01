@@ -5,7 +5,7 @@
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SalvageService, type SalvageReport } from "@/services/salvage";
+import { SalvageService, salvageEditableData, type SalvageReport } from "@/services/salvage";
 import SalvagePreviewWorkspace from "./SalvagePreviewWorkspace";
 
 const editor = vi.hoisted(() => ({ lastProps: null as any }));
@@ -69,5 +69,11 @@ describe("damage loops in the Salvage preview", () => {
       { photoIndex: 0, loops: [savedLoop] },
       { photoIndex: 1, loops: [{ points: [[0.5, 0.5], [0.7, 0.5], [0.7, 0.7]] }] },
     ]);
+  });
+
+  it("are part of what Save changes sends to the server", () => {
+    // savePreview sends only the fields in this list; the loops must be among them.
+    const marks = [{ photoIndex: 1, loops: [savedLoop] }];
+    expect(salvageEditableData({ damage_marks: marks, imageUrls: ["x"] })).toEqual({ damage_marks: marks });
   });
 });
