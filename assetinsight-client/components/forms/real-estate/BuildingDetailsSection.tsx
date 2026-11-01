@@ -2,6 +2,7 @@
 
 import { Building2 } from "lucide-react";
 import CollapsibleSection from "./CollapsibleSection";
+import Field, { FIELD_CLASS } from "./Field";
 import type { RealEstateDetails } from "@/services/realEstate";
 
 interface BuildingDetailsSectionProps {
@@ -14,6 +15,7 @@ interface BuildingDetailsSectionProps {
   onKnownIssuesChange: (value: string) => void;
 }
 
+/* The building's size, age and rooms (owner, 2026-11-01: "professional and easy usability"). */
 export default function BuildingDetailsSection({
   details,
   onChange,
@@ -23,40 +25,38 @@ export default function BuildingDetailsSection({
   const fields = [hd.year_built, hd.square_footage, hd.lot_size_sqft, hd.number_of_rooms, hd.number_of_full_bathrooms, hd.number_of_half_bathrooms];
   const filledCount = fields.filter((f) => f && f.toString().trim() !== "").length;
 
-  const inputClass = "w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] from-gray-50 via-white to-gray-100 px-3 py-2.5 text-sm text-[var(--app-text)] shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:border-blue-400 focus:shadow-sm transition-all placeholder:text-[var(--app-text-muted)] hover:border-gray-400";
-  const labelClass = "block text-[11px] font-bold text-[var(--app-text-muted)] mb-1.5 tracking-wide uppercase drop-shadow-sm";
-
   return (
-    <CollapsibleSection title="Building Details" icon={<Building2 />} filledCount={filledCount} totalCount={fields.length} required>
-      <div className="grid gap-2 grid-cols-3">
-        <div>
-          <label className={labelClass}>Year Built *</label>
-          <input required type="number" className={inputClass} value={hd.year_built} onChange={(e) => onChange("house_details", "year_built", e.target.value)} placeholder="2005" />
-        </div>
-        <div>
-          <label className={labelClass}>Sq Ft *</label>
-          <input required type="number" className={inputClass} value={hd.square_footage} onChange={(e) => onChange("house_details", "square_footage", e.target.value)} placeholder="2500" />
-        </div>
-        <div>
-          <label className={labelClass}>Lot (sqft) *</label>
-          <input required type="number" className={inputClass} value={hd.lot_size_sqft} onChange={(e) => onChange("house_details", "lot_size_sqft", e.target.value)} placeholder="8000" />
-        </div>
-        <div>
-          <label className={labelClass}>Beds *</label>
-          <input required type="number" className={inputClass} value={hd.number_of_rooms} onChange={(e) => onChange("house_details", "number_of_rooms", e.target.value)} placeholder="4" />
-        </div>
-        <div>
-          <label className={labelClass}>Full Bath *</label>
-          <input required type="number" className={inputClass} value={hd.number_of_full_bathrooms} onChange={(e) => onChange("house_details", "number_of_full_bathrooms", e.target.value)} placeholder="2" />
-        </div>
-        <div>
-          <label className={labelClass}>Half Bath *</label>
-          <input required type="number" className={inputClass} value={hd.number_of_half_bathrooms} onChange={(e) => onChange("house_details", "number_of_half_bathrooms", e.target.value)} placeholder="1" />
-        </div>
-        <div className="col-span-3">
-          <label className={labelClass}>Known Issues</label>
-          <input className={inputClass} value={hd.known_issues?.join(", ") || ""} onChange={(e) => onKnownIssuesChange(e.target.value)} placeholder="Roof repair, Old furnace..." />
-        </div>
+    <CollapsibleSection
+      step={4}
+      title="Building details"
+      description="Age, size and rooms of the main building."
+      icon={<Building2 />}
+      filledCount={filledCount}
+      totalCount={fields.length}
+      required
+    >
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+        <Field label="Year built" required>
+          <input required type="number" className={FIELD_CLASS} value={hd.year_built} onChange={(e) => onChange("house_details", "year_built", e.target.value)} placeholder="2005" />
+        </Field>
+        <Field label="Floor area (sq ft)" required>
+          <input required type="number" className={FIELD_CLASS} value={hd.square_footage} onChange={(e) => onChange("house_details", "square_footage", e.target.value)} placeholder="2500" />
+        </Field>
+        <Field label="Lot size (sq ft)" required>
+          <input required type="number" className={FIELD_CLASS} value={hd.lot_size_sqft} onChange={(e) => onChange("house_details", "lot_size_sqft", e.target.value)} placeholder="8000" />
+        </Field>
+        <Field label="Bedrooms" required>
+          <input required type="number" className={FIELD_CLASS} value={hd.number_of_rooms} onChange={(e) => onChange("house_details", "number_of_rooms", e.target.value)} placeholder="4" />
+        </Field>
+        <Field label="Full bathrooms" required>
+          <input required type="number" className={FIELD_CLASS} value={hd.number_of_full_bathrooms} onChange={(e) => onChange("house_details", "number_of_full_bathrooms", e.target.value)} placeholder="2" />
+        </Field>
+        <Field label="Half bathrooms" required>
+          <input required type="number" className={FIELD_CLASS} value={hd.number_of_half_bathrooms} onChange={(e) => onChange("house_details", "number_of_half_bathrooms", e.target.value)} placeholder="1" />
+        </Field>
+        <Field label="Known issues" span="full" hint="Separate issues with commas.">
+          <input className={FIELD_CLASS} value={hd.known_issues?.join(", ") || ""} onChange={(e) => onKnownIssuesChange(e.target.value)} placeholder="Roof repair, old furnace" />
+        </Field>
       </div>
     </CollapsibleSection>
   );

@@ -10,6 +10,8 @@ vi.mock("@/services/realEstate", () => ({ RealEstateService: { create: vi.fn() }
 vi.mock("@/services/savedInputs", () => ({ SavedInputService: {} }));
 vi.mock("@/services/ai", () => ({ AIService: {} }));
 vi.mock("./real-estate", () => ({
+  // The form's section card (owner 2026-11-01 redesign); only its contents matter here.
+  CollapsibleSection: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
   RealEstateSection: ({ onChange }: { onChange: (property: RealEstateProperty) => void }) => <button type="button" onClick={() => onChange({
     id: "property", propertyType: "residential", mainImages: [new File(["main"], "main.jpg")], extraImages: [new File(["extra"], "extra.jpg")], videoFile: new File(["video"], "video.mp4"),
   })}>Attach property media</button>,
@@ -32,7 +34,7 @@ describe("Real Estate capture compatibility", () => {
     fireEvent.click(screen.getByRole("button", { name: "Attach property media" }));
     const map = new File(["map"], "map.png", { type: "image/png" });
     fireEvent.change(screen.getByLabelText("Map"), { target: { files: [map] } });
-    const form = screen.getByRole("button", { name: "Create" }).closest("form")!;
+    const form = screen.getByRole("button", { name: "Create report" }).closest("form")!;
     act(() => { fireEvent.submit(form); fireEvent.submit(form); });
     expect(RealEstateService.create).toHaveBeenCalledTimes(1);
     const args = vi.mocked(RealEstateService.create).mock.calls[0];
@@ -41,7 +43,7 @@ describe("Real Estate capture compatibility", () => {
     expect(args[3]?.map((file) => file.name)).toEqual(["video.mp4"]);
     expect(onSubmittingChange).toHaveBeenCalledWith(true);
     expect(screen.getByRole("status")).toHaveTextContent("Keep this page open");
-    expect(screen.queryByRole("button", { name: "Create" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create report" })).not.toBeInTheDocument();
     await act(async () => { finish({ message: "Processing", phase: "processing", jobId: "re-job" }); });
     expect(screen.getByRole("status")).toHaveTextContent("Upload accepted");
     expect(screen.getByRole("status")).toHaveTextContent("preview is processing");
@@ -55,9 +57,9 @@ describe("Real Estate capture compatibility", () => {
     render(<RealEstateForm />);
     fireEvent.change(screen.getByLabelText("Address"), { target: { value: "Retain address" } });
     fireEvent.click(screen.getByRole("button", { name: "Attach property media" }));
-    await act(async () => { fireEvent.submit(screen.getByRole("button", { name: "Create" }).closest("form")!); });
+    await act(async () => { fireEvent.submit(screen.getByRole("button", { name: "Create report" }).closest("form")!); });
     expect(screen.getByText("Upload unavailable")).toBeVisible();
     expect(screen.getByDisplayValue("Retain address")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Create report" })).toBeEnabled();
   });
 });

@@ -152,40 +152,44 @@ export default function ImageManager({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="grid gap-5">
       {/* Main Images */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-[var(--app-text)]">
-            Main Images ({mainImages.length})
-          </h3>
-          <div className="flex gap-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h4 className="text-[13px] font-semibold text-[var(--app-text)]">
+              Main photos <span className="font-normal text-[var(--app-text-muted)]">({mainImages.length})</span>
+              <span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span>
+            </h4>
+            <p className="text-xs text-[var(--app-text-muted)]">Used for the valuation. Add at least one.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
             {mainImages.length > 0 && (
               <button
                 type="button"
                 onClick={downloadAllMainImages}
-                className="inline-flex items-center gap-1 rounded-lg bg-[var(--app-panel)] border border-[var(--app-border)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-muted)] hover:bg-[var(--app-panel-alt)]"
+                className="app-button app-button--secondary"
               >
-                <Download className="h-3.5 w-3.5" />
-                Download All
+                <Download className="size-4" aria-hidden="true" />
+                Download all
               </button>
             )}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled}
-              className="inline-flex items-center gap-1 rounded-lg bg-[var(--app-panel)] border border-[var(--app-border)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-muted)] hover:bg-[var(--app-panel-alt)] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="app-button app-button--secondary"
             >
-              <Upload className="h-3.5 w-3.5" />
+              <Upload className="size-4" aria-hidden="true" />
               Upload
             </button>
             <button
               type="button"
               onClick={() => onOpenCamera("main")}
               disabled={disabled}
-              className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="app-button app-button--primary"
             >
-              <Camera className="h-3.5 w-3.5" />
+              <Camera className="size-4" aria-hidden="true" />
               Camera
             </button>
           </div>
@@ -219,7 +223,8 @@ export default function ImageManager({
                 <button
                   type="button"
                   onClick={() => onRemoveMainImage(idx)}
-                  className="absolute top-1 right-1 rounded-full bg-red-600 p-1.5 text-white opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                  aria-label={`Remove ${file.name}`}
+                  className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm transition-colors hover:bg-[var(--app-danger)]"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -227,48 +232,49 @@ export default function ImageManager({
             ))}
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-[var(--app-border)] bg-[var(--app-panel-alt)] p-8 text-center">
-            <Camera className="mx-auto h-12 w-12 text-[var(--app-text-muted)]" />
-            <p className="mt-2 text-sm text-[var(--app-text-muted)]">
-              No main images yet. Add property images.
-            </p>
+          <div className="flex items-center gap-3 rounded-lg border border-dashed border-[var(--app-border-strong)] bg-[var(--app-panel-alt)] p-4">
+            <Camera className="size-6 shrink-0 text-[var(--app-text-muted)]" aria-hidden="true" />
+            <p className="text-sm text-[var(--app-text-muted)]">No main photos yet. Upload them or use the camera.</p>
           </div>
         )}
       </section>
 
       {/* Extra Images (Report Only) */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-[var(--app-text)]">
-            Extra Images - Report Only ({extraImages.length})
-          </h3>
-          <div className="flex gap-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h4 className="text-[13px] font-semibold text-[var(--app-text)]">
+              Extra photos <span className="font-normal text-[var(--app-text-muted)]">({extraImages.length})</span>
+            </h4>
+            <p className="text-xs text-[var(--app-text-muted)]">Shown in the report only.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
             {extraImages.length > 0 && (
               <button
                 type="button"
                 onClick={downloadAllExtraImages}
-                className="inline-flex items-center gap-1 rounded-lg bg-[var(--app-panel)] border border-[var(--app-border)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-muted)] hover:bg-[var(--app-panel-alt)]"
+                className="app-button app-button--secondary"
               >
-                <Download className="h-3.5 w-3.5" />
-                Download All
+                <Download className="size-4" aria-hidden="true" />
+                Download all
               </button>
             )}
             <button
               type="button"
               onClick={() => extraFileInputRef.current?.click()}
               disabled={disabled}
-              className="inline-flex items-center gap-1 rounded-lg bg-[var(--app-panel)] border border-[var(--app-border)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-muted)] hover:bg-[var(--app-panel-alt)] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="app-button app-button--secondary"
             >
-              <Upload className="h-3.5 w-3.5" />
+              <Upload className="size-4" aria-hidden="true" />
               Upload
             </button>
             <button
               type="button"
               onClick={() => onOpenCamera("extra")}
               disabled={disabled}
-              className="inline-flex items-center gap-1 rounded-lg bg-gray-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="app-button app-button--secondary"
             >
-              <Camera className="h-3.5 w-3.5" />
+              <Camera className="size-4" aria-hidden="true" />
               Camera
             </button>
           </div>
@@ -302,7 +308,8 @@ export default function ImageManager({
                 <button
                   type="button"
                   onClick={() => onRemoveExtraImage(idx)}
-                  className="absolute top-1 right-1 rounded-full bg-red-600 p-1.5 text-white opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                  aria-label={`Remove ${file.name}`}
+                  className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm transition-colors hover:bg-[var(--app-danger)]"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -310,30 +317,29 @@ export default function ImageManager({
             ))}
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-[var(--app-border)] bg-[var(--app-panel-alt)] p-6 text-center">
-            <Upload className="mx-auto h-10 w-10 text-[var(--app-text-muted)]" />
-            <p className="mt-2 text-sm text-[var(--app-text-muted)]">
-              No extra images yet. Add supplementary photos.
-            </p>
+          <div className="flex items-center gap-3 rounded-lg border border-dashed border-[var(--app-border)] bg-[var(--app-panel-alt)] px-4 py-3">
+            <Upload className="size-5 shrink-0 text-[var(--app-text-muted)]" aria-hidden="true" />
+            <p className="text-sm text-[var(--app-text-muted)]">No extra photos.</p>
           </div>
         )}
       </section>
 
       {/* Video */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-[var(--app-text)]">
-            Video {videoFile ? "(1/1)" : "(0/1)"}
-          </h3>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h4 className="text-[13px] font-semibold text-[var(--app-text)]">Video</h4>
+            <p className="text-xs text-[var(--app-text-muted)]">One video, from the camera or uploaded.</p>
+          </div>
           {!videoFile && (
             <button
               type="button"
               onClick={() => videoUploadInputRef.current?.click()}
               disabled={disabled}
-              className="inline-flex items-center gap-1 rounded-lg bg-[var(--app-panel)] border border-[var(--app-border)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-muted)] hover:bg-[var(--app-panel-alt)] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="app-button app-button--secondary"
             >
-              <Upload className="h-3.5 w-3.5" />
-              Upload Video
+              <Upload className="size-4" aria-hidden="true" />
+              Upload video
             </button>
           )}
         </div>
@@ -347,10 +353,10 @@ export default function ImageManager({
         />
 
         {videoFile ? (
-          <div className="relative group rounded-lg border border-[var(--app-border)] bg-blue-50 p-4">
+          <div className="relative group rounded-lg border border-[var(--app-border)] bg-[var(--app-panel-alt)] p-3">
             <div className="flex items-center gap-3">
-              <div className="flex-shrink-0 rounded-full bg-blue-100 p-3">
-                <Play className="h-6 w-6 text-blue-600" />
+              <div className="flex-shrink-0 rounded-full bg-[var(--app-accent-soft)] p-3">
+                <Play className="h-6 w-6 text-[var(--app-accent)]" />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-[var(--app-text)] truncate">
@@ -363,19 +369,17 @@ export default function ImageManager({
               <button
                 type="button"
                 onClick={onRemoveVideo}
-                className="flex-shrink-0 rounded-full bg-red-600 p-2 text-white hover:bg-red-700 transition-colors"
+                aria-label={`Remove ${videoFile.name}`}
+                className="app-button app-button--icon flex-shrink-0 text-[var(--app-danger)]"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-[var(--app-border)] bg-[var(--app-panel-alt)] p-6 text-center">
-            <Play className="mx-auto h-10 w-10 text-[var(--app-text-muted)]" />
-            <p className="mt-2 text-sm text-[var(--app-text-muted)]">No video yet.</p>
-            <p className="text-xs text-[var(--app-text-muted)] mt-1">
-              1 video allowed (captured via camera or uploaded)
-            </p>
+          <div className="flex items-center gap-3 rounded-lg border border-dashed border-[var(--app-border)] bg-[var(--app-panel-alt)] px-4 py-3">
+            <Play className="size-5 shrink-0 text-[var(--app-text-muted)]" aria-hidden="true" />
+            <p className="text-sm text-[var(--app-text-muted)]">No video.</p>
           </div>
         )}
       </section>

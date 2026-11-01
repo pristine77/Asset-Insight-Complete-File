@@ -2,6 +2,7 @@
 
 import { Wheat, TrendingUp, FileText, DollarSign, Building2 } from "lucide-react";
 import CollapsibleSection from "./CollapsibleSection";
+import { FIELD_CLASS } from "./Field";
 import type { RealEstateDetails } from "@/services/realEstate";
 
 interface FarmlandDetailsSectionProps {
@@ -19,28 +20,29 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
   const fields = [fd?.total_title_acres, fd?.cultivated_acres, fd?.rm_area, fd?.soil_class, fd?.crop_type, fd?.access_quality, fd?.distance_to_city_km];
   const filledCount = fields.filter((f) => f !== undefined && f !== null && f !== "").length;
 
-  const inputClass = "w-full rounded-lg border border-emerald-300/80 bg-[var(--app-panel)] from-emerald-50/50 via-white to-emerald-100/40 px-3 py-2.5 text-sm text-[var(--app-text)] shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 focus:shadow-sm transition-all placeholder:text-[var(--app-text-muted)] hover:border-emerald-400";
-  const labelClass = "block text-[11px] font-bold text-[var(--app-text-muted)] mb-1.5 tracking-wide uppercase drop-shadow-sm";
+  // The form's shared field style (owner, 2026-11-01: "professional and easy usability").
+  const inputClass = FIELD_CLASS;
+  const labelClass = "mb-1.5 block text-[13px] font-semibold text-[var(--app-text)]";
 
   return (
-    <CollapsibleSection title="Farmland" icon={<Wheat className="text-emerald-600" />} filledCount={filledCount} totalCount={fields.length} variant="success" required>
+    <CollapsibleSection step={5} title="Farmland" description="Acres, soil and use, and how the land should be valued." icon={<Wheat />} filledCount={filledCount} totalCount={fields.length} required>
       <div className="space-y-4">
         {/* Basic Farmland Details */}
-        <div className="grid gap-2 grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-3">
           <div>
-            <label className={labelClass}>Total Title Acres *</label>
+            <label className={labelClass}>Total title acres<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
             <input required type="number" min="0" className={inputClass} value={fd?.total_title_acres ?? ""} onChange={(e) => onChange("total_title_acres", e.target.value ? parseFloat(e.target.value) : undefined)} placeholder="160" />
           </div>
           <div>
-            <label className={labelClass}>Cultivated Acres *</label>
+            <label className={labelClass}>Cultivated acres<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
             <input required type="number" min="0" className={inputClass} value={fd?.cultivated_acres ?? ""} onChange={(e) => onChange("cultivated_acres", e.target.value ? parseFloat(e.target.value) : undefined)} placeholder="150" />
           </div>
           <div>
-            <label className={labelClass}>RM / Area *</label>
+            <label className={labelClass}>RM / area<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
             <input required className={inputClass} value={fd?.rm_area || ""} onChange={(e) => onChange("rm_area", e.target.value)} placeholder="RM of Corman Park" />
           </div>
           <div>
-            <label className={labelClass}>Soil Class *</label>
+            <label className={labelClass}>Soil class<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
             <select required className={inputClass} value={fd?.soil_class || ""} onChange={(e) => onChange("soil_class", e.target.value)}>
               <option value="">Select</option>
               <option value="1">1-Excellent</option>
@@ -51,11 +53,11 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
             </select>
           </div>
           <div>
-            <label className={labelClass}>Crop Type *</label>
+            <label className={labelClass}>Crop type<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
             <input required className={inputClass} value={fd?.crop_type || ""} onChange={(e) => onChange("crop_type", e.target.value)} placeholder="Wheat, Canola" />
           </div>
           <div>
-            <label className={labelClass}>Access Quality *</label>
+            <label className={labelClass}>Access quality<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
             <select required className={inputClass} value={fd?.access_quality || "good"} onChange={(e) => onChange("access_quality", e.target.value as any)}>
               <option value="excellent">Excellent</option>
               <option value="good">Good</option>
@@ -64,7 +66,7 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
             </select>
           </div>
           <div>
-            <label className={labelClass}>Dist. to City (km) *</label>
+            <label className={labelClass}>Distance to city (km)<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
             <input required type="number" min="0" className={inputClass} value={fd?.distance_to_city_km ?? ""} onChange={(e) => onChange("distance_to_city_km", e.target.value ? parseFloat(e.target.value) : undefined)} placeholder="25" />
           </div>
           <div className="flex items-center gap-4">
@@ -141,7 +143,7 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
             </div>
             <div className="grid gap-2 grid-cols-1 lg:grid-cols-2">
               <div>
-                <label className={labelClass}>Subject Name *</label>
+                <label className={labelClass}>Subject Name<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
                 <input 
                   required={fd?.use_direct_comparable}
                   className={inputClass} 
@@ -151,7 +153,7 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
                 />
               </div>
               <div>
-                <label className={labelClass}>Valuation Date *</label>
+                <label className={labelClass}>Valuation Date<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
                 <input 
                   required={fd?.use_direct_comparable}
                   type="date" 
@@ -188,7 +190,7 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
             </div>
             <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
               <div>
-                <label className={labelClass}>Market Rent ($/acre) *</label>
+                <label className={labelClass}>Market Rent ($/acre)<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
                 <input 
                   required={fd?.use_income_approach}
                   type="number" 
@@ -201,7 +203,7 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
                 />
               </div>
               <div>
-                <label className={labelClass}>Vacancy Loss (%) *</label>
+                <label className={labelClass}>Vacancy Loss (%)<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
                 <input 
                   required={fd?.use_income_approach}
                   type="number" 
@@ -214,7 +216,7 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
                 />
               </div>
               <div>
-                <label className={labelClass}>Operating Expense (%) *</label>
+                <label className={labelClass}>Operating Expense (%)<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
                 <input 
                   required={fd?.use_income_approach}
                   type="number" 
@@ -227,7 +229,7 @@ export default function FarmlandDetailsSection({ details, onChange }: FarmlandDe
                 />
               </div>
               <div>
-                <label className={labelClass}>Cap Rate (%) *</label>
+                <label className={labelClass}>Cap Rate (%)<span aria-hidden="true" className="ml-0.5 text-[var(--app-danger)]">*</span></label>
                 <input 
                   required={fd?.use_income_approach}
                   type="number" 

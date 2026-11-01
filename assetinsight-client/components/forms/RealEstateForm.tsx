@@ -6,7 +6,7 @@ import {
   RealEstateService,
   type RealEstateDetails,
 } from "@/services/realEstate";
-import { Check, Save } from "lucide-react";
+import { Camera, Check, Save } from "lucide-react";
 import {
   SavedInputService,
   type SavedInput,
@@ -17,6 +17,7 @@ import { toast } from "@/components/ui/toast";
 
 // Section Components
 import {
+  CollapsibleSection,
   RealEstateSection,
   PropertyDetailsSection,
   BuildingDetailsSection,
@@ -569,33 +570,36 @@ export default function RealEstateForm({ onSuccess, onCancel, onSubmittingChange
         </div>
       ) : <>
       <fieldset disabled={submitting} hidden={submitting} className="min-w-0 border-0 p-0 m-0" inert={submitting}>
-      <div className="relative flex min-h-full flex-col gap-2 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
-        <div className="mb-2 flex items-start justify-between gap-3 rounded-lg border border-emerald-100 bg-[var(--app-panel)] p-4 shadow-sm">
-          <div>
-            <h2 className="text-lg font-semibold text-[var(--app-text)]">Real Estate Appraisal</h2>
-            <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-              Capture property details, supporting files, photos, and valuation notes.
-            </p>
-          </div>
-        </div>
-
+      {/*
+        One column, in the order the work is done (owner, 2026-11-01: "Make the
+        Real Estate UI professional and easy usability"): 1 type and photos,
+        2 Software Form Fill (optional), 3 property, 4 building, 5 farmland
+        (agricultural only), then the optional map. The drawer's own header
+        names the form, so the repeated "Real Estate Appraisal" card is gone.
+        What is captured and sent is unchanged.
+      */}
+      <div className="relative flex min-h-full flex-col gap-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="app-alert app-alert--error" role="alert">
             {error}
           </div>
         )}
 
-        {/* Row 1: Property Type & Images + AI Assist */}
-        <div className="grid gap-2 lg:grid-cols-2">
-          <div className="rounded-lg border border-blue-100 bg-[var(--app-panel)] from-white via-blue-50/30 to-white p-3 shadow-sm">
-            <RealEstateSection
-              value={property}
-              onChange={setProperty}
-              maxImages={50}
-              downloadPrefix={(details?.property_details?.address || "real-estate").replace(/[^a-zA-Z0-9_-]/g, "-")}
-            />
-          </div>
-          <AIAssistSection
+        <CollapsibleSection
+          step={1}
+          title="Property type and photos"
+          description="Choose the type of property first, then add its photos and video."
+          icon={<Camera />}
+          required
+        >
+          <RealEstateSection
+            value={property}
+            onChange={setProperty}
+            maxImages={50}
+            downloadPrefix={(details?.property_details?.address || "real-estate").replace(/[^a-zA-Z0-9_-]/g, "-")}
+          />
+        </CollapsibleSection>
+        <AIAssistSection
             specFiles={specFiles}
             onSpecChange={handleSpecChange}
             onRemoveSpecFile={removeSpecFile}
@@ -612,44 +616,36 @@ export default function RealEstateForm({ onSuccess, onCancel, onSubmittingChange
             onClearRecording={clearRecording}
             aiLoading={aiLoading}
           />
-        </div>
 
-        {/* Row 2: Property Details + Building Details */}
-        <div className="grid gap-2 lg:grid-cols-2">
-          <PropertyDetailsSection
-            details={details}
-            onChange={handleChange}
-            onLanguageChange={(lang) => setDetails((prev) => ({ ...prev, language: lang }))}
-          />
-          <BuildingDetailsSection
-            details={details}
-            onChange={handleChange}
-            onKnownIssuesChange={handleKnownIssuesChange}
-          />
-        </div>
+        <PropertyDetailsSection
+          details={details}
+          onChange={handleChange}
+          onLanguageChange={(lang) => setDetails((prev) => ({ ...prev, language: lang }))}
+        />
+        <BuildingDetailsSection
+          details={details}
+          onChange={handleChange}
+          onKnownIssuesChange={handleKnownIssuesChange}
+        />
+        {details.property_type === "agricultural" ? (
+          <FarmlandDetailsSection details={details} onChange={handleFarmlandChange} />
+        ) : null}
+        <MapUploadSection
+          step={details.property_type === "agricultural" ? 6 : 5}
+          mapImage={mapImage}
+          onMapImageChange={handleMapImageChange}
+          onRemoveMapImage={removeMapImage}
+        />
 
-        {/* Row 3: Farmland (if agricultural) + Map */}
-        <div className="grid gap-2 lg:grid-cols-2">
-          {details.property_type === "agricultural" ? (
-            <FarmlandDetailsSection details={details} onChange={handleFarmlandChange} />
-          ) : (
-            <div className="hidden lg:block" />
-          )}
-          <MapUploadSection
-            mapImage={mapImage}
-            onMapImageChange={handleMapImageChange}
-            onRemoveMapImage={removeMapImage}
-          />
-        </div>
-
-        {/* Action Buttons */}
-        <div className="sticky bottom-0 z-10 mt-auto flex flex-col gap-2 border-t border-[var(--app-border)] bg-[var(--app-panel)] px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]  sm:flex-row sm:items-center">
-          <button type="button" className="rounded border border-[var(--app-border)] bg-[var(--app-panel)] px-3 py-2 text-xs text-[var(--app-text-muted)] hover:bg-[var(--app-panel-alt)]" onClick={onCancel} disabled={submitting}>Cancel</button>
-          <button type="button" className="inline-flex items-center justify-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100" onClick={saveInputs} disabled={submitting}>
-            <Save className="h-3 w-3" />Save
+        {/* Actions: Cancel and Save draft on the left, Create report on the right. */}
+        <div className="sticky bottom-0 z-10 mt-auto flex flex-col-reverse gap-2 border-t border-[var(--app-border)] bg-[var(--app-panel)] pt-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:flex-row sm:items-center">
+          <button type="button" className="app-button" onClick={onCancel} disabled={submitting}>Cancel</button>
+          <button type="button" className="app-button app-button--secondary" onClick={saveInputs} disabled={submitting}>
+            <Save className="size-4" aria-hidden="true" />Save draft
           </button>
-          <button type="submit" className="inline-flex items-center justify-center gap-1 rounded bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 sm:ml-auto" disabled={submitting}>
-            {submitting ? "..." : "Create"}{!submitting && <Check className="h-3 w-3" />}
+          <span className="hidden text-xs text-[var(--app-text-muted)] sm:ml-auto sm:inline"><span className="text-[var(--app-danger)]">*</span> Required</span>
+          <button type="submit" className="app-button app-button--primary min-w-36" disabled={submitting}>
+            {!submitting && <Check className="size-4" aria-hidden="true" />}{submitting ? "Uploading…" : "Create report"}
           </button>
         </div>
 

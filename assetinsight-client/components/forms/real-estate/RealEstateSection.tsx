@@ -139,7 +139,7 @@ export default function RealEstateSection({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="grid gap-5">
       {/* Property Type Selection */}
       <PropertyTypeSelector
         value={property?.propertyType}

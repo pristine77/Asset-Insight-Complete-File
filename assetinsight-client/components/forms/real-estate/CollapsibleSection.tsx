@@ -1,76 +1,78 @@
 "use client";
 
-import { Check, AlertCircle } from "lucide-react";
+import { Check } from "lucide-react";
 
 interface CollapsibleSectionProps {
   title: string;
   icon: React.ReactNode;
   children: React.ReactNode;
+  /** Kept for callers; every section is always open. */
   defaultOpen?: boolean;
   filledCount?: number;
   totalCount?: number;
+  /** Kept for callers; sections share one neutral look. */
   variant?: "default" | "success" | "warning" | "info";
   required?: boolean;
+  /** The section's place in the form, shown instead of the icon. */
+  step?: number;
+  /** One line under the title saying what the section is for. */
+  description?: string;
+  /** Shows "Optional" where a progress count would be. */
+  optional?: boolean;
 }
 
+/*
+   A section of the Real Estate form (owner, 2026-11-01: "Make the Real Estate
+   UI professional and easy usability"): a plain card with its step number,
+   title, one line of purpose and how much of it is filled. The earlier
+   gradients had been flattened to white, which also turned white-on-dark
+   buttons invisible; everything here uses the app's colour tokens.
+*/
 export default function CollapsibleSection({
   title,
   icon,
   children,
   filledCount = 0,
   totalCount = 0,
-  variant = "default",
   required = false,
+  step,
+  description,
+  optional = false,
 }: CollapsibleSectionProps) {
   const isComplete = totalCount > 0 && filledCount === totalCount;
-  const hasPartial = filledCount > 0 && filledCount < totalCount;
-
-  const variantStyles = {
-    default: "border-[var(--app-border)] bg-[var(--app-panel)] from-white via-gray-50/60 to-gray-100/80",
-    success: "border-emerald-300/90 bg-[var(--app-panel)] from-emerald-50/40 via-white to-emerald-100/50",
-    warning: "border-amber-300/90 bg-[var(--app-panel)] from-amber-50/40 via-white to-amber-100/50",
-    info: "border-blue-300/90 bg-[var(--app-panel)] from-blue-50/40 via-white to-blue-100/50",
-  };
 
   return (
-    <div className={`rounded-xl border shadow-sm overflow-hidden ${variantStyles[variant]}`}>
-      {/* Header - Always visible, not clickable */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-[var(--app-panel)] from-gray-100/90 via-gray-50/70 to-white/80 border-b-2 border-[var(--app-border)] shadow-sm">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="flex-shrink-0 text-[var(--app-text-muted)] [&>svg]:h-4 [&>svg]:w-4 drop-shadow-sm">{icon}</span>
-          <span className="font-semibold text-sm text-[var(--app-text)] truncate">{title}</span>
-          {required && (
-            <span className="flex-shrink-0 text-[9px] font-medium text-blue-500 bg-blue-50 px-1 py-0.5 rounded shadow-sm">
-              *
+    <section className="min-w-0 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] shadow-[var(--app-shadow-card)]">
+      <header className="flex items-start justify-between gap-3 border-b border-[var(--app-border)] px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 items-start gap-3">
+          {step ? (
+            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[var(--app-accent-soft)] text-xs font-bold text-[var(--app-accent)]" aria-hidden="true">
+              {step}
             </span>
+          ) : (
+            <span className="mt-0.5 shrink-0 text-[var(--app-text-muted)] [&>svg]:size-4" aria-hidden="true">{icon}</span>
           )}
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-semibold leading-6 text-[var(--app-text-strong)]">
+              {title}
+              {required ? <span className="sr-only"> (required)</span> : null}
+            </h3>
+            {description ? <p className="mt-0.5 text-xs leading-5 text-[var(--app-text-muted)]">{description}</p> : null}
+          </div>
         </div>
-
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {totalCount > 0 && (
-            <>
-              {isComplete ? (
-                <span className="flex items-center gap-0.5 text-[10px] font-medium text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-full shadow-sm">
-                  <Check className="h-2.5 w-2.5" />
-                  Complete
-                </span>
-              ) : hasPartial ? (
-                <span className="text-[10px] font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full shadow-sm">
-                  {filledCount}/{totalCount}
-                </span>
-              ) : (
-                <span className="flex items-center gap-0.5 text-[10px] font-medium text-[var(--app-text-muted)] bg-[var(--app-panel-alt)] px-1.5 py-0.5 rounded-full shadow-sm">
-                  <AlertCircle className="h-2.5 w-2.5" />
-                  {totalCount} fields
-                </span>
-              )}
-            </>
-          )}
+        <div className="shrink-0 pt-0.5">
+          {optional ? (
+            <span className="app-chip">Optional</span>
+          ) : totalCount > 0 ? (
+            isComplete ? (
+              <span className="app-chip app-chip--success inline-flex items-center gap-1"><Check className="size-3" aria-hidden="true" />Complete</span>
+            ) : (
+              <span className="app-chip tabular-nums">{filledCount} of {totalCount} filled</span>
+            )
+          ) : null}
         </div>
-      </div>
-
-      {/* Content - Always expanded */}
-      <div className="px-4 py-4 bg-[var(--app-panel)] from-transparent to-gray-50/30">{children}</div>
-    </div>
+      </header>
+      <div className="px-4 py-4 sm:px-5">{children}</div>
+    </section>
   );
 }
