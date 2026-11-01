@@ -1620,7 +1620,11 @@ test("Incoming opens an existing report from the queue", async ({ page }) => {
   await page.getByRole("button", { name: "Open report" }).click();
 
   await expect(page).toHaveURL(/\/reports\?search=CV-E2E-100$/);
-  await expect(page.getByRole("searchbox", { name: "Search reports", exact: true })).toHaveValue("CV-E2E-100");
+  const reportSearch = page.getByRole("searchbox", { name: "Search reports", exact: true });
+  if (!(await reportSearch.isVisible())) {
+    await page.getByRole("button", { name: /^Filters/ }).click();
+  }
+  await expect(reportSearch).toHaveValue("CV-E2E-100");
   await expect(
     page.getByRole("heading", { level: 1, name: "My reports" })
   ).toBeVisible();
