@@ -231,6 +231,27 @@ const userSchema = new mongoose.Schema({
   avatarUploadedAt: {
     type: Date,
   },
+  /*
+    Appraiser profile, set once and printed on every Salvage appraisal report
+    the appraiser signs (owner, 2026-11-01): designation (e.g. CPPA) and title
+    beside the name, a signature image, and a CV as PDF added after the
+    certification. Name, phone and email come from the report itself.
+  */
+  appraiserProfile: {
+    designation: { type: String },
+    title: { type: String },
+    signatureUrl: { type: String },
+    signatureKey: { type: String },
+    signatureBucket: { type: String },
+    signaturePublicBaseUrl: { type: String },
+    cvPdfUrl: { type: String },
+    cvPdfKey: { type: String },
+    cvPdfBucket: { type: String },
+    cvPdfPublicBaseUrl: { type: String },
+    cvPdfFilename: { type: String },
+    cvPdfPages: { type: Number },
+    updatedAt: { type: Date },
+  },
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);

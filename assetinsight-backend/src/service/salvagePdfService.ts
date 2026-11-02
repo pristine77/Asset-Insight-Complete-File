@@ -17,6 +17,9 @@ import { salvageReportSections, safeSalvageReportLink, salvageReportRowNeedsSpli
 import { prepareSalvagePhotos } from "./salvageImagePreparation.js";
 import { damageMarksByPhoto } from "../utils/salvageDamageMarks.js";
 import { renderSalvagePdfWithContents, salvagePdfPrintOptions } from "./salvagePdfLayout.js";
+import { PDFDocument } from "pdf-lib";
+import { buildSalvageAppraisalView, salvageReportUnits, SALVAGE_REPORT_BRAND } from "./salvageAppraisalView.js";
+import { drawSalvageAppendixPages, loadSalvageAppendixImage, loadSalvageAppendixPdf, SALVAGE_APPENDIX_LIMITS } from "./salvageAppendixPages.js";
 
 // Helper to format dates using the current context language (en/fr/es)
 handlebars.registerHelper("formatDate", function (this: any, dateString: any, options: any) {
@@ -103,8 +106,155 @@ handlebars.registerHelper("adjustmentFormat", function (this: any, value: unknow
     ? handlebars.helpers.currencyFormat!.call(this, numeric, options) : value == null ? "" : String(value);
 });
 
+// Helpers of the appraisal template (templates/salvage-appraisal.html).
+// assetPdfService registers "eq" too; this module can load without it.
+if (!handlebars.helpers.eq) handlebars.registerHelper("eq", (a: unknown, b: unknown) => a === b);
+handlebars.registerHelper("gt", (a: unknown, b: unknown) => Number(a) > Number(b));
+handlebars.registerHelper("isEven", (value: unknown) => Number(value) % 2 === 0);
+handlebars.registerHelper("isOdd", (value: unknown) => Number(value) % 2 === 1);
+
+/**
+ * The Salvage PDF: a full MCD Appraisals appraisal report (owner, 2026-11-01;
+ * templates/salvage-appraisal.html, service/salvageAppraisalView.ts): cover,
+ * contents, report summary, a section per unit with the market analysis the
+ * owner asked to bring back, definitions, limiting conditions, the signed
+ * certification, the appraiser's CV and the uploaded appendices, all on A4.
+ * The Word cover plate still comes from the illustrated template
+ * (renderSalvageReport) until the Word layout follows.
+ */
 export async function generateSalvagePdfFromReport(reportData: any): Promise<Buffer> {
+  return renderSalvageAppraisalReport(reportData);
+}
+
+/**
+ * The illustrated Salvage layout (the 25 Oct template, templates/salvage.html).
+ * It still draws the Word report's cover plate (renderSalvageDocxCover); its
+ * tests call it here so that path stays covered.
+ */
+export async function generateIllustratedSalvagePdf(reportData: any): Promise<Buffer> {
   return renderSalvageReport(reportData);
+}
+
+/** Reserved pages for an uploaded PDF; objects, so the template keeps its parent context. */
+const salvageSlots = (count: number) => Array.from({ length: count }, (_slot, index) => ({ page: index + 1 }));
+
+/** Cover photos: those the appraiser chose first, then the report's own order, three at most. */
+function salvageCoverIndexes(unit: any): number[] {
+  const imageUrls: string[] = Array.isArray(unit.imageUrls) ? unit.imageUrls : [];
+  const preferred: number[] = Array.isArray(unit.cover_image_urls)
+    ? unit.cover_image_urls.map((url: string) => imageUrls.indexOf(url)).filter((index: number) => index >= 0)
+    : [];
+  return [...new Set([...preferred, ...imageUrls.map((_url, index) => index)])].slice(0, 3);
+}
+
+async function renderSalvageAppraisalReport(reportData: any): Promise<Buffer> {
+  reportData = presentSalvageSnapshot(normalizeSalvageReportData(reportData));
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+  try {
+    const template = handlebars.compile(await fs.readFile(path.resolve(process.cwd(), "src/templates/salvage-appraisal.html"), "utf-8"));
+    const logoUrl = `data:image/png;base64,${(await fs.readFile(path.resolve(process.cwd(), SALVAGE_REPORT_BRAND.logoFile))).toString("base64")}`;
+    const languageCode = String(reportData?.language || "").toLowerCase();
+    const lang: "en" | "fr" | "es" = languageCode === "fr" || languageCode === "es" ? languageCode : "en";
+    const data = JSON.parse(JSON.stringify(reportData));
+    const view: any = buildSalvageAppraisalView(data, lang);
+
+    // Photos, unit by unit: the unit pages show each photo with its damage
+    // loops drawn on; the cover shows unit 1's chosen photos clean (owner,
+    // 2026-11-01). Units are prepared one after another to bound memory.
+    const dataUri = (buffer: Buffer) => `data:image/jpeg;base64,${buffer.toString("base64")}`;
+    const units = salvageReportUnits(data);
+    const coverIndexes = salvageCoverIndexes(units[0]);
+    let coverPhotos: { src: string; index: number }[] = [];
+    for (const [unitIndex, unit] of units.entries()) {
+      const imageUrls: string[] = Array.isArray(unit.imageUrls) ? unit.imageUrls : [];
+      const clean = unitIndex === 0 ? coverIndexes : [];
+      const prepared = unit.damage_marks?.length
+        ? await prepareSalvagePhotos(imageUrls, { damageMarks: damageMarksByPhoto(unit.damage_marks, imageUrls.length), cleanCopyIndexes: clean })
+        : await prepareSalvagePhotos(imageUrls);
+      view.units[unitIndex].photos = prepared.map((photo, index) => ({ src: dataUri(photo.buffer), index: index + 1 }));
+      if (unitIndex === 0) coverPhotos = clean.map((index) => ({ src: dataUri(prepared[index].cleanBuffer ?? prepared[index].buffer), index: index + 1 }));
+    }
+
+    // The appraiser's profile (set once): signature image and CV PDF.
+    const profile = data.appraiser_profile && typeof data.appraiser_profile === "object" ? data.appraiser_profile : {};
+    const signatureSrc = typeof profile.signatureUrl === "string" && profile.signatureUrl
+      ? await loadSalvageAppendixImage(profile.signatureUrl, "The appraiser's signature", { png: true, maxSide: 900 }) : "";
+    const pdfSlots: { anchor: string; bytes: Buffer }[] = [];
+    const cv: { slots: unknown[] } = { slots: [] };
+    if (typeof profile.cvUrl === "string" && profile.cvUrl) {
+      const loaded = await loadSalvageAppendixPdf(profile.cvUrl, "The appraiser's CV");
+      cv.slots = salvageSlots(loaded.pageCount);
+      pdfSlots.push({ anchor: "salvage-appraiser-profile", bytes: loaded.bytes });
+    }
+    // Appendices: a PDF reserves one page per page; a photo prints on its own page.
+    let appendixPages = 0;
+    for (const appendix of view.appendices) {
+      const name = `Appendix ${appendix.letter}`;
+      if (appendix.kind === "image") {
+        appendix.src = await loadSalvageAppendixImage(appendix.url, name);
+        appendix.pageCount = 1;
+      } else {
+        const loaded = await loadSalvageAppendixPdf(appendix.url, name);
+        appendix.pageCount = loaded.pageCount;
+        appendix.slots = salvageSlots(loaded.pageCount);
+        pdfSlots.push({ anchor: appendix.anchor, bytes: loaded.bytes });
+      }
+      appendixPages += appendix.pageCount;
+      if (appendixPages > SALVAGE_APPENDIX_LIMITS.totalPages) {
+        throw new Error(`The appendices exceed ${SALVAGE_APPENDIX_LIMITS.totalPages} pages.`);
+      }
+    }
+
+    const html = template({
+      ...data, v: view, coverPhotos, cv, signature_src: signatureSrc, logo_url: logoUrl, language: lang,
+      tt: SALVAGE_PDF_LABELS[lang], currency: "CAD",
+      report_date_text: reportData.report_date ? formatSalvageDate(reportData.report_date, lang) : "",
+      loss_date_text: reportData.date_of_loss ? formatSalvageDate(reportData.date_of_loss, lang) : "",
+    });
+
+    browser = await puppeteer.launch({ args: ["--no-sandbox", "--disable-setuid-sandbox"], timeout: 120000 });
+    const page = await browser.newPage();
+    configurePuppeteerPageTimeouts(page);
+    await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on("request", (request) => {
+      // Every image is embedded; never fetch links or remote resources.
+      void (request.url().startsWith("data:") || request.url() === "about:blank"
+        ? request.continue() : request.abort()).catch(() => undefined);
+    });
+    await page.emulateMediaType("print");
+    await page.setContent(html, { waitUntil: "networkidle0", timeout: PUPPETEER_NAVIGATION_TIMEOUT_MS });
+    // Contents with real page numbers; uploaded PDF pages drawn onto their
+    // reserved pages; then the MCD Appraisals header and footer on every page
+    // after the cover, numbered from the report summary.
+    const labels = SALVAGE_PDF_LABELS[lang];
+    return await renderSalvagePdfWithContents(page, salvagePdfPrintOptions(), {
+      logoUrl,
+      title: view.title,
+      fileLabel: labels.fileNumber,
+      fileNumber: String(reportData.file_number || "-"),
+      confidential: labels.confidential,
+      pageLabel: labels.page,
+      ofLabel: labels.of,
+      coverLabel: labels.cover,
+      contentsLabel: labels.contents,
+      language: lang,
+      brandName: SALVAGE_REPORT_BRAND.name,
+    }, async (bytes, anchorPages) => {
+      if (!pdfSlots.length) return bytes;
+      const pdf = await PDFDocument.load(bytes);
+      for (const slot of pdfSlots) {
+        const start = anchorPages[slot.anchor];
+        if (!start) throw new Error("A reserved appendix page could not be found.");
+        await drawSalvageAppendixPages(pdf, slot.bytes, start);
+      }
+      return pdf.save();
+    });
+  } catch (error) {
+    throw Object.assign(new Error("Failed to generate PDF report."), { cause: error });
+  } finally {
+    await browser?.close().catch(() => undefined);
+  }
 }
 
 // Word cannot reproduce CSS refraction/shadows. Embed only the designed cover
@@ -116,61 +266,7 @@ export async function renderSalvageDocxCover(
   return renderSalvageReport(reportData, photos);
 }
 
-async function renderSalvageReport(
-  reportData: any,
-  coverPhotos?: Awaited<ReturnType<typeof prepareSalvagePhotos>>,
-): Promise<Buffer> {
-  reportData = presentSalvageSnapshot(normalizeSalvageReportData(reportData));
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
-  try {
-    const templatePath = path.resolve(
-      process.cwd(),
-      "src/templates/salvage.html"
-    );
-    const htmlTemplate = await fs.readFile(templatePath, "utf-8");
-
-    const logoPath = path.resolve(process.cwd(), "public/logo.jpg");
-    const logoImage = await fs.readFile(logoPath);
-    const logoBase64 = logoImage.toString("base64");
-    const logoUrl = `data:image/jpeg;base64,${logoBase64}`;
-
-    // Trusted, versioned decorative art only. Never read report-supplied paths or
-    // URLs for stationery, and never blend this layer into stored evidence photos.
-    const glassArtwork = await fs.readFile(path.resolve(process.cwd(), "public/report-artwork/salvage-ruby-glass.png"));
-    const glassArtworkUrl = `data:image/png;base64,${glassArtwork.toString("base64")}`;
-
-    const template = handlebars.compile(htmlTemplate);
-
-    const sanitizedData = JSON.parse(JSON.stringify(reportData));
-    // Embed bounded copies rather than asking Chromium to fetch remote photos or
-    // rely on HEIC browser support. All originals remain linked to the report.
-    // The report prints each photo with its damage loops drawn on (owner, 2026-11-01).
-    const preparedPhotos = coverPhotos ?? (reportData.damage_marks?.length
-      ? await prepareSalvagePhotos(reportData.imageUrls, { damageMarks: damageMarksByPhoto(reportData.damage_marks, (reportData.imageUrls || []).length) })
-      : await prepareSalvagePhotos(reportData.imageUrls));
-    sanitizedData.imageUrls = preparedPhotos.map((photo) => `data:image/jpeg;base64,${photo.buffer.toString("base64")}`);
-    const reportPhotos = preparedPhotos.map((photo, index) => ({
-      src: sanitizedData.imageUrls[index] as string,
-      index: index + 1,
-      portrait: photo.height > photo.width,
-    }));
-    // Chunk the complete ordered appendix, not the cover selection. Explicit
-    // pages guarantee five distinct placements per full sheet in Chromium.
-    const photoPages = Array.from({ length: Math.ceil(reportPhotos.length / 5) }, (_, pageIndex) => {
-      const photos = reportPhotos.slice(pageIndex * 5, pageIndex * 5 + 5);
-      return { photos, first: photos[0]!.index, last: photos[photos.length - 1]!.index, total: reportPhotos.length };
-    });
-    const preferredCoverIndexes: number[] = Array.isArray(reportData.cover_image_urls)
-      ? reportData.cover_image_urls.map((url: string) => reportData.imageUrls.indexOf(url)).filter((index: number) => index >= 0)
-      : [];
-    const coverIndexes = [...new Set([...preferredCoverIndexes, ...reportPhotos.map((_photo: unknown, index: number) => index)])].slice(0, 3);
-
-    // Basic i18n dictionary for PDF template labels
-    const lang: "en" | "fr" | "es" = ((): any => {
-      const l = String((reportData as any)?.language || "").toLowerCase();
-      return l === "fr" || l === "es" ? l : "en";
-    })();
-    const t = {
+const SALVAGE_PDF_LABELS = {
       en: {
         title: "Salvage Report",
         coverTitleLead: "Salvage",
@@ -522,7 +618,63 @@ async function renderSalvageReport(
         specAdj: "Ajustes",
         notFound: "No encontrado",
       },
-    } as const;
+} as const;
+
+async function renderSalvageReport(
+  reportData: any,
+  coverPhotos?: Awaited<ReturnType<typeof prepareSalvagePhotos>>,
+): Promise<Buffer> {
+  reportData = presentSalvageSnapshot(normalizeSalvageReportData(reportData));
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+  try {
+    const templatePath = path.resolve(
+      process.cwd(),
+      "src/templates/salvage.html"
+    );
+    const htmlTemplate = await fs.readFile(templatePath, "utf-8");
+
+    const logoPath = path.resolve(process.cwd(), "public/logo.jpg");
+    const logoImage = await fs.readFile(logoPath);
+    const logoBase64 = logoImage.toString("base64");
+    const logoUrl = `data:image/jpeg;base64,${logoBase64}`;
+
+    // Trusted, versioned decorative art only. Never read report-supplied paths or
+    // URLs for stationery, and never blend this layer into stored evidence photos.
+    const glassArtwork = await fs.readFile(path.resolve(process.cwd(), "public/report-artwork/salvage-ruby-glass.png"));
+    const glassArtworkUrl = `data:image/png;base64,${glassArtwork.toString("base64")}`;
+
+    const template = handlebars.compile(htmlTemplate);
+
+    const sanitizedData = JSON.parse(JSON.stringify(reportData));
+    // Embed bounded copies rather than asking Chromium to fetch remote photos or
+    // rely on HEIC browser support. All originals remain linked to the report.
+    // The report prints each photo with its damage loops drawn on (owner, 2026-11-01).
+    const preparedPhotos = coverPhotos ?? (reportData.damage_marks?.length
+      ? await prepareSalvagePhotos(reportData.imageUrls, { damageMarks: damageMarksByPhoto(reportData.damage_marks, (reportData.imageUrls || []).length) })
+      : await prepareSalvagePhotos(reportData.imageUrls));
+    sanitizedData.imageUrls = preparedPhotos.map((photo) => `data:image/jpeg;base64,${photo.buffer.toString("base64")}`);
+    const reportPhotos = preparedPhotos.map((photo, index) => ({
+      src: sanitizedData.imageUrls[index] as string,
+      index: index + 1,
+      portrait: photo.height > photo.width,
+    }));
+    // Chunk the complete ordered appendix, not the cover selection. Explicit
+    // pages guarantee five distinct placements per full sheet in Chromium.
+    const photoPages = Array.from({ length: Math.ceil(reportPhotos.length / 5) }, (_, pageIndex) => {
+      const photos = reportPhotos.slice(pageIndex * 5, pageIndex * 5 + 5);
+      return { photos, first: photos[0]!.index, last: photos[photos.length - 1]!.index, total: reportPhotos.length };
+    });
+    const preferredCoverIndexes: number[] = Array.isArray(reportData.cover_image_urls)
+      ? reportData.cover_image_urls.map((url: string) => reportData.imageUrls.indexOf(url)).filter((index: number) => index >= 0)
+      : [];
+    const coverIndexes = [...new Set([...preferredCoverIndexes, ...reportPhotos.map((_photo: unknown, index: number) => index)])].slice(0, 3);
+
+    // Basic i18n dictionary for PDF template labels
+    const lang: "en" | "fr" | "es" = ((): any => {
+      const l = String((reportData as any)?.language || "").toLowerCase();
+      return l === "fr" || l === "es" ? l : "en";
+    })();
+    const t = SALVAGE_PDF_LABELS;
 
     // Precompute dynamic label sets for template tables
     const sd: any = (reportData as any)?.specialty_data || (reportData as any)?.aiExtractedDetails?.specialty_data || {};

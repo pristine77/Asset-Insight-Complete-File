@@ -15,6 +15,8 @@ import { isSalvageAssessmentV2, normalizeSalvageAssessmentInputs, projectSalvage
 import { normalizeSalvageVehicleOverrides, validateSalvageVehicleOverrides } from "./salvageVehicleDetails.js";
 import { normalizeSalvageReportContext, validateSalvageReportContext } from "./salvageReportEnrichment.js";
 import { normalizeSalvageDamageMarks, type SalvageDamageMark } from "../utils/salvageDamageMarks.js";
+import { createSalvageUnitsFromClient, mergeSalvageUnitsFromClient, normalizeSalvageAppraisalField, normalizeStoredSalvageUnits,
+  SalvageAppraisalFieldError, SALVAGE_REPORT_APPRAISAL_FIELDS, SALVAGE_UNIT_APPRAISAL_FIELDS } from "./salvageAppraisalFields.js";
 
 export const SALVAGE_EDITABLE_FIELDS = [
   "report_date", "file_number", "date_received", "claim_number", "policy_number", "date_of_loss",
@@ -27,7 +29,19 @@ export const SALVAGE_EDITABLE_FIELDS = [
   "assumptions", "safety_concerns", "priority_level", "specialty_data", "valuation", "assessment_inputs", "report_context",
   // Loops drawn around damage on photos; editable in the preview (utils/salvageDamageMarks.ts).
   "damage_marks",
+  // The full MCD Appraisals report (owner, 2026-11-01; service/salvageAppraisalFields.ts):
+  // report-level fields, unit 1's new fields, and units 2 onward.
+  ...SALVAGE_REPORT_APPRAISAL_FIELDS, ...SALVAGE_UNIT_APPRAISAL_FIELDS, "additional_units",
 ] as const;
+const appraisalFields = new Set<string>([...SALVAGE_REPORT_APPRAISAL_FIELDS, ...SALVAGE_UNIT_APPRAISAL_FIELDS]);
+/** Appraisal-field checks speak the workflow's error type (HTTP 400). */
+function appraisal<T>(work: () => T): T {
+  try { return work(); }
+  catch (error) {
+    if (error instanceof SalvageAppraisalFieldError) throw new SalvageWorkflowError(400, error.message);
+    throw error;
+  }
+}
 const structured = new Set(["repair_items", "labour_breakdown", "repair_estimate", "specialty_data", "valuation", "assessment_inputs", "report_context"]);
 const numeric = new Set(["actual_cash_value", "replacement_cost", "recommended_reserve", "labour_rate_default"]);
 export class SalvageWorkflowError extends Error {
@@ -87,6 +101,15 @@ export function editableSalvageData(input: unknown): Record<string, any> {
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
     const value = (input as any)[key] instanceof Date ? (input as any)[key].toISOString() : (input as any)[key];
     if (value === undefined) continue;
+    if (key === "additional_units") {
+      // Shapes and sizes; who may set photos and research is decided at create and save.
+      output[key] = appraisal(() => normalizeStoredSalvageUnits(value));
+      continue;
+    }
+    if (appraisalFields.has(key)) {
+      output[key] = appraisal(() => normalizeSalvageAppraisalField(key, value));
+      continue;
+    }
     if (key === "damage_marks") {
       // Checked against the most photos a report can have here; create and
       // preview save check again against the report's own photos.
@@ -177,10 +200,17 @@ export async function salvageRows(reports: any[]): Promise<any[]> {
       preview_available: previewAvailable, can_cancel: busy && Boolean(report.job_id), workflow_steps: salvageWorkflowSteps(report),
       workflow_stage: stage, workflow_message: cancelled ? "Processing stopped. Saved details and photos are retained. You can retry, or edit an available preview and resubmit." : busy && report.generation_progress?.message ? salvageSystemText(report.generation_progress.message) : messages[stage], workflow_progress_percent: busy || cancelled || status === "error" ? Number(report.generation_progress?.percent || 0) : 100,
       files_ready: ready, files_generating: busy && report.generation_kind === "files", job_status: report.job_status, job_id: report.job_id,
-      job_error: salvageSystemText(report.job_error), downloadable, download_access: downloadable ? access : { ...access, allowed: false }, files };
+      job_error: salvageSystemText(report.job_error), downloadable, download_access: downloadable ? access : { ...access, allowed: false }, files,
+      // Uploaded documents printed as appendices; managed by their own requests (salvageAppendixService.ts).
+      appendices: salvageAppendixRows(report.appendices), appendices_version: Number(report.appendices_version || 0) };
   });
 }
 export async function salvageRow(report: any) { return (await salvageRows([report]))[0]; }
+/** What the browser sees of each appendix: no storage keys. */
+export function salvageAppendixRows(appendices: unknown) {
+  return (Array.isArray(appendices) ? appendices : []).map((a: any) => ({ id: a.id, title: a.title, note: a.note || "", kind: a.kind,
+    url: a.url, pageCount: a.pageCount, filename: a.filename || "", bytes: a.bytes || 0, uploadedAt: a.uploadedAt }));
+}
 
 function outbox(reportId: string, jobId: string, kind: "preview" | "files", revision: number) {
   return buildReportJobOutbox({ type: kind === "preview" ? "salvage-preview" : "salvage-files", reportId, progressId: jobId,
@@ -190,8 +220,16 @@ export async function dispatchSalvage(reportId: string, token?: string) {
   // Acceptance is the persisted outbox, not this best-effort dispatch. Workers recover it after restart.
   try { await ensureReportJobOutbox("salvage", reportId, token); } catch { console.warn("Salvage job dispatch deferred to durable outbox sweep", reportId); }
 }
-export async function acceptSalvageReport(userId: string, raw: any, images: Express.Multer.File[]): Promise<{ report: any; reused: boolean }> {
+export async function acceptSalvageReport(userId: string, raw: any, images: Express.Multer.File[], unitImages: Express.Multer.File[] = []): Promise<{ report: any; reused: boolean }> {
   if (images.length > 50) throw new SalvageWorkflowError(400, "Salvage reports support at most 50 photos.");
+  // Units 2 onward (owner, 2026-11-01): their photos follow in unit order; each
+  // unit says how many are its own. Photos and research stay server-owned.
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    raw = { ...raw, additional_units: appraisal(() => createSalvageUnitsFromClient(raw.additional_units)) };
+    if (!raw.additional_units.length) delete raw.additional_units;
+  }
+  const unitPhotoCount = (raw?.additional_units || []).reduce((sum: number, unit: any) => sum + unit.photo_count, 0);
+  if (unitPhotoCount !== unitImages.length) throw new SalvageWorkflowError(400, "The photos uploaded for units 2 onward do not match the units' photo counts.");
   const details = editableSalvageData(raw);
   if (details.damage_marks) {
     details.damage_marks = checkedDamageMarks(details.damage_marks, images.length);
@@ -206,7 +244,10 @@ export async function acceptSalvageReport(userId: string, raw: any, images: Expr
   const id = createHash("sha256").update(`salvage:${userId}:${clientId}`).digest("hex").slice(0, 24);
   const contentHashes = [];
   for (const file of images) contentHashes.push(createHash("sha256").update(await readMulterFileBuffer(file)).digest("hex"));
-  const fingerprint = createHash("sha256").update(JSON.stringify({ details, images: contentHashes })).digest("hex");
+  const unitHashes = [];
+  for (const file of unitImages) unitHashes.push(createHash("sha256").update(await readMulterFileBuffer(file)).digest("hex"));
+  // Reports without extra units keep the same fingerprint as before units existed.
+  const fingerprint = createHash("sha256").update(JSON.stringify(unitHashes.length ? { details, images: contentHashes, unitImages: unitHashes } : { details, images: contentHashes })).digest("hex");
   const existing: any = await SalvageReport.findById(id).select("+submission_fingerprint").lean();
   if (existing) {
     if (existing.submission_fingerprint !== fingerprint) throw new SalvageWorkflowError(409, "This submission ID was already used for different report details. Start a new report.");
@@ -216,6 +257,7 @@ export async function acceptSalvageReport(userId: string, raw: any, images: Expr
   const jobId = `salvage-${id}-${randomUUID()}`;
   const report = new SalvageReport({ ...details, _id: id, user: userId, workflow_version: 1, status: "processing", revision: 0,
     source_files: serializeMulterFiles(images), submission_fingerprint: fingerprint, client_submission_id: clientId,
+    ...(unitImages.length ? { unit_source_files: salvageUnitSourceFiles(details.additional_units || [], unitImages) } : {}),
     legacy_progress_id: legacyProgressId,
     imageUrls: [], job_id: jobId, job_status: "queued", generation_kind: "preview", queued_at: new Date(),
     report_job_outbox: outbox(id, jobId, "preview", 0) });
@@ -230,6 +272,15 @@ export async function acceptSalvageReport(userId: string, raw: any, images: Expr
   }
   await dispatchSalvage(id, jobId);
   return { report: report.toObject(), reused: false };
+}
+/** Each unit's staged photos, in unit order (the report job saves them). */
+function salvageUnitSourceFiles(units: any[], files: Express.Multer.File[]) {
+  let offset = 0;
+  return units.filter((unit) => unit.photo_count > 0).map((unit) => {
+    const own = files.slice(offset, offset + unit.photo_count);
+    offset += unit.photo_count;
+    return { unitId: unit.id, files: serializeMulterFiles(own) };
+  });
 }
 function checkedDamageMarks(marks: unknown, photoCount: number): SalvageDamageMark[] {
   try { return normalizeSalvageDamageMarks(marks, photoCount); }
@@ -348,6 +399,10 @@ export async function saveSalvagePreview(report: any, data: unknown, baseRevisio
   if (salvageBusy(report)) throw new SalvageWorkflowError(409, "Wait for processing to finish before editing.");
   if (report.workflow_version && !report.preview_data) throw new SalvageWorkflowError(409, "Retry initial analysis before editing this report.");
   const before = salvageSnapshot(report);
+  if (data && typeof data === "object" && !Array.isArray(data) && Object.prototype.hasOwnProperty.call(data, "additional_units")) {
+    // Each unit keeps its saved photos and research; the browser edits the rest.
+    data = { ...data, additional_units: appraisal(() => mergeSalvageUnitsFromClient(before.additional_units, (data as any).additional_units)) };
+  }
   let snapshot = normalizeSalvageReportData({ ...before, ...mergeAssessmentEdits(before, data) });
   // Loops edited in the preview must point at this report's photos.
   if (snapshot.damage_marks !== undefined) snapshot.damage_marks = checkedDamageMarks(snapshot.damage_marks, (report.imageUrls || []).length);
@@ -451,7 +506,7 @@ export async function requestSalvageResearch(report: any, baseRevision: unknown,
       preview_data: salvageSnapshot(report), job_id: jobId, job_status: "queued", job_error: "", generation_attempt: 0,
       files_generating: false, files_stale: true, queued_at: new Date(), generation_progress: { percent: 0, message: "Queued a new Canadian salvage research run." },
       report_job_outbox: outbox(String(report._id), jobId, "preview", Number(baseRevision)) },
-    $unset: { job_execution_token: 1, research_checkpoint: 1 }, $push: { research_requests: requestEntry } }, { new: true }).select("+research_requests").lean();
+    $unset: { job_execution_token: 1, research_checkpoint: 1, unit_research_checkpoints: 1 }, $push: { research_requests: requestEntry } }, { new: true }).select("+research_requests").lean();
   if (!updated) {
     // A concurrent replay may have accepted this exact paid run while the caller
     // awaited Mongo. Resolve the persisted identity rather than queueing again.

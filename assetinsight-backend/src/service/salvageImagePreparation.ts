@@ -10,8 +10,12 @@ import { drawDamageLoops, salvageDamageCropBox, type SalvageDamageMark } from ".
  * ups are asked for, damageCrops holds a full-detail close-up of each loop's
  * area, cut from the clean full-size original (not the 1600 px copy), in the
  * order the loops were drawn.
+ *
+ * The report cover shows clean photos (owner, 2026-11-01: "clean photos on
+ * the cover"): for the indexes in cleanCopyIndexes, a marked photo also
+ * returns cleanBuffer, the same copy without its loops, from the same download.
  */
-export type SalvagePreparedPhoto = { buffer: Buffer; width: number; height: number; damageCrops?: Buffer[] };
+export type SalvagePreparedPhoto = { buffer: Buffer; width: number; height: number; damageCrops?: Buffer[]; cleanBuffer?: Buffer };
 export const SALVAGE_MAX_PHOTOS = 50;
 export const SALVAGE_AI_BATCH_SIZE = 10;
 
@@ -22,6 +26,8 @@ export async function prepareSalvagePhotos(imageUrls: string[], options: {
   damageMarks?: (SalvageDamageMark | undefined)[];
   /** Also cut a close-up of each marked area (the analysis asks; documents do not). */
   damageCloseUps?: boolean;
+  /** Photos that also need a copy without loops (the report cover). */
+  cleanCopyIndexes?: number[];
 } = {}): Promise<SalvagePreparedPhoto[]> {
   if (imageUrls.length > SALVAGE_MAX_PHOTOS) throw new Error("Salvage supports at most 50 photos; no photos were discarded.");
   let encodedBytes = 64 * 1024;
@@ -38,6 +44,8 @@ export async function prepareSalvagePhotos(imageUrls: string[], options: {
       const mark = options.damageMarks?.[index];
       const buffer = mark?.loops.length ? await drawDamageLoops(result.data, result.info.width, result.info.height, mark.loops) : result.data;
       encodedBytes += Math.ceil(buffer.length / 3) * 4;
+      const cleanBuffer = buffer !== result.data && options.cleanCopyIndexes?.includes(index) ? result.data : undefined;
+      if (cleanBuffer) encodedBytes += Math.ceil(cleanBuffer.length / 3) * 4;
       let damageCrops: Buffer[] | undefined;
       if (options.damageCloseUps && mark?.regions.length) {
         // The loops were placed on the photo as displayed, so crop the
@@ -54,7 +62,7 @@ export async function prepareSalvagePhotos(imageUrls: string[], options: {
         }
       }
       if (encodedBytes > (options.maxEncodedBytes ?? 256 * 1024 * 1024)) throw new Error("Image preparation size limit exceeded.");
-      return { buffer, width: result.info.width, height: result.info.height, ...(damageCrops ? { damageCrops } : {}) };
+      return { buffer, width: result.info.width, height: result.info.height, ...(damageCrops ? { damageCrops } : {}), ...(cleanBuffer ? { cleanBuffer } : {}) };
     } catch {
       // A partial report would silently lose evidence. Fail without logging URLs,
       // which may contain bearer-like data, and retain every original for retry.

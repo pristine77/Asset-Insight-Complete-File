@@ -18,7 +18,7 @@ vi.mock("../src/service/salvagePdfLayout.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/service/salvagePdfLayout.js")>(),
   renderSalvagePdfWithContents: browser.pdf,
 }));
-import { generateSalvagePdfFromReport, renderSalvageDocxCover } from "../src/service/salvagePdfService.js";
+import { generateIllustratedSalvagePdf, renderSalvageDocxCover } from "../src/service/salvagePdfService.js";
 import { prepareSalvagePhotos } from "../src/service/salvageImagePreparation.js";
 
 beforeEach(() => {
@@ -85,7 +85,7 @@ describe("Salvage PDF cover compatibility", () => {
     vi.mocked(prepareSalvagePhotos).mockResolvedValue(photos);
     const { document, cover, plate, decode } = documentFixture();
     const report = { imageUrls: photos.map((_, index) => `https://example.test/${index}`) };
-    expect(await generateSalvagePdfFromReport(report)).toEqual(Buffer.from("verified-pdf"));
+    expect(await generateIllustratedSalvagePdf(report)).toEqual(Buffer.from("verified-pdf"));
     expect(prepareSalvagePhotos).toHaveBeenCalledExactlyOnceWith(report.imageUrls);
     expect(browser.screenshot).toHaveBeenCalledExactlyOnceWith({ type: "png", omitBackground: false });
     expect(plate.src).toBe(`data:image/png;base64,${Buffer.from("cover-png").toString("base64")}`);
@@ -104,7 +104,7 @@ describe("Salvage PDF cover compatibility", () => {
     if (failure === "photo") document.images[0]!.naturalWidth = 0;
     if (failure === "plate") plate.naturalWidth = 0;
     if (failure === "screenshot") browser.screenshot.mockRejectedValueOnce(new Error("Screenshot failed"));
-    await expect(generateSalvagePdfFromReport({ imageUrls: [] })).rejects.toThrow("Failed to generate PDF report");
+    await expect(generateIllustratedSalvagePdf({ imageUrls: [] })).rejects.toThrow("Failed to generate PDF report");
     expect(browser.pdf).not.toHaveBeenCalled();
     expect(browser.close).toHaveBeenCalledOnce();
   });

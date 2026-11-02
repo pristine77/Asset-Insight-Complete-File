@@ -4,6 +4,7 @@ import type { AuthRequest } from "../middleware/auth.middleware.js";
 import { salvageReportUpload } from "../utils/multerStorage.js";
 import SalvageReport from "../models/salvage.model.js";
 import { cleanupReportJobSourceFiles } from "../utils/reportTempFiles.js";
+import { addSalvageAppendix, updateSalvageAppendices } from "../service/salvageAppendixService.js";
 import { acceptSalvageReport, ownedSalvageReport, requestSalvageGeneration, salvageRow, salvageRows,
   cancelSalvageProcessing, requestSalvageResearch, saveSalvagePreview, SalvageWorkflowError } from "../service/salvageWorkflowService.js";
 
@@ -13,9 +14,12 @@ function failure(res: Response, error: unknown) {
   console.error("Salvage workflow request failed", error instanceof Error ? error.name : "UnknownError");
   return res.status(500).json({ message: "Unable to process the report. Please retry." });
 }
-export const uploadMiddleware = salvageReportUpload.array("images", 50);
+// Unit 1's photos as "images"; units 2 onward's as "unit_images", in unit order (owner, 2026-11-01).
+export const uploadMiddleware = salvageReportUpload.fields([{ name: "images", maxCount: 50 }, { name: "unit_images", maxCount: 150 }]);
 export const createSalvageReport = async (req: AuthRequest, res: Response) => {
-  const images = (req.files || []) as Express.Multer.File[];
+  const uploaded = (req.files || {}) as Record<string, Express.Multer.File[]> | Express.Multer.File[];
+  const images = Array.isArray(uploaded) ? uploaded : uploaded.images || [];
+  const unitImages = Array.isArray(uploaded) ? [] : uploaded.unit_images || [];
   let cleanupSources = true;
   try {
     let details: unknown;
@@ -23,7 +27,7 @@ export const createSalvageReport = async (req: AuthRequest, res: Response) => {
     // Once persistence starts, an unknown write outcome may have committed the
     // durable outbox. Never remove its originals merely because the ACK was lost.
     cleanupSources = false;
-    const result = await acceptSalvageReport(userId(req), details, images);
+    const result = await acceptSalvageReport(userId(req), details, images, unitImages);
     cleanupSources = result.reused;
     return res.status(202).json({ message: "Report accepted. Review the preview when analysis is complete.",
       reportId: String(result.report._id), jobId: result.report.legacy_progress_id || result.report.job_id, phase: "processing" });
@@ -31,7 +35,21 @@ export const createSalvageReport = async (req: AuthRequest, res: Response) => {
     if (error instanceof SalvageWorkflowError) cleanupSources = true;
     return failure(res, error);
   }
-  finally { if (cleanupSources) await cleanupReportJobSourceFiles(images).catch(() => undefined); }
+  finally { if (cleanupSources) await cleanupReportJobSourceFiles([...images, ...unitImages]).catch(() => undefined); }
+};
+/** Attach a PDF or photo as the report's next appendix. */
+export const addSalvageAppendixHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const report = await ownedSalvageReport(req.params.id, userId(req));
+    return res.status(201).json({ data: await salvageRow(await addSalvageAppendix(report, (req as any).file || {}, req.body)) });
+  } catch (error) { return failure(res, error); }
+};
+/** Rename, annotate, reorder or remove appendices. */
+export const updateSalvageAppendicesHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const report = await ownedSalvageReport(req.params.id, userId(req));
+    return res.json({ data: await salvageRow(await updateSalvageAppendices(report, req.body)) });
+  } catch (error) { return failure(res, error); }
 };
 export const getSalvageReports = async (req: AuthRequest, res: Response) => {
   try {

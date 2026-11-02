@@ -24,7 +24,7 @@ vi.mock("../src/service/salvagePdfLayout.js", async (importOriginal) => ({
   renderSalvagePdfWithContents: browser.pdf,
 }));
 
-import { generateSalvagePdfFromReport } from "../src/service/salvagePdfService.js";
+import { generateIllustratedSalvagePdf } from "../src/service/salvagePdfService.js";
 import { generateSalvageDocx } from "../src/service/docx/salvageDocxBuilder.js";
 import { generateSalvageXlsx } from "../src/service/xlsx/salvageXlsxService.js";
 import { prepareSalvagePhotos } from "../src/service/salvageImagePreparation.js";
@@ -85,7 +85,7 @@ describe("Salvage output consistency", () => {
   it('preserves long editable context in Word/PDF and split Excel continuation cells', async () => {
     const longText = 'BEGIN-SCOPE ' + 'Recorded evidence remains subject to professional review. '.repeat(90) + ' END-SCOPE';
     const source = { ...fixture(), imageUrls: [], report_context: { scope_of_work: longText } };
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     expect(html).toContain(longText);
     expect(html).toContain('class="allow-split"');
@@ -114,7 +114,7 @@ describe("Salvage output consistency", () => {
     };
     const unchanged = structuredClone(source);
     const normalized = normalizeSalvageReportData(source);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const archive = new PizZip(await generateSalvageDocx(source));
     const xml = archive.file('word/document.xml')!.asText();
@@ -175,7 +175,7 @@ describe("Salvage output consistency", () => {
       client_vehicle: Object.fromEntries(Object.keys(adjustments).map(key => [key, "Subject evidence"])),
       comparable_1: {}, adjustments,
     } };
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const section = html.slice(html.indexOf('id="salvage-specialty-valuation"'), html.indexOf('id="salvage-itemized-parts"'));
     const values = [...section.matchAll(/<td class="numeric">([^<]*)<\/td>/g)].map(match => attributeValue(match[1]!));
@@ -187,7 +187,7 @@ describe("Salvage output consistency", () => {
   it("uses neutral system limitation labels in all artifacts without rewriting saved appraiser text", async () => {
     const source = { ...fixture(), imageUrls: [], estimate_warning: "AI-assisted estimates require appraiser verification. Unknown costs are unavailable, not zero.", appraiser_comments: "Quoted source notes: OpenAI publication; this is saved appraiser text." };
     const unchanged = structuredClone(source);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const xml = new PizZip(await generateSalvageDocx(source)).file("word/document.xml")!.asText();
     const workbook = new ExcelJS.Workbook();
@@ -202,7 +202,7 @@ describe("Salvage output consistency", () => {
     expect(source).toEqual(unchanged);
   });
   it("composites only the cover before PDF pagination and keeps the body free of decorative effects", async () => {
-    await generateSalvagePdfFromReport(fixture());
+    await generateIllustratedSalvagePdf(fixture());
     expect(browser.viewport).toHaveBeenCalledWith({ width: 794, height: 1123, deviceScaleFactor: 2.5 });
     expect(browser.screenshot).toHaveBeenCalledWith({ type: "png", omitBackground: false });
     expect(browser.evaluate).toHaveBeenLastCalledWith(expect.any(Function),
@@ -219,7 +219,7 @@ describe("Salvage output consistency", () => {
   it.each([0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 29, 30, 31, 49, 50])("paginates all %i appendix photos in ordered groups of five without placeholders", async (count) => {
     const source = { ...fixture(), imageUrls: Array.from({ length: count }, (_, index) => `https://assetinsight.test/photo-${index + 1}.png`) };
     const unchanged = structuredClone(source);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const pages = [...html.matchAll(/<div class="photo-page"[^>]*>[\s\S]*?(?=<div class="photo-page"|<\/section>)/g)].map(match => match[0]);
     expect(pages).toHaveLength(Math.ceil(count / 5));
@@ -234,7 +234,7 @@ describe("Salvage output consistency", () => {
   });
 
   it("keeps dotted-leader contents free of card backgrounds and shadows", async () => {
-    await generateSalvagePdfFromReport({ ...fixture(), imageUrls: [] });
+    await generateIllustratedSalvagePdf({ ...fixture(), imageUrls: [] });
     const html = browser.content.mock.calls[0][0] as string;
     const contentsRules = [...html.matchAll(/#contents-list li\s*\{([^}]+)\}/g)].map(match => match[1]).join(" ");
     expect(contentsRules).not.toMatch(/background:|box-shadow:|border-radius:/);
@@ -249,7 +249,7 @@ describe("Salvage output consistency", () => {
       { title: "Listing without details", price: "Price unavailable", details: {} },
     ] };
     const unchanged = structuredClone(source);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const tables = [...html.matchAll(/<div class="comparable-detail">([\s\S]*?)<\/div>/g)].map(match => match[1]!);
     expect(tables).toHaveLength(2);
@@ -267,7 +267,7 @@ describe("Salvage output consistency", () => {
   it("embeds bundled artwork only on the approved cover, never inner pages or report-supplied artwork", async () => {
     const source = { ...fixture(), imageUrls: [], glass_artwork_url: "https://untrusted.example.test/overlay.png" };
     const unchanged = structuredClone(source);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const asset = await readFile("public/report-artwork/salvage-ruby-glass.png");
     expect(asset.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
@@ -287,7 +287,7 @@ describe("Salvage output consistency", () => {
 
   it("PDF renders canonical edits, specialty values, correct row currency and all30 embedded photos without external scripts", async () => {
     const source = fixture();
-    expect(await generateSalvagePdfFromReport(source)).toEqual(Buffer.from("fixture-pdf"));
+    expect(await generateIllustratedSalvagePdf(source)).toEqual(Buffer.from("fixture-pdf"));
     const html = browser.content.mock.calls[0][0];
     expect(html).toContain("Reviewed damage description");
     expect(html).not.toContain("STALE AI");
@@ -313,7 +313,7 @@ describe("Salvage output consistency", () => {
   });
 
   it("permits embedded renderer assets but blocks all remote page requests", async () => {
-    await generateSalvagePdfFromReport({ ...fixture(), imageUrls: [] });
+    await generateIllustratedSalvagePdf({ ...fixture(), imageUrls: [] });
     const onRequest = browser.on.mock.calls.find(([event]) => event === "request")![1];
     for (const url of ["data:image/jpeg;base64,cGhvdG8=", "about:blank"]) {
       const request = { url: () => url, continue: vi.fn().mockResolvedValue(undefined), abort: vi.fn().mockResolvedValue(undefined) };
@@ -346,7 +346,7 @@ describe("Salvage output consistency", () => {
     });
     const expected = (await prepareSalvagePhotos(source.imageUrls))
       .map((photo) => `data:image/jpeg;base64,${photo.buffer.toString("base64")}`);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const appendixStart = html.indexOf('id="salvage-report-photos"');
     expect(appendixStart).toBeGreaterThan(-1);
@@ -360,7 +360,7 @@ describe("Salvage output consistency", () => {
   it.each([0, 1, 2, 3])("renders %i supplied cover photos without placeholders, dropped appendix photos or data mutation", async (photoCount) => {
     const source = { ...fixture(), imageUrls: fixture().imageUrls.slice(0, photoCount) };
     const unchanged = structuredClone(source);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const cover = coverMarkup(html);
     const coverFigures = [...cover.matchAll(/<figure\b[^>]*\bclass="[^"]*\bcover-photo\b[^"]*"[^>]*>[\s\S]*?<\/figure>/g)].map((match) => match[0]);
@@ -397,7 +397,7 @@ describe("Salvage output consistency", () => {
     });
     const expected = (await prepareSalvagePhotos(source.imageUrls))
       .map((photo) => `data:image/jpeg;base64,${photo.buffer.toString("base64")}`);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const figures = [...coverMarkup(html).matchAll(/<figure\b[^>]*\bclass="([^"]*\bcover-photo\b[^"]*)"[^>]*>[\s\S]*?<\/figure>/g)];
     expect(figures.map((match) => match[1]!.split(/\s+/).includes("cover-photo-portrait"))).toEqual([true, false, false]);
@@ -421,7 +421,7 @@ describe("Salvage output consistency", () => {
       company_address: "Suite 400, 101 Industrial Recovery Avenue, Long Prairie Municipality, Saskatchewan, Canada",
       item_model: "Extended Cab Heavy-Duty Utility Vehicle with Specialized Recovery Equipment",
     };
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const cover = coverMarkup(html);
     expect(html).not.toContain("<script>");
@@ -447,7 +447,7 @@ describe("Salvage output consistency", () => {
 
   it("prints report metadata and valuation once while retaining a complete repair estimate", async () => {
     const source = fixture();
-    await generateSalvagePdfFromReport({ ...source, imageUrls: [] });
+    await generateIllustratedSalvagePdf({ ...source, imageUrls: [] });
     const html = browser.content.mock.calls[0][0] as string;
     const mainStart = html.indexOf("<main>");
     expect(mainStart).toBeGreaterThan(-1);
@@ -502,7 +502,7 @@ describe("Salvage output consistency", () => {
       valuation: { fairMarketValue: 8642.5, confidence_level: "Low", summary: "SENTINEL-VALUATION Subject to inspection" },
     };
     const unchanged = structuredClone(source);
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     const html = browser.content.mock.calls[0][0] as string;
     const main = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/)?.[1];
     expect(main).toBeDefined();
@@ -523,7 +523,7 @@ describe("Salvage output consistency", () => {
   });
 
   it("keeps the complete real-template contents anchors unique and in report order", async () => {
-    await generateSalvagePdfFromReport({ ...fixture(), imageUrls: [], procurement_notes: "Saved manager review" });
+    await generateIllustratedSalvagePdf({ ...fixture(), imageUrls: [], procurement_notes: "Saved manager review" });
     const html = browser.content.mock.calls[0][0] as string;
     const anchors = [...html.matchAll(/<h2\b[^>]*>/g)]
       .map((match) => match[0])
@@ -547,7 +547,7 @@ describe("Salvage output consistency", () => {
     { language: "fr", locale: "fr-CA", title: "Rapport de récupération", contents: "Table des matières", empty: "Aucune photographie fournie", by: "par" },
     { language: "es", locale: "es-ES", title: "Informe de salvamento", contents: "Índice", empty: "No se proporcionaron fotografías", by: "por" },
   ])("localizes the $language PDF without dropping legitimate zero values", async ({ language, locale, title, contents, empty, by }) => {
-    await generateSalvagePdfFromReport({
+    await generateIllustratedSalvagePdf({
       ...fixture(), language, imageUrls: [],
       repair_items: [{ name: "Reviewed zero quantity", quantity: 0, unit_price: 40.25, line_total: 999 }],
       labour_breakdown: [], repair_estimate: {},
@@ -574,7 +574,7 @@ describe("Salvage output consistency", () => {
 
   it("escapes saved text and renders only genuine HTTP(S) comparable/vendor links", async () => {
     const unsafe = ["javascript:alert(1)", "data:text/html,unsafe", "file:///tmp/private", "//untrusted.example.test/path"];
-    await generateSalvagePdfFromReport({
+    await generateIllustratedSalvagePdf({
       ...fixture(), imageUrls: [],
       damage_description: '<script>alert("saved")</script><img src="https://untrusted.example.test/pixel">',
       comparableItems: [
@@ -601,7 +601,7 @@ describe("Salvage output consistency", () => {
 
   it("closes the PDF browser after a render error", async () => {
     browser.content.mockRejectedValue(new Error("Deliberate render failure"));
-    await expect(generateSalvagePdfFromReport({ ...fixture(), imageUrls: [] })).rejects.toThrow("Failed to generate PDF");
+    await expect(generateIllustratedSalvagePdf({ ...fixture(), imageUrls: [] })).rejects.toThrow("Failed to generate PDF");
     expect(browser.close).toHaveBeenCalledOnce();
   });
 
@@ -650,7 +650,7 @@ describe("Salvage output consistency", () => {
 
   it("all renderers preserve an explicitly cleared field rather than restoring AI text", async () => {
     const source = { ...fixture(), imageUrls: [], item_condition: "", damage_description: "" };
-    await generateSalvagePdfFromReport(source);
+    await generateIllustratedSalvagePdf(source);
     expect(browser.content.mock.calls[0][0]).not.toContain("STALE AI");
     const archive = new PizZip(await generateSalvageDocx(source));
     expect(archive.file("word/document.xml")!.asText()).not.toContain("STALE AI");

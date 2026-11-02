@@ -45,7 +45,8 @@ export const reportJobUpload = multer({ storage: reportJobStorage });
 
 export const salvageReportUpload = multer({
   storage: reportJobStorage,
-  limits: { files: 50, fileSize: 25 * 1024 * 1024, fieldSize: 1024 * 1024 },
+  // Unit 1's 50 photos plus up to 150 for units 2 onward (owner, 2026-11-01: several units).
+  limits: { files: 200, fileSize: 25 * 1024 * 1024, fieldSize: 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (/^image\/(jpeg|png|webp|heic|heif|tiff|bmp|gif)$/i.test(file.mimetype)) return cb(null, true);
     cb(new Error("Salvage photos must be supported image files."));
@@ -236,6 +237,34 @@ export const uploadAvatarImage = multer({
       return cb(null, true);
     }
     return cb(new Error("Profile pictures must be JPEG, PNG, or WebP images"));
+  },
+});
+
+/** One appendix for a Salvage report: a PDF or a photo (salvageAppendixService.ts checks the content). */
+export const salvageAppendixUpload = multer({
+  storage,
+  limits: { files: 1, fileSize: 30 * 1024 * 1024, fieldSize: 64 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/^(application\/pdf|image\/(jpeg|png|webp|heic|heif))$/i.test(file.mimetype)) return cb(null, true);
+    cb(new Error("Attach a PDF, or a JPEG, PNG, WebP or HEIC photo."));
+  },
+});
+
+/** The appraiser profile: a signature image or a CV as PDF (owner, 2026-11-01). */
+export const appraiserSignatureUpload = multer({
+  storage,
+  limits: { files: 1, fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/^image\/(jpeg|png|webp)$/i.test(file.mimetype)) return cb(null, true);
+    cb(new Error("The signature must be a JPEG, PNG or WebP image."));
+  },
+});
+export const appraiserCvPdfUpload = multer({
+  storage,
+  limits: { files: 1, fileSize: 15 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/^application\/pdf$/i.test(file.mimetype)) return cb(null, true);
+    cb(new Error("The CV must be a PDF."));
   },
 });
 

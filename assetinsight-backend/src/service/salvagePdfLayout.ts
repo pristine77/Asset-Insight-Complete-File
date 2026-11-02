@@ -13,7 +13,17 @@ type PrintLabels = {
   coverLabel: string;
   contentsLabel: string;
   language: string;
+  /** Name printed in the footer and the header logo text; McDougall Auctioneers when absent. */
+  brandName?: string;
 };
+
+/**
+ * Runs on the final, paginated report before the header and footer are
+ * stamped, with each contents anchor's printed page. The appraisal report uses
+ * it to draw uploaded appendix PDFs onto the blank pages reserved for them, so
+ * those pages carry the same header, footer and page numbers as the rest.
+ */
+export type SalvagePdfBeforeStamp = (bytes: Uint8Array, anchorPages: Record<string, number>) => Promise<Uint8Array>;
 
 function escapeHtml(value: string): string {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -46,14 +56,15 @@ export async function stampSalvagePdfPages(
     throw new Error("Salvage PDF report start page is invalid.");
   }
   const safe = Object.fromEntries(Object.entries(labels).map(([key, value]) => [key, escapeHtml(value)]));
+  const brand = escapeHtml(labels.brandName || "McDougall Auctioneers");
   const total = pages.length - reportStartPage + 1;
   const sheets = pages.slice(1).map((_, index) => {
     const reportNumber = index + 3 - reportStartPage;
     return `<section class="sheet">
-      <header><img src="${safe.logoUrl}" alt="McDougall Auctioneers" />
+      <header><img src="${safe.logoUrl}" alt="${brand}" />
         <div class="reference"><strong>${safe.title}</strong><div>${safe.fileLabel}: ${safe.fileNumber}</div></div>
       </header>
-      <footer><div><strong>McDougall Auctioneers</strong><span class="confidential">${safe.confidential}</span></div>
+      <footer><div><strong>${brand}</strong><span class="confidential">${safe.confidential}</span></div>
         ${reportNumber > 0 ? `<div class="page-number">${safe.pageLabel} ${reportNumber} ${safe.ofLabel} ${total}</div>` : ""}
       </footer></section>`;
   }).join("");
@@ -144,7 +155,9 @@ export async function readSalvagePdfDestinationPages(bytes: Uint8Array): Promise
 }
 
 /** Populate linked contents, then resolve and verify their actual printed pages. */
-export async function renderSalvagePdfWithContents(page: Page, options: PDFOptions, labels: PrintLabels): Promise<Buffer> {
+export async function renderSalvagePdfWithContents(
+  page: Page, options: PDFOptions, labels: PrintLabels, beforeStamp?: SalvagePdfBeforeStamp,
+): Promise<Buffer> {
   const sectionIds = await page.evaluate(async () => {
     await document.fonts.ready;
     await Promise.all(Array.from(document.images).map(async (image) => {
@@ -190,7 +203,7 @@ export async function renderSalvagePdfWithContents(page: Page, options: PDFOptio
       throw new Error("Salvage PDF report section order is invalid.");
     }
     if (renderedPages && sectionIds.every((id) => renderedPages![id] === actualPages[id])) {
-      return stampSalvagePdfPages(page, bytes, labels, reportStartPage);
+      return stampSalvagePdfPages(page, beforeStamp ? await beforeStamp(bytes, actualPages) : bytes, labels, reportStartPage);
     }
     renderedPages = actualPages;
     await page.evaluate((destinations) => {

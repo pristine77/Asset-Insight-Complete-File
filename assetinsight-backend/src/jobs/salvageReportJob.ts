@@ -19,19 +19,21 @@ import { deserializeMulterFiles } from "../utils/multerFileSerialization.js";
 import { cleanupReportJobSourceFiles, readMulterFileBuffer } from "../utils/reportTempFiles.js";
 import { getCurrentR2StorageTarget, uploadBufferToR2, uploadFilePathToR2, resolveR2ObjectLocationFromUrl, readR2ObjectBuffer } from "../utils/r2Storage/r2Upload.js";
 import { ReportJobOwnershipLostError, type ReportJobHandler, type ReportJobExecutionContext } from "../utils/reportJobMongoQueue.js";
+import { salvageUnitResearchSnapshot, mergeSalvageUnitResearch, salvageAppraiserProfileFor } from "../service/salvageUnitResearch.js";
+import User from "../models/user.model.js";
 
 /** All report writes are fenced by logical generation AND the leased worker attempt. */
 async function execution(job: any, context: ReportJobExecutionContext) {
   await context.assertOwned();
   const logical = { _id: job.reportId, job_id: job.payload.generationToken };
-  let report: any = await SalvageReport.findOne(logical).select("+source_files +job_execution_token +research_checkpoint +assessment_edit_history").lean();
+  let report: any = await SalvageReport.findOne(logical).select("+source_files +unit_source_files +job_execution_token +research_checkpoint +unit_research_checkpoints +assessment_edit_history").lean();
   if (!report) throw new ReportJobOwnershipLostError("Salvage generation was superseded.");
   if (report.job_status === "done") return { report, done: true, filter: logical };
   const attempt = Number(job.attempts || 1);
   await context.assertOwned();
   report = await SalvageReport.findOneAndUpdate({ ...logical, job_status: { $in: ["queued", "processing"] },
     $or: [{ generation_attempt: { $exists: false } }, { generation_attempt: { $lte: attempt } }],
-    job_execution_token: report.job_execution_token }, { $set: { generation_attempt: attempt, job_execution_token: context.executionToken, job_status: "processing" } }, { new: true }).select("+source_files +research_checkpoint +assessment_edit_history").lean();
+    job_execution_token: report.job_execution_token }, { $set: { generation_attempt: attempt, job_execution_token: context.executionToken, job_status: "processing" } }, { new: true }).select("+source_files +unit_source_files +research_checkpoint +unit_research_checkpoints +assessment_edit_history").lean();
   if (!report) throw new ReportJobOwnershipLostError("Salvage worker attempt was superseded.");
   const filter = { ...logical, job_execution_token: context.executionToken };
   return { report, done: false, filter };
@@ -84,6 +86,35 @@ export const runSalvagePreviewJob: ReportJobHandler = async (job, context) => {
   await guardedUpdate(filter, context, { $set: { imageUrls }, $unset: { source_files: 1 } });
   await cleanupReportJobSourceFiles(originals);
   const facts = editableSalvageData(report.preview_data || report);
+
+  // Units 2 onward (owner, 2026-11-01): save each unit's photos the same way,
+  // checkpointing every saved address on the report before the next upload.
+  const units: any[] = structuredClone(Array.isArray(facts.additional_units) ? facts.additional_units : []);
+  for (const staged of (report.unit_source_files || []) as { unitId: string; files: unknown[] }[]) {
+    const unit = units.find((candidate) => candidate.id === staged.unitId);
+    const unitOriginals = deserializeMulterFiles(staged.files as any[] || []);
+    if (!unit) { await cleanupReportJobSourceFiles(unitOriginals); continue; }
+    unit.imageUrls = Array.isArray(unit.imageUrls) ? unit.imageUrls : [];
+    for (let index = unit.imageUrls.length; index < unitOriginals.length; index++) {
+      await context.assertOwned();
+      const file = unitOriginals[index];
+      const buffer = await readMulterFileBuffer(file);
+      if (!buffer.length) throw new Error("An original photo is missing. Retry or contact support before submitting.");
+      const hash = createHash("sha256").update(buffer).digest("hex");
+      const extension = path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, "").slice(0, 10) || ".jpg";
+      unit.imageUrls.push(await uploadBufferToR2(buffer, file.mimetype, target.bucketName,
+        `salvage/${report._id}/units/${unit.id}/originals/${String(index + 1).padStart(3, "0")}-${hash}${extension}`));
+      await guardedUpdate(filter, context, { $set: { additional_units: units } });
+    }
+  }
+  if (report.unit_source_files?.length) {
+    await guardedUpdate(filter, context, { $set: { additional_units: units }, $unset: { unit_source_files: 1 } });
+    for (const staged of report.unit_source_files) await cleanupReportJobSourceFiles(deserializeMulterFiles(staged.files || []));
+  }
+  // Research runs one unit after another; progress is shared out between them.
+  const researched = units.filter((unit) => unit.research === true && unit.imageUrls?.length);
+  const share = 74 / (1 + researched.length);
+  const scaled = (slot: number, percent: number) => Math.round(25 + share * slot + share * Math.max(0, Math.min(1, (percent - 25) / 74)));
   const result = await runEnterpriseSalvageAssessment({
     snapshot: { ...facts, assessment: report.preview_data?.assessment || report.assessment, imageUrls }, imageUrls,
     // The latest saved loops: preview edits live in preview_data (facts).
@@ -94,8 +125,23 @@ export const runSalvagePreviewJob: ReportJobHandler = async (job, context) => {
       // including ambiguous charges, rather than receiving a fresh allowance.
       await guardedUpdate(researchFilter, context, { $set: { research_checkpoint: checkpoint } });
     },
-    onProgress: async (stage, percent) => { await progress(researchFilter, context, Math.max(25, Math.min(99, percent)), stage); },
+    onProgress: async (stage, percent) => {
+      await progress(researchFilter, context, researched.length ? scaled(0, percent) : Math.max(25, Math.min(99, percent)), researched.length ? `Unit 1: ${stage}` : stage);
+    },
   });
+  const unitCheckpoints: Record<string, SalvageResearchCheckpoint> = { ...(report.unit_research_checkpoints || {}) };
+  for (const [slot, unit] of researched.entries()) {
+    const unitResult = await runEnterpriseSalvageAssessment({
+      snapshot: salvageUnitResearchSnapshot(facts, unit), imageUrls: unit.imageUrls, damageMarks: unit.damage_marks,
+      checkpoint: unitCheckpoints[unit.id],
+      onCheckpoint: async (checkpoint) => {
+        unitCheckpoints[unit.id] = checkpoint;
+        await guardedUpdate(researchFilter, context, { $set: { [`unit_research_checkpoints.${unit.id}`]: checkpoint } });
+      },
+      onProgress: async (stage, percent) => { await progress(researchFilter, context, scaled(slot + 1, percent), `Unit ${units.indexOf(unit) + 2}: ${stage}`); },
+    });
+    units[units.indexOf(unit)] = mergeSalvageUnitResearch(unit, unitResult);
+  }
   // Non-empty user observations always override machine-extracted identity and condition.
   const supplied = Object.fromEntries(Object.entries(facts).filter(([, value]) => value !== "" && value != null && (!Array.isArray(value) || value.length)));
   // Research-owned calculations and provenance cannot be replaced by legacy
@@ -105,13 +151,15 @@ export const runSalvagePreviewJob: ReportJobHandler = async (job, context) => {
     assessment_inputs: result.assessment_inputs || facts.assessment_inputs,
     currency: result.assessment ? "CAD" : result.currency || facts.currency || "CAD", imageUrls });
   if (isSalvageAssessmentV2(snapshot.assessment)) Object.assign(snapshot, projectSalvageAssessmentLegacyFields(snapshot.assessment));
+  // The units as this run saved and researched them, never the stale copy in the facts.
+  if (units.length) snapshot.additional_units = units; else delete snapshot.additional_units;
   await guardedUpdate({ ...filter, revision: startingRevision }, context, { $set: { ...editableSalvageData(snapshot), imageUrls,
     assessment: snapshot.assessment, aiExtractedDetails: snapshot.aiExtractedDetails, comparableItems: snapshot.comparableItems || [],
     preview_data: snapshot, status: "preview", revision: startingRevision + 1, job_status: "done", job_error: "", files_stale: true, files_generating: false, files_regenerating: false,
     analysis_warning: snapshot.analysis_warning || "", analysis_model: snapshot.analysis_model, "generation_progress.percent": 100, processing_completed_at: new Date() } });
 };
 
-async function originalPhotoZip(urls: string[], filePath: string, context: ReportJobExecutionContext): Promise<void> {
+async function originalPhotoZip(photos: { url: string; name: string }[], filePath: string, context: ReportJobExecutionContext): Promise<void> {
   const output = createWriteStream(filePath);
   const archive = archiver("zip", { zlib: { level: 3 } });
   const finished = new Promise<void>((resolve, reject) => { output.on("close", resolve); output.on("error", reject); archive.on("error", reject); });
@@ -119,14 +167,14 @@ async function originalPhotoZip(urls: string[], filePath: string, context: Repor
   void finished.catch(() => undefined);
   archive.pipe(output);
   try {
-    for (let index = 0; index < urls.length; index++) {
+    for (let index = 0; index < photos.length; index++) {
       await context.assertOwned();
-      const location = resolveR2ObjectLocationFromUrl(urls[index]);
+      const location = resolveR2ObjectLocationFromUrl(photos[index].url);
       if (!location) throw new Error("An original photo is outside configured storage. Contact support to recover it.");
       const bytes = await readR2ObjectBuffer(location.bucketName, location.key, 25 * 1024 * 1024);
       const extension = path.extname(location.key).replace(/[^.a-zA-Z0-9]/g, "").slice(0, 10) || ".jpg";
       const appended = new Promise<void>((resolve, reject) => { archive.once("entry", () => { archive.off("error", reject); resolve(); }); archive.once("error", reject); });
-      archive.append(bytes, { name: `photo-${String(index + 1).padStart(3, "0")}${extension}` });
+      archive.append(bytes, { name: `${photos[index].name}${extension}` });
       await appended;
     }
     await archive.finalize();
@@ -139,7 +187,12 @@ export const runSalvageFilesJob: ReportJobHandler = async (job, context) => {
   if (done) return;
   context = fencedContext(filter, context);
   if (Number(report.revision || 0) !== Number(job.payload.revision)) throw new ReportJobOwnershipLostError("The saved preview revision changed.");
-  const snapshot = salvageSnapshot(report);
+  const snapshot: Record<string, any> = salvageSnapshot(report);
+  // Uploaded appendices (server-owned addresses) and the appraiser's profile
+  // (signature, CV) are added at generation; neither is part of the editable preview.
+  snapshot.appendices = Array.isArray(report.appendices) ? report.appendices : [];
+  const owner = await User.findById(report.user).select("name username email contactEmail contactPhone appraiserProfile").lean();
+  snapshot.appraiser_profile = salvageAppraiserProfileFor(snapshot, owner);
   const generation = String(job.payload.generationToken);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "assetinsight-salvage-"));
   try {
@@ -151,7 +204,13 @@ export const runSalvageFilesJob: ReportJobHandler = async (job, context) => {
     const xlsx = await generateSalvageXlsx(snapshot);
     await progress(filter, context, 65, "Packing original photos");
     const zipPath = path.join(dir, "photos.zip");
-    await originalPhotoZip(snapshot.imageUrls || [], zipPath, context);
+    // Unit 1 keeps the familiar photo-001 names; units 2 onward get their own folders.
+    const zipPhotos = [
+      ...(snapshot.imageUrls || []).map((url: string, index: number) => ({ url, name: `photo-${String(index + 1).padStart(3, "0")}` })),
+      ...(snapshot.additional_units || []).flatMap((unit: any, unitIndex: number) => (unit.imageUrls || []).map((url: string, index: number) =>
+        ({ url, name: `unit-${String(unitIndex + 2).padStart(2, "0")}/photo-${String(index + 1).padStart(3, "0")}` }))),
+    ];
+    await originalPhotoZip(zipPhotos, zipPath, context);
     const target = getCurrentR2StorageTarget();
     // Each worker attempt writes its own immutable artifact set; stale attempts cannot overwrite a winner.
     const prefix = `salvage/${report._id}/files/${generation}/${context.executionToken}`;

@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="{{language}}">
+  <head>
+    <meta charset="UTF-8" />
+    <title>{{v.title}} — {{file_number}}</title>
+    <!--
+      The Salvage appraisal report: a full MCD Appraisals report (owner,
+      2026-11-01). Content follows the company's own appraisal reports (files
+      71763, 75949, 76047): the assignment, our opinion of the cause of loss,
+      the recommended reserve and salvage value, a page set per unit (details,
+      inspection, damage, repair estimate, Actual Cash Value or Replacement Cost
+      with references), comparable market evidence, photographs four to a page,
+      the appraiser's signed block and CV, and uploaded documents as appendices.
+      The look is McDougall's own (red and charcoal, key figures, tinted
+      groups), and the market analysis keeps the Comparable 1 method the owner
+      asked to bring back.
+
+      Pagination: A4 throughout. Every h2[data-toc] is a contents entry; the
+      renderer fills #contents-list with printed page numbers, then draws each
+      uploaded PDF page (CV, appendices) onto its reserved ".slot" page, fitted
+      inside the margins, and stamps the MCD Appraisals header and footer on
+      every page after the cover. A slot's first page carries its heading, so
+      the PDF page is drawn below it. "salvage-report-summary" must stay first.
+      Data: service/salvageAppraisalView.ts (+ salvageMarketView.ts per unit).
+    -->
+    <style>
+      :root {
+        --ink: #1f2126;
+        --muted: #5b5f68;
+        --rule: #d5d8de;
+        --tint: #f2f3f5;
+        --red: #c8102e;
+        --red-tint: #fbedef;
+      }
+      @page { size: A4; margin: 28mm 18mm 22mm; }
+      @page cover-page { size: A4; margin: 0; }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); background: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 9.5pt; line-height: 1.35; font-variant-numeric: tabular-nums; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      table { border-collapse: collapse; }
+      p { margin: 2px 0 5px; }
+      a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--rule); }
+      .muted { color: var(--muted); }
+      .page-break { break-before: page; }
+      .keep { break-inside: avoid; }
+
+      /* Cover */
+      .cover { page: cover-page; width: 210mm; height: 297mm; padding: 16mm 18mm 15mm; display: flex; flex-direction: column; gap: 7mm; break-after: page; }
+      .cover-top { display: flex; align-items: center; justify-content: space-between; padding-bottom: 5mm; border-bottom: 3px solid var(--red); }
+      .cover-top img { height: 15mm; max-width: 80mm; object-fit: contain; object-position: left center; }
+      .cover-top span { color: var(--muted); font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; }
+      .cover .number { margin: 0 0 2mm; color: var(--red); font-size: 9pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; }
+      .cover h1 { margin: 0; font-size: 30pt; line-height: 1.05; letter-spacing: -0.02em; }
+      .cover .vehicle { margin: 3mm 0 0; color: var(--red); font-size: 14pt; font-weight: 700; }
+      .cover .unit-lines { margin: 2mm 0 0; padding: 0; list-style: none; font-size: 10pt; font-weight: 700; color: var(--muted); }
+      .cover-photos { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) 33%; gap: 3mm; }
+      .cover-photos figure { margin: 0; min-height: 0; overflow: hidden; background: var(--tint); }
+      .cover-photos img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .cover-photos figure:first-child { grid-column: 1 / -1; }
+      .cover-photos.count-1 figure:first-child { grid-row: 1 / -1; }
+      .cover-photos.count-2 figure:nth-child(2) { grid-column: 1 / -1; }
+      .cover-empty { flex: 1; display: flex; align-items: flex-end; padding: 10mm; background: var(--tint); color: var(--muted); font-size: 13pt; font-weight: 700; }
+      .cover-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm 6mm; margin: 0; padding-top: 4mm; border-top: 1.5px solid var(--ink); }
+      .cover-meta dt { margin: 0 0 1mm; color: var(--red); font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+      .cover-meta dd { margin: 0; font-size: 10pt; font-weight: 700; overflow-wrap: anywhere; }
+
+      /* Contents */
+      .contents { break-after: page; }
+      .contents h1 { margin: 4mm 0 8mm; padding-bottom: 3mm; font-size: 24pt; border-bottom: 3px solid var(--red); }
+      #contents-list { margin: 0; padding: 0; list-style: none; counter-reset: toc; }
+      #contents-list li { counter-increment: toc; break-inside: avoid; border-bottom: 1px solid var(--rule); }
+      #contents-list a { display: flex; gap: 3mm; align-items: baseline; padding: 2.4mm 0; color: var(--ink); font-size: 10.5pt; text-decoration: none; }
+      #contents-list a::before { content: counter(toc); flex: 0 0 7mm; color: var(--red); font-size: 9pt; font-weight: 700; }
+      .toc-title { flex: 0 1 auto; overflow-wrap: anywhere; }
+      .toc-leader { flex: 1 0 6mm; }
+      .toc-page { flex: 0 0 10mm; text-align: right; font-weight: 700; }
+
+      /* Headings */
+      h2.sec { margin: 16px 0 6px; padding-bottom: 3px; font-size: 12pt; border-bottom: 1.5px solid var(--red); break-after: avoid; }
+      h2.sec.first, .page-break > h2.sec:first-child, h2.sec.page-break { margin-top: 0; }
+      h3.part { margin: 14px 0 5px; padding: 3px 7px; font-size: 9.5pt; background: var(--tint); border-left: 3px solid var(--red); break-after: avoid; }
+      h4.sub { margin: 9px 0 3px; font-size: 8pt; color: var(--red); text-transform: uppercase; letter-spacing: 0.06em; break-after: avoid; }
+
+      /* Key figures */
+      .figures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 10px; }
+      .figure { padding: 6px 8px 7px; background: var(--tint); border-top: 2.5px solid var(--ink); break-inside: avoid; }
+      .figure.accent { border-top-color: var(--red); }
+      .figure .k { display: block; font-size: 7.5pt; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+      .figure strong { display: block; margin-top: 2px; font-size: 13pt; }
+      .figure .note { display: block; font-size: 7.5pt; color: var(--muted); }
+
+      /* Label / value tables */
+      .facts { width: 100%; }
+      .facts th, .facts td { padding: 2.5px 7px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); }
+      .facts th { width: 28%; font-weight: 400; color: var(--muted); }
+      .facts.pairs th { width: 19%; }
+      .facts.pairs td { width: 31%; }
+      .facts tr { break-inside: avoid; }
+
+      /* Grids and tables */
+      .grid-table { width: 100%; }
+      .grid-table th { padding: 3px 6px; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; text-align: left; border-bottom: 1.5px solid var(--ink); }
+      .grid-table td { padding: 3px 6px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+      .grid-table .num { text-align: right; white-space: nowrap; }
+      .grid-table tr { break-inside: avoid; }
+      .grid-table tr.sum td { border-top: 1.5px solid var(--ink); border-bottom: 0; font-weight: 700; }
+      .grid-table tr.sum td.num { color: var(--red); }
+      .pick { font-weight: 700; }
+
+      /* Yes / No / To Be Determined, and ACV / Replacement Cost, as boxes. */
+      .choices { display: flex; gap: 14px; flex-wrap: wrap; }
+      .choice { display: inline-flex; align-items: center; gap: 5px; }
+      .box { position: relative; display: inline-block; width: 10px; height: 10px; border: 1.2px solid var(--ink); }
+      .box.on { background: var(--ink); }
+      .box.on::after { content: ""; position: absolute; left: 2.5px; top: 0.5px; width: 3px; height: 6px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+      .choice.on { font-weight: 700; }
+
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+      .panel { border: 1px solid var(--rule); break-inside: avoid; }
+      .panel h4 { margin: 0; padding: 4px 8px; background: var(--tint); font-size: 9pt; }
+      .ledger { width: 100%; }
+      .ledger td { padding: 3px 8px; vertical-align: top; border-top: 1px solid var(--rule); }
+      .ledger td.amt { width: 36%; text-align: right; white-space: nowrap; }
+      .ledger small { display: block; color: var(--muted); font-size: 7.5pt; }
+      .ledger tr.minus td.amt { color: var(--muted); }
+      .ledger tr.total td { border-top: 1.5px solid var(--ink); font-weight: 700; }
+      .ledger tr.net td { background: var(--red-tint); border-top: 1.5px solid var(--red); font-weight: 700; }
+      .ledger tr.net td.amt { color: var(--red); font-size: 10.5pt; }
+      .callout { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 6px 9px; background: var(--red-tint); border-left: 3px solid var(--red); font-weight: 700; break-inside: avoid; }
+      .callout + .callout { margin-top: 4px; }
+      .callout .amt { color: var(--red); font-size: 11pt; white-space: nowrap; }
+      .callout.plain { background: var(--tint); border-left-color: var(--ink); }
+      .callout.plain .amt { color: var(--ink); }
+
+      /* Comparison with Comparable 1 */
+      .cmp { width: 100%; table-layout: fixed; }
+      .cmp thead th { padding: 3px 6px; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; text-align: left; border-bottom: 1.5px solid var(--ink); }
+      .cmp col.label { width: 24%; }
+      .cmp col.side { width: 31%; }
+      .cmp col.adj { width: 14%; }
+      .cmp .adj { text-align: right; }
+      .cmp tbody th { padding: 2.5px 6px; font-weight: 400; color: var(--muted); text-align: left; vertical-align: top; }
+      .cmp tbody td { padding: 2.5px 6px; vertical-align: top; }
+      .cmp tbody tr { border-bottom: 1px solid var(--rule); break-inside: avoid; }
+      .cmp tr.group td { padding: 4px 6px 3px; background: var(--tint); font-weight: 700; }
+
+      ul.notes { margin: 2px 0 4px; padding-left: 16px; }
+      ul.notes li { margin: 0 0 2px; }
+      ol.cert { margin: 4px 0 8px; padding-left: 18px; }
+      ol.cert li { margin: 0 0 4px; }
+
+      /* Signature block */
+      .signature { display: grid; grid-template-columns: 70mm 1fr; gap: 10mm; align-items: end; margin-top: 10px; break-inside: avoid; }
+      .signature .line { min-height: 20mm; display: flex; align-items: flex-end; border-bottom: 1px solid var(--ink); }
+      .signature .line img { max-height: 18mm; max-width: 66mm; object-fit: contain; }
+      .signature .who strong { display: block; font-size: 10.5pt; }
+      .signature .who span { display: block; color: var(--muted); }
+      .signature .caption { margin-top: 2px; font-size: 7.5pt; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+      /* Photographs: four to a page. */
+      .photos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .photos figure { margin: 0; border: 1px solid var(--rule); break-inside: avoid; }
+      .photos img { display: block; width: 100%; height: 100mm; object-fit: contain; background: var(--tint); }
+      .photos figcaption { padding: 3px 6px; font-size: 8pt; color: var(--muted); border-top: 1px solid var(--rule); }
+
+      /* Reserved pages for uploaded PDFs; the renderer draws onto them. */
+      .slot { break-before: page; min-height: 1mm; }
+      .slot-note { margin: 0; color: var(--muted); font-size: 8.5pt; }
+      .appendix-image { display: block; max-width: 100%; max-height: 225mm; margin: 4mm auto 0; object-fit: contain; }
+    </style>
+  </head>
+  <body>
+    <section class="cover" id="cover-page" aria-label="{{v.title}}">
+      <div class="cover-top">
+        <img src="{{logo_url}}" alt="{{v.brand.name}}" />
+        <span>{{tt.confidential}}</span>
+      </div>
+      <div>
+        <p class="number">{{v.reportNumberText}}</p>
+        <h1>{{v.title}}</h1>
+        {{#if v.subject}}<p class="vehicle">{{v.subject}}</p>{{/if}}
+        {{#if v.coverLines.length}}<ul class="unit-lines">{{#each v.coverLines}}<li>{{this}}</li>{{/each}}</ul>{{/if}}
+      </div>
+      {{#if coverPhotos.length}}
+      <div class="cover-photos count-{{coverPhotos.length}}">
+        {{#each coverPhotos}}<figure><img src="{{src}}" alt="{{../v.labels.photo}} {{index}}" /></figure>{{/each}}
+      </div>
+      {{else}}
+      <div class="cover-empty">{{v.labels.noPhotos}}</div>
+      {{/if}}
+      <dl class="cover-meta">
+        <div><dt>{{v.labels.claim}}</dt><dd>{{coalesce claim_number "—"}}</dd></div>
+        <div><dt>{{v.labels.file}}</dt><dd>{{coalesce file_number "—"}}</dd></div>
+        <div><dt>{{v.labels.reportDate}}</dt><dd>{{coalesce report_date_text "—"}}</dd></div>
+        <div><dt>{{v.labels.lossDate}}</dt><dd>{{coalesce loss_date_text "—"}}</dd></div>
+        <div><dt>{{v.labels.preparedFor}}</dt><dd>{{coalesce company_name insured_name "—"}}</dd></div>
+        <div><dt>{{v.labels.preparedBy}}</dt><dd>{{coalesce v.appraiser.name v.brand.name}}{{#if v.appraiser.designation}}, {{v.appraiser.designation}}{{/if}}</dd></div>
+      </dl>
+    </section>
+
+    <section class="contents">
+      <h1>{{tt.contents}}</h1>
+      <ol id="contents-list"></ol>
+    </section>
+
+    <!-- Report Summary: the company's front sheet. -->
+    <h2 class="sec first" id="salvage-report-summary" data-toc>{{v.labels.reportSummary}}</h2>
+    <div class="figures">
+      {{#each v.figures}}
+      <div class="figure{{#if accent}} accent{{/if}}">
+        <span class="k">{{label}}</span>
+        <strong>{{#if (eq amount null)}}{{#if note}}{{../v.units.length}}{{else}}{{../v.labels.notEstablished}}{{/if}}{{else}}{{currencyFormat amount}}{{/if}}</strong>
+        {{#if note}}<span class="note">{{note}}</span>{{/if}}
+      </div>
+      {{/each}}
+    </div>
+
+    <h3 class="part">{{v.labels.assignment}}</h3>
+    <table class="facts pairs"><tbody>
+      {{#each v.assignmentRows}}{{#if (isEven @index)}}<tr><th>{{label}}</th><td>{{value}}</td>{{else}}<th>{{label}}</th><td>{{value}}</td></tr>{{/if}}{{/each}}
+      {{#if (isOdd v.assignmentRows.length)}}<th></th><td></td></tr>{{/if}}
+    </tbody></table>
+
+    <h3 class="part">{{v.labels.opinion}}</h3>
+    <table class="facts"><tbody>
+      <tr><th>{{v.labels.type}}</th><td>{{v.opinion.type}}</td></tr>
+      <tr><th>{{v.labels.comments}}</th><td>{{v.opinion.comments}}</td></tr>
+    </tbody></table>
+
+    <h3 class="part">{{v.labels.units}}</h3>
+    <table class="grid-table">
+      <thead><tr><th style="width:6%">#</th><th>{{v.labels.unit}}</th><th style="width:18%">{{v.labels.status}}</th><th class="num" style="width:15%">{{v.labels.value}}</th><th class="num" style="width:15%">{{v.labels.reserve}}</th><th class="num" style="width:14%">{{v.labels.salvage}}</th></tr></thead>
+      <tbody>
+        {{#each v.units}}<tr><td>{{number}}</td><td><strong>{{label}}</strong>{{#if name}}<br /><span class="muted">{{name}}</span>{{/if}}</td><td>{{status}}</td><td class="num">{{#if (eq valueAmount null)}}—{{else}}{{currencyFormat valueAmount}}{{/if}}</td><td class="num">{{#if (eq reserve null)}}{{reserveText}}{{else}}{{currencyFormat reserve}}{{/if}}</td><td class="num">{{#if (eq salvage null)}}{{salvageText}}{{else}}{{currencyFormat salvage}}{{/if}}</td></tr>{{/each}}
+        {{#if (gt v.units.length 1)}}<tr class="sum"><td></td><td>{{v.labels.total}}</td><td></td><td class="num">{{#if (eq v.totals.value null)}}—{{else}}{{currencyFormat v.totals.value}}{{/if}}</td><td class="num">{{#if (eq v.totals.reserve null)}}—{{else}}{{currencyFormat v.totals.reserve}}{{/if}}</td><td class="num">{{#if (eq v.totals.salvage null)}}—{{else}}{{currencyFormat v.totals.salvage}}{{/if}}</td></tr>{{/if}}
+      </tbody>
+    </table>
+    <p class="muted" style="margin-top:4px">{{v.labels.reserve}}: {{v.labels.lessDeductible}}.</p>
+
+    {{#if v.comments}}
+    <h3 class="part">{{v.labels.comments}}</h3>
+    <p>{{v.comments}}</p>
+    {{/if}}
+
+    <h3 class="part">{{v.labels.followUp}}</h3>
+    <table class="facts"><tbody><tr><th>{{v.labels.nextReport}}</th><td>{{v.followUp}}</td></tr></tbody></table>
+
+    <div class="signature">
+      <div>
+        <div class="line">{{#if signature_src}}<img src="{{signature_src}}" alt="{{v.labels.signed}}" />{{/if}}</div>
+        <div class="caption">{{v.labels.signed}} · {{report_date_text}}</div>
+      </div>
+      <div class="who">
+        <strong>{{v.appraiser.name}}{{#if v.appraiser.designation}}, {{v.appraiser.designation}}{{/if}}</strong>
+        <span>{{v.appraiser.title}} · {{v.appraiser.company}}</span>
+        {{#if v.appraiser.phone}}<span>{{v.appraiser.phone}}</span>{{/if}}
+        {{#if v.appraiser.email}}<span>{{v.appraiser.email}}</span>{{/if}}
+      </div>
+    </div>
+
+    <!-- One section per unit. -->
+    {{#each v.units}}
+    <section class="page-break">
+      <h2 class="sec" id="{{anchor}}" data-toc>{{heading}}</h2>
+      {{#if name}}<p style="margin-top:-2px;font-weight:700">{{name}}</p>{{/if}}
+
+      <h3 class="part">{{../v.labels.unitDetails}}</h3>
+      <table class="facts pairs"><tbody>
+        {{#each detailsRows}}{{#if (isEven @index)}}<tr><th>{{label}}</th><td>{{value}}</td>{{else}}<th>{{label}}</th><td>{{value}}</td></tr>{{/if}}{{/each}}
+        {{#if (isOdd detailsRows.length)}}<th></th><td></td></tr>{{/if}}
+      </tbody></table>
+
+      <h3 class="part">{{../v.labels.inspection}}</h3>
+      <table class="facts"><tbody>{{#each inspectionRows}}<tr><th>{{label}}</th><td>{{value}}</td></tr>{{/each}}</tbody></table>
+
+      <h3 class="part">{{../v.labels.damage}}</h3>
+      <table class="facts"><tbody>
+        {{#each damageRows}}{{#if @first}}<tr><th>{{label}}</th><td>{{value}}</td></tr>
+        <tr><th>{{../../v.labels.repairable}}</th><td><div class="choices">
+          <span class="choice{{#if (eq ../repairable "yes")}} on{{/if}}"><span class="box{{#if (eq ../repairable "yes")}} on{{/if}}"></span>{{../../v.labels.yes}}</span>
+          <span class="choice{{#if (eq ../repairable "no")}} on{{/if}}"><span class="box{{#if (eq ../repairable "no")}} on{{/if}}"></span>{{../../v.labels.no}}</span>
+          <span class="choice{{#if (eq ../repairable "tbd")}} on{{/if}}"><span class="box{{#if (eq ../repairable "tbd")}} on{{/if}}"></span>{{../../v.labels.tbd}}</span>
+        </div></td></tr>{{else}}<tr><th>{{label}}</th><td>{{value}}</td></tr>{{/if}}{{/each}}
+      </tbody></table>
+
+      <div class="two" style="margin-top:12px">
+        <section class="panel">
+          <h4>{{../v.labels.repairEstimate}}</h4>
+          <table class="ledger"><tbody>
+            {{#each repairLines}}<tr class="{{kind}}"><td>{{label}}</td><td class="amt">{{#if text}}{{text}}{{else}}{{#if (eq kind "minus")}}−{{/if}}{{currencyFormat amount}}{{/if}}</td></tr>{{/each}}
+          </tbody></table>
+          {{#if repairNote}}<p class="muted" style="margin:4px 8px 6px">{{repairNote}}</p>{{/if}}
+        </section>
+        <section class="panel">
+          <h4>{{../v.labels.valuation}}</h4>
+          <div style="padding:6px 8px">
+            <div class="choices" style="margin-bottom:6px">
+              <span class="choice{{#if (eq valueBasis "acv")}} on{{/if}}"><span class="box{{#if (eq valueBasis "acv")}} on{{/if}}"></span>{{../v.labels.acv}}</span>
+              <span class="choice{{#if (eq valueBasis "replacement")}} on{{/if}}"><span class="box{{#if (eq valueBasis "replacement")}} on{{/if}}"></span>{{../v.labels.replacement}}</span>
+            </div>
+            <div class="callout plain"><span>{{../v.labels.ourOpinion}}</span><span class="amt">{{#if (eq valueAmount null)}}{{valueNote}}{{else}}{{currencyFormat valueAmount}}{{/if}}</span></div>
+            {{#if references}}<p class="muted" style="margin-top:5px"><strong>{{../v.labels.references}}:</strong> {{references}}</p>{{/if}}
+          </div>
+        </section>
+      </div>
+      <div style="margin-top:8px">
+        <div class="callout"><span>{{../v.labels.reserve}} <span class="muted" style="font-weight:400">({{../v.labels.lessDeductible}})</span></span><span class="amt">{{#if (eq reserve null)}}{{reserveText}}{{else}}{{currencyFormat reserve}}{{/if}}</span></div>
+        <div class="callout plain"><span>{{../v.labels.salvage}}</span><span class="amt">{{#if (eq salvage null)}}{{salvageText}}{{else}}{{currencyFormat salvage}}{{/if}}</span></div>
+      </div>
+
+      {{#if researched}}
+      <div class="page-break">
+        <h3 class="part">{{../v.labels.marketAnalysis}} — {{market.labels.specialty}}</h3>
+        <table class="cmp">
+          <colgroup><col class="label" /><col class="side" /><col class="side" /><col class="adj" /></colgroup>
+          <thead><tr><th></th><th>{{market.labels.clientVehicle}}</th><th>{{market.comparableHeading}}</th><th class="adj">{{market.labels.adjustments}}</th></tr></thead>
+          <tbody>
+            {{#each market.groups}}
+              <tr class="group"><td colspan="4">{{heading}}</td></tr>
+              {{#each rows}}<tr><th>{{label}}</th><td>{{client}}</td><td>{{comparable}}</td><td class="adj">{{#if adjustment}}{{numberFormat adjustment}}{{/if}}</td></tr>{{/each}}
+            {{/each}}
+          </tbody>
+        </table>
+        <div class="two" style="margin-top:10px">
+          <section class="panel">
+            <h4>{{market.labels.ledgerHeading}}</h4>
+            <table class="ledger"><tbody>
+              {{#each market.ledger}}<tr class="{{kind}}"><td>{{label}}{{#if detail}}<small>{{detail}}</small>{{/if}}</td><td class="amt">{{#if text}}{{text}}{{else}}{{currencyFormat amount}}{{/if}}</td></tr>{{/each}}
+            </tbody></table>
+          </section>
+          {{#if market.recovery.length}}
+          <section class="panel">
+            <h4>{{market.labels.recoveryHeading}}</h4>
+            <table class="ledger"><tbody>
+              {{#each market.recovery}}<tr class="{{kind}}"><td>{{#if (eq kind "minus")}}{{../market.labels.less}}: {{/if}}{{label}}{{#if detail}}<small>{{detail}}</small>{{/if}}</td><td class="amt">{{#if text}}{{text}}{{else}}{{#if (eq kind "minus")}}−{{/if}}{{currencyFormat amount}}{{/if}}</td></tr>{{/each}}
+            </tbody></table>
+          </section>
+          {{/if}}
+        </div>
+        {{#if market.repairRows.length}}
+        <h4 class="sub">{{market.labels.damage}}</h4>
+        <table class="grid-table">
+          <thead><tr><th>{{market.labels.description}}</th><th class="num" style="width:16%">{{market.labels.qty}}</th><th class="num" style="width:20%">{{market.labels.amount}}</th></tr></thead>
+          <tbody>
+            {{#each market.repairRows}}<tr><td>{{description}}</td><td class="num">{{quantity}}</td><td class="num">{{#if amount}}{{currencyFormat amount}}{{else}}—{{/if}}</td></tr>{{/each}}
+            <tr class="sum"><td>{{market.labels.totalRepair}}</td><td></td><td class="num">{{#if market.repairTotal}}{{currencyFormat market.repairTotal}}{{else}}—{{/if}}</td></tr>
+          </tbody>
+        </table>
+        {{/if}}
+        <h4 class="sub">{{market.labels.comparables}}</h4>
+        <table class="grid-table">
+          <thead><tr><th style="width:5%">#</th><th>{{market.labels.vehicle}}</th><th style="width:15%">{{market.labels.location}}</th><th style="width:11%">{{market.labels.date}}</th><th style="width:10%">{{market.labels.basis}}</th><th class="num" style="width:13%">{{market.labels.price}}</th><th class="num" style="width:13%">{{market.labels.adjusted}}</th></tr></thead>
+          <tbody>
+            {{#each market.comparables}}<tr><td>{{number}}</td><td{{#if selected}} class="pick"{{/if}}>{{#if (safeReportUrl url)}}<a href="{{safeReportUrl url}}">{{title}}</a>{{else}}{{title}}{{/if}}<br /><span class="muted" style="font-weight:400">{{basket}} · {{verification}}{{#if source}} · {{source}}{{/if}}</span></td><td>{{location}}</td><td>{{date}}</td><td>{{basis}}</td><td class="num">{{currencyFormat price}}</td><td class="num">{{currencyFormat adjustedPrice}}</td></tr>{{/each}}
+          </tbody>
+        </table>
+        <div class="keep">
+          <h4 class="sub">{{market.labels.process}}</h4>
+          <ul class="notes">{{#each market.notes.process}}<li>{{this}}</li>{{/each}}</ul>
+          <h4 class="sub">{{market.labels.researchArea}}</h4>
+          <p>{{market.notes.researchArea}}</p>
+        </div>
+      </div>
+      {{/if}}
+
+      {{#if photos.length}}
+      <div class="page-break">
+        <h3 class="part" style="margin-top:0">{{../v.labels.photographs}} — {{../v.labels.unit}} {{number}}</h3>
+        <div class="photos">{{#each photos}}<figure><img src="{{src}}" alt="{{../../v.labels.photo}} {{index}}" /><figcaption>{{../../v.labels.photo}} {{index}}</figcaption></figure>{{/each}}</div>
+      </div>
+      {{/if}}
+    </section>
+    {{/each}}
+
+    <!-- Definitions, limiting conditions and the signed certification. -->
+    <section class="page-break">
+      <h2 class="sec" id="salvage-definitions" data-toc>{{v.labels.definitions}}</h2>
+      <table class="facts"><tbody>{{#each v.definitions}}<tr><th>{{label}}</th><td>{{value}}</td></tr>{{/each}}</tbody></table>
+
+      <h2 class="sec" id="salvage-limitations" data-toc>{{v.labels.limitations}}</h2>
+      <ul class="notes">{{#each v.limitations}}<li>{{this}}</li>{{/each}}</ul>
+
+      <div class="keep">
+        <h2 class="sec" id="salvage-certification" data-toc>{{v.labels.certification}}</h2>
+        <p>I certify that, to the best of my knowledge and belief:</p>
+        <ol class="cert">{{#each v.certification}}<li>{{this}}</li>{{/each}}</ol>
+        <div class="signature">
+          <div>
+            <div class="line">{{#if signature_src}}<img src="{{signature_src}}" alt="{{v.labels.signed}}" />{{/if}}</div>
+            <div class="caption">{{v.labels.signed}} · {{report_date_text}}</div>
+          </div>
+          <div class="who">
+            <strong>{{v.appraiser.name}}{{#if v.appraiser.designation}}, {{v.appraiser.designation}}{{/if}}</strong>
+            <span>{{v.appraiser.title}} · {{v.appraiser.company}}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Appraiser profile: the CV PDF from the appraiser's profile, drawn onto reserved pages. -->
+    {{#if cv.slots.length}}
+    {{#each cv.slots}}<div class="slot">{{#if @first}}<h2 class="sec" id="salvage-appraiser-profile" data-toc>{{../v.labels.cv}} — {{../v.appraiser.name}}</h2>{{/if}}</div>{{/each}}
+    {{/if}}
+
+    <!-- Appendices: uploaded PDFs (reserved pages) and photos. -->
+    {{#if v.appendices.length}}
+    <section class="page-break">
+      <h2 class="sec" id="salvage-appendices" data-toc>{{v.labels.appendices}}</h2>
+      <table class="grid-table">
+        <thead><tr><th style="width:12%">{{v.labels.appendix}}</th><th>{{v.labels.type}}</th><th class="num" style="width:14%">{{v.labels.pages}}</th></tr></thead>
+        <tbody>{{#each v.appendices}}<tr><td><strong>{{letter}}</strong></td><td>{{title}}{{#if note}}<br /><span class="muted">{{note}}</span>{{/if}}</td><td class="num">{{pageCount}}</td></tr>{{/each}}</tbody>
+      </table>
+    </section>
+    {{#each v.appendices}}
+      {{#if (eq kind "image")}}
+      <div class="slot"><h2 class="sec" id="{{anchor}}" data-toc>{{../v.labels.appendix}} {{letter}} — {{title}}</h2><img class="appendix-image" src="{{src}}" alt="{{title}}" /></div>
+      {{else}}
+      {{#each slots}}<div class="slot">{{#if @first}}<h2 class="sec" id="{{../anchor}}" data-toc>{{../../v.labels.appendix}} {{../letter}} — {{../title}}</h2>{{/if}}</div>{{/each}}
+      {{/if}}
+    {{/each}}
+    {{/if}}
+  </body>
+</html>

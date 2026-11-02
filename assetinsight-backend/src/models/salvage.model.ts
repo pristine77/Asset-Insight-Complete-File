@@ -229,6 +229,38 @@ const SalvageReportSchema: Schema = new Schema(
     estimate_warning: { type: String },
     analysis_warning: { type: String },
     analysis_model: { type: String },
+    /*
+      The full MCD Appraisals report (owner, 2026-11-01; service/salvageAppraisalFields.ts).
+      Report level: report number ("Report One"), cause-of-loss comments, follow-up.
+      Unit 1 keeps its unit fields here at the top level; units 2 onward are
+      additional_units (each with a server-assigned id, its own photos and research).
+    */
+    report_number: { type: Number },
+    cause_of_loss_comments: { type: String },
+    follow_up: { type: String },
+    unit_label: { type: String },
+    licence_plate: { type: String },
+    limit_of_insurance: { type: String },
+    coverage: { type: String },
+    deductible: { type: String },
+    hours: { type: String },
+    pre_existing_damage: { type: String },
+    damage_comments: { type: String },
+    loss_status: { type: String },
+    repair_estimate_appendix: { type: String },
+    value_basis: { type: String },
+    // The appraiser's own reserve: recommended_reserve is blanked for researched reports on purpose.
+    appraiser_reserve: { type: Number },
+    salvage_value: { type: String },
+    repair_summary: { type: Schema.Types.Mixed },
+    additional_units: { type: [Schema.Types.Mixed], default: undefined },
+    // Uploaded photos of units 2 onward, staged until the report job saves them (as source_files).
+    unit_source_files: { type: [Schema.Types.Mixed], select: false },
+    // Paid-research reservations per unit, so a retried job never starts a unit's research afresh.
+    unit_research_checkpoints: { type: Schema.Types.Mixed, select: false },
+    // Uploaded documents printed as Appendix A, B, C (server-owned; salvageAppendixService.ts).
+    appendices: { type: [Schema.Types.Mixed], default: undefined },
+    appendices_version: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

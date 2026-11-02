@@ -284,3 +284,72 @@ describe("durable Salvage saved-preview artifact publication", () => {
     expect(mocks.upload).not.toHaveBeenCalled(); expect(await PdfReport.countDocuments()).toBe(0); expect((await load(report._id)).files).toBeUndefined();
   });
 });
+
+// Several units in one report (owner, 2026-11-01: like file 71763's truck and two trailers).
+describe("durable Salvage units", () => {
+  const unitFile = (name: string) => ({ originalname: `${name}.jpg`, path: name, mimetype: "image/jpeg", size: 20 });
+  it("saves each unit's photos in its own folder, researches only units that ask, and keeps the appraiser's facts", async () => {
+    const report = await previewReport(1, {
+      additional_units: [
+        { id: "u2", unit_label: "Lead trailer", make: "Doepker", photo_count: 2, research: true, imageUrls: [] },
+        { id: "u3", unit_label: "Pup trailer", photo_count: 1, research: false, imageUrls: [] },
+      ],
+      unit_source_files: [{ unitId: "u2", files: [unitFile("lead-1"), unitFile("lead-2")] }, { unitId: "u3", files: [unitFile("pup-1")] }],
+      assessment_inputs: { province: "SK", market: "Regina" },
+    });
+    const unitAssessment = buildSalvageAssessment({ inputs: { year: 2022, make: "Doepker", model: "Lead", province: "SK", market: "Regina", effectiveDate: "2026-09-08" } });
+    const firstRun = mocks.pipeline.getMockImplementation()!;
+    mocks.pipeline.mockImplementation(async (options: any) => (options.snapshot.make === "Doepker"
+      ? (await options.onCheckpoint({ schemaVersion: 1, stage: "unit" }), { assessment: unitAssessment, assessment_inputs: unitAssessment.inputs })
+      : firstRun(options)));
+    await runSalvagePreviewJob(job(report), context());
+    const keys = mocks.upload.mock.calls.map((call) => call[3]);
+    expect(keys.filter((key: string) => key.includes("/units/u2/originals/"))).toHaveLength(2);
+    expect(keys.filter((key: string) => key.includes("/units/u3/originals/"))).toHaveLength(1);
+    // Unit 1 and the lead trailer are researched; the pup trailer asked not to be.
+    expect(mocks.pipeline).toHaveBeenCalledTimes(2);
+    expect(mocks.pipeline.mock.calls[1][0]).toMatchObject({ snapshot: { make: "Doepker", assessment_inputs: { province: "SK", market: "Regina" } } });
+    const saved: any = await SalvageReport.findById(report._id).select("+unit_source_files +unit_research_checkpoints").lean();
+    const [lead, pup] = saved.preview_data.additional_units;
+    expect(lead).toMatchObject({ id: "u2", unit_label: "Lead trailer", make: "Doepker", assessment: { schemaVersion: 2 } });
+    expect(lead.imageUrls).toHaveLength(2);
+    expect(pup.imageUrls).toHaveLength(1); expect(pup.assessment).toBeUndefined();
+    expect(saved.additional_units).toEqual(saved.preview_data.additional_units);
+    expect(saved.unit_source_files).toBeUndefined();
+    expect(saved.unit_research_checkpoints).toMatchObject({ u2: { stage: "unit" } });
+  });
+  it("puts every unit's photos in the photo ZIP, units 2 onward in their own folders", async () => {
+    const report = await filesReport();
+    await SalvageReport.updateOne({ _id: report._id }, { $set: { "preview_data.additional_units": [
+      { id: "u2", unit_label: "Lead", imageUrls: ["https://assetinsight.test/units/u2/a.jpg", "https://assetinsight.test/units/u2/b.jpg"] }] } });
+    await runSalvageFilesJob(job(report), context());
+    const names = mocks.zipEntries.map((entry) => entry.name);
+    expect(names).toHaveLength(52);
+    expect(names.slice(-2)).toEqual(["unit-02/photo-001.jpg", "unit-02/photo-002.jpg"]);
+    expect(mocks.pdf.mock.calls[0][0].additional_units[0]).toMatchObject({ id: "u2", unit_label: "Lead" });
+  });
+  it("keeps a unit's saved photos when a preview save sends other addresses", async () => {
+    const { saveSalvagePreview } = await import("../src/service/salvageWorkflowService.js");
+    const units = [{ id: "u2", unit_label: "Lead", imageUrls: ["https://assetinsight.test/units/u2/a.jpg"] }];
+    const created = await SalvageReport.create({ ...details, workflow_version: 1, status: "preview", revision: 0, job_id: "done-job", job_status: "done",
+      imageUrls: [], additional_units: units, preview_data: normalizeSalvageReportData({ ...details, imageUrls: [], additional_units: units }) });
+    const current = await SalvageReport.findById(created._id).select("+research_requests +assessment_edit_history").lean();
+    const saved: any = await saveSalvagePreview(current, { additional_units: [{ id: "u2", unit_label: "Lead trailer", imageUrls: ["https://evil.example/x.jpg"] }] }, 0);
+    expect(saved.preview_data.additional_units[0]).toMatchObject({ unit_label: "Lead trailer", imageUrls: units[0].imageUrls });
+  });
+  it("refuses a new report whose unit photos do not match the units", async () => {
+    const { acceptSalvageReport } = await import("../src/service/salvageWorkflowService.js");
+    await expect(acceptSalvageReport(String(details.user), { ...details, additional_units: [{ unit_label: "Lead", photo_count: 2 }] }, [], []))
+      .rejects.toThrow(/do not match/);
+  });
+  it("adds the uploaded appendices and the owner's profile only when generating files", async () => {
+    const User = (await import("../src/models/user.model.js")).default;
+    await User.collection.insertOne({ _id: details.user, email: "qa@example.test", name: "Test appraiser",
+      appraiserProfile: { designation: "CPPA", signatureUrl: "https://assetinsight.test/appraisers/sig.png" } } as any);
+    const report = await filesReport({ appendices: [{ id: "a-1", title: "Estimate", kind: "pdf", url: "https://assetinsight.test/a.pdf", pageCount: 2 }] });
+    await runSalvageFilesJob(job(report), context());
+    const snapshot = mocks.pdf.mock.calls[0][0];
+    expect(snapshot.appendices).toEqual([expect.objectContaining({ id: "a-1", url: "https://assetinsight.test/a.pdf" })]);
+    expect(snapshot.appraiser_profile).toMatchObject({ name: "Test appraiser", designation: "CPPA", signatureUrl: "https://assetinsight.test/appraisers/sig.png" });
+  });
+});
