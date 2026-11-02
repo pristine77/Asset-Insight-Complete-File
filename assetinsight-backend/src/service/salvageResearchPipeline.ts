@@ -232,8 +232,8 @@ export async function runEnterpriseSalvageAssessment(options: EnterpriseSalvageA
   let stopped = false;
   try {
     await progress("Inspecting uploaded photo evidence", 32);
-    const batches = salvagePhotoBatches(options.imageUrls);
     const marksByPhoto = damageMarksByPhoto(options.damageMarks, options.imageUrls.length);
+    const batches = salvagePhotoBatches(options.imageUrls, marksByPhoto);
     for (const batch of batches) {
       const stage = `photos-${batch.startIndex}`;
       const indexes = batch.urls.map((_, index) => batch.startIndex + index);

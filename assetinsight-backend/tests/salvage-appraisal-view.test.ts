@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildSalvageAssessment } from "../src/service/salvageAssessment.js";
 import { buildSalvageAppraisalView, money, salvageReportUnits } from "../src/service/salvageAppraisalView.js";
 
 // The full MCD Appraisals report (owner, 2026-11-01): front sheet, units, totals, appendices.
@@ -55,5 +56,57 @@ describe("Salvage appraisal report view", () => {
   it("reads amounts typed as text", () => {
     expect(money("$105,000.00")).toBe(105000);
     expect(money("N/A")).toBeNull();
+    expect(money("2,000–3,000")).toBeNull();
+    expect(money("Approx 10K")).toBeNull();
+    expect(money("US$ 0.00")).toBe(0);
+  });
+});
+
+describe("appraisal monetary presence and denomination", () => {
+  it("keeps count separate from unknown reserve and labels a mixed-basis total neutrally", () => {
+    const view = buildSalvageAppraisalView(report({ appraiser_reserve: undefined, recommended_reserve: 0,
+      additional_units: [{ id: "u2", value_basis: "replacement", replacement_cost: 30000 }] }));
+    expect(view.figures[0]).toMatchObject({ amount: null });
+    expect(view.figures[0]).not.toHaveProperty("count");
+    expect(view.figures[3]).toMatchObject({ amount: null, count: 2 });
+    expect(view.totalValueLabel).toBe("Value");
+    expect(view.figures[1]).toEqual({ label: "Value", amount: 135000 });
+  });
+
+  it.each([0, null])("preserves explicit additional-unit ACV %j instead of falling back to positive research", (amount) => {
+    const a = buildSalvageAssessment({ inputs: { overrides: { preLoss: { amount: 50000, description: "Manual opinion", appraiserReason: "Documented appraiser amount retained for regression." } } } });
+    const view = buildSalvageAppraisalView(report({ additional_units: [{ id: "u2", actual_cash_value: amount, assessment: a }] }));
+    expect(view.units[1].valueAmount).toBe(amount);
+    expect(view.totals.value).toBe(105000 + (amount ?? 0));
+    expect(buildSalvageAppraisalView(report({ additional_units: [{ id: "u2", assessment: a }] })).units[1].valueAmount).toBe(50000);
+  });
+
+  it("preserves legacy USD labels and amounts without changing canonical CAD research", () => {
+    const legacy = report({ currency: "USD", actual_cash_value: 12345, additional_units: [] });
+    const before = structuredClone(legacy), view = buildSalvageAppraisalView(legacy);
+    expect(view.currency).toBe("USD");
+    expect(view.units[0].valueAmount).toBe(12345);
+    expect(view.limitations.join(" ")).toContain("Values are in US dollars");
+    expect(view.units[0].market.notes.providedBy.join(" ")).toContain("All values are in US dollars");
+    expect(legacy).toEqual(before);
+    expect(buildSalvageAppraisalView({ ...legacy, assessment: buildSalvageAssessment({ inputs: {} }) }).currency).toBe("CAD");
+  });
+
+  it("keeps known repair extras without presenting an incomplete assessment as a complete total", () => {
+    const assessment = buildSalvageAssessment({ inputs: {} });
+    const view = buildSalvageAppraisalView(report({ additional_units: [{ id: "u2", assessment, repair_summary: { shop_supplies: 35, taxes: 20 } }] }));
+    expect(view.units[1].repairLines.at(-1)).toMatchObject({ label: "KNOWN SUBTOTAL", amount: 55 });
+    expect(view.units[1].repairNote).toContain("complete repair estimate is not established");
+    expect(view.units[1].market.repairTotal).toBeNull();
+  });
+});
+
+
+describe("saved and unknown odometer display", () => {
+  it.each([1000, 0, null])("does not let an absent photo field replace saved odometer %j with zero", (odometer) => {
+    const assessment = buildSalvageAssessment({ inputs: { odometer, odometerUnit: "km" } });
+    const view = buildSalvageAppraisalView({ assessment });
+    const meter = view.units[0].market.groups.flatMap((group) => group.rows).find((row) => row.label === "Odometer");
+    expect(meter?.client).toBe(odometer === null ? undefined : `${odometer.toLocaleString("en-CA")} km`);
   });
 });

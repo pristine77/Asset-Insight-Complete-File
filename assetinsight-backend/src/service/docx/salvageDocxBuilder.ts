@@ -34,6 +34,8 @@ import { presentSalvageSnapshot } from "../salvagePresentation.js";
 import { salvageReportSections, safeSalvageReportLink, salvageReportRowNeedsSplit, type SalvageReportSection } from "../salvageReportSections.js";
 import { prepareSalvagePhotos } from "../salvageImagePreparation.js";
 import { damageMarksByPhoto } from "../../utils/salvageDamageMarks.js";
+import { hasSalvageAppraisalFields } from "../salvageAppraisalExport.js";
+import { generateSalvageAppraisalDocx } from "./salvageAppraisalDocxBuilder.js";
 
 // Report-local layout defaults: do not change Asset or Real Estate templates.
 const mm = (value: number) => Math.round(value * 1440 / 25.4);
@@ -105,6 +107,7 @@ function formatMoneyStrict(input: any, ccy: string): string {
 
 export async function generateSalvageDocx(reportData: any): Promise<Buffer> {
   reportData = presentSalvageSnapshot(normalizeSalvageReportData(reportData));
+  if (hasSalvageAppraisalFields(reportData)) return generateSalvageAppraisalDocx(reportData);
   // Select one complete dictionary at the boundary. Unsupported locale values
   // fall back to English so a report never contains undefined or mixed labels.
   const lang: "en" | "fr" | "es" = ((): any => {

@@ -3,9 +3,10 @@
  * title, signature image and CV as PDF, printed on the Salvage appraisal
  * reports the appraiser signs (service/salvageUnitResearch.ts decides when).
  *
- * As with profile pictures, a new file is stored first and the profile updated
- * second, so the previous file stays valid if either step fails; the replaced
- * file is cleaned up afterwards. The actor always comes from the session.
+ * Profile assets use immutable versioned keys. Replacing or removing the profile
+ * reference affects future generations; existing report jobs may still use the
+ * old URL, so these operations never delete the underlying object. Any future
+ * reclamation must account for report/job references. The actor comes from the session.
  */
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -15,18 +16,12 @@ import User from "../models/user.model.js";
 import type { AuthRequest } from "../middleware/auth.middleware.js";
 import { attachUserCapabilities } from "../utils/userCapabilities.js";
 import {
-  deleteFromR2, getCurrentR2StorageTarget, isCurrentR2StorageTarget, resolvePersistedR2StorageTarget, uploadBufferToR2,
+  getCurrentR2StorageTarget, uploadBufferToR2,
 } from "../utils/r2Storage/r2Upload.js";
 
 const CV_MAX_PAGES = 10;
 const PROFILE_FIELDS = { designation: 40, title: 120 } as const;
 
-function cleanup(bucket: unknown, publicBase: unknown, key: unknown) {
-  const storage = resolvePersistedR2StorageTarget({ r2Bucket: bucket as string, r2PublicBaseUrl: publicBase as string });
-  if (key && isCurrentR2StorageTarget(storage)) {
-    void deleteFromR2(storage.bucketName, String(key)).catch((error) => console.warn("[AppraiserProfile] file cleanup failed:", error?.name || "Error"));
-  }
-}
 async function respond(res: Response, userId: unknown) {
   const user = await User.findById(userId).select("-password -refreshTokens");
   if (!user) return res.status(404).json({ message: "User not found" });
@@ -71,12 +66,10 @@ export const uploadAppraiserSignature = async (req: AuthRequest, res: Response) 
     if (!storage.bucketName) throw new Error("R2 bucket is not configured");
     const key = `appraisers/${req.userId}/signature-${Date.now()}-${randomUUID()}.png`;
     const url = await uploadBufferToR2(png, "image/png", storage.bucketName, key);
-    const previous = (user as any).appraiserProfile || {};
     await User.updateOne({ _id: req.userId }, { $set: {
       "appraiserProfile.signatureUrl": url, "appraiserProfile.signatureKey": key, "appraiserProfile.signatureBucket": storage.bucketName,
       "appraiserProfile.signaturePublicBaseUrl": storage.publicBaseUrl, "appraiserProfile.updatedAt": new Date(),
     } });
-    cleanup(previous.signatureBucket, previous.signaturePublicBaseUrl, previous.signatureKey);
     return respond(res, req.userId);
   } catch {
     return res.status(500).json({ message: "Failed to upload the signature" });
@@ -87,10 +80,8 @@ export const deleteAppraiserSignature = async (req: AuthRequest, res: Response) 
   try {
     const user = await User.findById(req.userId).select("appraiserProfile");
     if (!user) return res.status(404).json({ message: "User not found" });
-    const previous = (user as any).appraiserProfile || {};
     await User.updateOne({ _id: req.userId }, { $unset: { "appraiserProfile.signatureUrl": 1, "appraiserProfile.signatureKey": 1,
       "appraiserProfile.signatureBucket": 1, "appraiserProfile.signaturePublicBaseUrl": 1 } });
-    cleanup(previous.signatureBucket, previous.signaturePublicBaseUrl, previous.signatureKey);
     return respond(res, req.userId);
   } catch {
     return res.status(500).json({ message: "Failed to remove the signature" });
@@ -113,13 +104,11 @@ export const uploadAppraiserCvPdf = async (req: AuthRequest, res: Response) => {
     if (!storage.bucketName) throw new Error("R2 bucket is not configured");
     const key = `appraisers/${req.userId}/cv-${Date.now()}-${randomUUID()}.pdf`;
     const url = await uploadBufferToR2(file.buffer, "application/pdf", storage.bucketName, key);
-    const previous = (user as any).appraiserProfile || {};
     await User.updateOne({ _id: req.userId }, { $set: {
       "appraiserProfile.cvPdfUrl": url, "appraiserProfile.cvPdfKey": key, "appraiserProfile.cvPdfBucket": storage.bucketName,
       "appraiserProfile.cvPdfPublicBaseUrl": storage.publicBaseUrl, "appraiserProfile.cvPdfFilename": String(file.originalname || "").slice(0, 200),
       "appraiserProfile.cvPdfPages": pages, "appraiserProfile.updatedAt": new Date(),
     } });
-    cleanup(previous.cvPdfBucket, previous.cvPdfPublicBaseUrl, previous.cvPdfKey);
     return respond(res, req.userId);
   } catch {
     return res.status(500).json({ message: "Failed to upload the CV" });
@@ -130,10 +119,8 @@ export const deleteAppraiserCvPdf = async (req: AuthRequest, res: Response) => {
   try {
     const user = await User.findById(req.userId).select("appraiserProfile");
     if (!user) return res.status(404).json({ message: "User not found" });
-    const previous = (user as any).appraiserProfile || {};
     await User.updateOne({ _id: req.userId }, { $unset: { "appraiserProfile.cvPdfUrl": 1, "appraiserProfile.cvPdfKey": 1,
       "appraiserProfile.cvPdfBucket": 1, "appraiserProfile.cvPdfPublicBaseUrl": 1, "appraiserProfile.cvPdfFilename": 1, "appraiserProfile.cvPdfPages": 1 } });
-    cleanup(previous.cvPdfBucket, previous.cvPdfPublicBaseUrl, previous.cvPdfKey);
     return respond(res, req.userId);
   } catch {
     return res.status(500).json({ message: "Failed to remove the CV" });

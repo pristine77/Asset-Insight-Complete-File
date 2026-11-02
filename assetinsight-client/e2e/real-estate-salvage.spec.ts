@@ -61,8 +61,8 @@ for (const theme of ["light", "dark"] as const) {
     await dialog.getByRole("button", { name: "Save Changes" }).click();
     await expect.poll(state.saved).toBe(true);
     await dialog.getByRole("button", { name: "View report-only photo 1" }).click();
-    await expect(dialog.getByText("Photo 2 of 2")).toBeVisible();
-    await dialog.getByRole("button", { name: "Close photo" }).click();
+    await expect(page.getByRole("dialog", { name: "Property photos" })).toContainText("Photo 2 of 2");
+    await page.getByRole("dialog", { name: "Property photos" }).getByRole("button", { name: "Close photo" }).click();
     await dialog.getByRole("heading", { name: /Farmland Details/ }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: `/tmp/assetinsight-re-${testInfo.project.name}-${theme}.png` });
     await dialog.getByRole("button", { name: "Submit for Approval" }).click();

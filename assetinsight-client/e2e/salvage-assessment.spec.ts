@@ -104,7 +104,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.getByText("Image evidence (1)", { exact: true }).click();
     await page.getByRole("button", { name: "View photo 1 for Engine model" }).click();
     await expect(page.getByRole("dialog", { name: "Report photo viewer" })).toBeVisible();
-    await expect(page.getByRole("dialog")).toHaveText("Photo 1 of 1");
+    await expect(page.getByRole("dialog", { name: "Report photo viewer" })).toContainText("Photo 1 of 1");
     await page.getByRole("button", { name: "Close photo", exact: true }).click();
     await page.getByLabel("VIN", { exact: true }).fill("1FTFW1ET1EFB12345");
     await page.getByLabel("Transmission Type", { exact: true }).fill("Automatic, checked by appraiser");
@@ -147,7 +147,10 @@ for (const theme of ["light", "dark"] as const) {
     page.once("dialog", async (dialog) => { confirmation = dialog.message(); await dialog.accept(); });
     await page.getByRole("button", { name: "Research again", exact: true }).click();
     await expect(page.getByRole("progressbar", { name: "Salvage processing progress" })).toHaveAttribute("value", "32");
-    expect(confirmation).toContain("US$10"); expect(confirmation).toContain("15 minutes");
+    expect(confirmation).toContain("Canadian salvage research run from this saved revision?");
+    expect(confirmation).toContain("15 minutes");
+    expect(confirmation).toContain("Existing files will need regeneration and approval.");
+    expect(confirmation).toContain("Ordinary saves do not run research.");
     expect(state.writes).toHaveLength(2);
     expect(state.writes[1]).toEqual({ path: "/api/salvage/enterprise-1/research", payload: { baseRevision: 3, client_request_id: stableId } });
     await expect(page).toHaveURL(/\/salvage\/status\/enterprise-1$/);

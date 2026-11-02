@@ -508,7 +508,7 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <AppraiserProfileSection profile={(user as any)?.appraiserProfile} onSaved={refresh} />
+          <AppraiserProfileSection key={user?._id || "signed-out"} profile={(user as any)?.appraiserProfile} onSaved={refresh} />
 
           <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)]">
             <div className="border-b border-[var(--app-border)] px-4 py-4 sm:px-5">

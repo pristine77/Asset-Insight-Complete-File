@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ExternalLink, PenLine, Trash2, Upload } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { UserService } from "@/services/user";
+import { captureAuthSession, isAuthSessionCurrent } from "@/lib/auth-storage";
 
 /*
   Appraiser profile (owner, 2026-11-01: the signature block and CV on Salvage
@@ -32,16 +33,30 @@ export default function AppraiserProfileSection({ profile, onSaved }: { profile:
   const [busy, setBusy] = useState<null | "text" | "signature" | "cv">(null);
   const signatureInput = useRef<HTMLInputElement>(null);
   const cvInput = useRef<HTMLInputElement>(null);
+  const request = useRef<symbol | null>(null);
+
+  useEffect(() => () => { request.current = null; }, []);
 
   useEffect(() => { setDesignation(profile?.designation || ""); setTitle(profile?.title || ""); }, [profile?.designation, profile?.title]);
   const changed = designation.trim() !== (profile?.designation || "") || title.trim() !== (profile?.title || "");
 
   async function run(kind: "text" | "signature" | "cv", work: () => Promise<unknown>, done: string, failed: string) {
-    if (busy) return;
+    if (request.current) return;
+    const operation = Symbol();
+    const session = captureAuthSession();
+    request.current = operation;
+    const current = () => request.current === operation && isAuthSessionCurrent(session);
     setBusy(kind);
-    try { await work(); await onSaved(); toast.success(done); }
-    catch (error) { toast.error(errorText(error, failed)); }
-    finally { setBusy(null); }
+    try {
+      await work();
+      if (!current()) return;
+      await onSaved();
+      if (current()) toast.success(done);
+    }
+    catch (error) { if (current()) toast.error(errorText(error, failed)); }
+    finally {
+      if (request.current === operation) { request.current = null; setBusy(null); }
+    }
   }
 
   return (
@@ -56,11 +71,11 @@ export default function AppraiserProfileSection({ profile, onSaved }: { profile:
         <div className="grid gap-3 sm:grid-cols-[8rem_1fr]">
           <label className="grid gap-1.5 text-[13px] font-semibold text-[var(--app-text)]" htmlFor="appraiser-designation">
             Designation
-            <input id="appraiser-designation" className={FIELD} value={designation} maxLength={40} placeholder="CPPA" onChange={(e) => setDesignation(e.target.value)} />
+            <input id="appraiser-designation" className={FIELD} value={designation} disabled={busy === "text"} maxLength={40} placeholder="CPPA" onChange={(e) => setDesignation(e.target.value)} />
           </label>
           <label className="grid gap-1.5 text-[13px] font-semibold text-[var(--app-text)]" htmlFor="appraiser-title">
             Title
-            <input id="appraiser-title" className={FIELD} value={title} maxLength={120} placeholder="Appraiser, RSE – Journeyman Mechanic" onChange={(e) => setTitle(e.target.value)} />
+            <input id="appraiser-title" className={FIELD} value={title} disabled={busy === "text"} maxLength={120} placeholder="Appraiser, RSE – Journeyman Mechanic" onChange={(e) => setTitle(e.target.value)} />
           </label>
         </div>
         <button type="button" className="app-button app-button--primary" disabled={!changed || Boolean(busy)}

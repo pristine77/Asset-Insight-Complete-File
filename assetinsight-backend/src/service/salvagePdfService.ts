@@ -207,7 +207,7 @@ async function renderSalvageAppraisalReport(reportData: any): Promise<Buffer> {
 
     const html = template({
       ...data, v: view, coverPhotos, cv, signature_src: signatureSrc, logo_url: logoUrl, language: lang,
-      tt: SALVAGE_PDF_LABELS[lang], currency: "CAD",
+      tt: SALVAGE_PDF_LABELS[lang], currency: view.currency,
       report_date_text: reportData.report_date ? formatSalvageDate(reportData.report_date, lang) : "",
       loss_date_text: reportData.date_of_loss ? formatSalvageDate(reportData.date_of_loss, lang) : "",
     });

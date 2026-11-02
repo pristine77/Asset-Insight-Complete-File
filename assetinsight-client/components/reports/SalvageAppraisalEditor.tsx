@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ExternalLink, FileText, ImageIcon, Lasso, Plus, Trash2, Upload } from "lucide-react";
 import {
   SalvageService, SALVAGE_LOSS_STATUSES, SALVAGE_MAX_ADDITIONAL_UNITS,
@@ -10,6 +10,7 @@ import { salvageSystemText } from "@/lib/salvagePresentation";
 import ImageAnnotatorModal from "@/components/forms/salvage/ImageAnnotatorModal";
 import { DAMAGE_COLOR, marksWithLoops, photoLoops } from "./SalvageDamageLoops";
 import styles from "./SalvagePreviewWorkspace.module.css";
+import { captureAuthSession, isAuthSessionCurrent } from "@/lib/auth-storage";
 
 /*
   The full MCD Appraisals report in the Salvage preview (owner, 2026-11-01:
@@ -226,7 +227,10 @@ export function SalvageUnitsPreview({ units, onChange, disabled, appendices }: {
 }
 
 /** Uploaded documents printed as appendices; each change saves at once. */
-export function SalvageAppendicesPanel({ report, disabled, onReport }: { report: SalvageReport; disabled: boolean; onReport: (report: SalvageReport) => void }) {
+export function SalvageAppendicesPanel({ report, disabled, onReport, beginMutation, endMutation }: {
+  report: SalvageReport; disabled: boolean; onReport: (report: SalvageReport) => void;
+  beginMutation?: () => boolean; endMutation?: () => void;
+}) {
   const appendices = report.appendices || [];
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -237,14 +241,29 @@ export function SalvageAppendicesPanel({ report, disabled, onReport }: { report:
   const input = useRef<HTMLInputElement>(null);
   const version = Number(report.appendices_version || 0);
   const reportId = report.reportId || report._id;
+  const request = useRef<symbol | null>(null);
+  useEffect(() => () => { request.current = null; }, []);
 
   /** Runs one appendix change; true when the server accepted it. */
   async function act(work: () => Promise<{ data: SalvageReport }>, done: string): Promise<boolean> {
-    if (busy) return false;
+    if (disabled || request.current || (beginMutation && !beginMutation())) return false;
+    const operation = Symbol();
+    const session = captureAuthSession();
+    request.current = operation;
+    const current = () => request.current === operation && isAuthSessionCurrent(session);
     setBusy(true); setMessage(null);
-    try { onReport((await work()).data); setMessage({ error: false, text: done }); return true; }
-    catch (error) { setMessage({ error: true, text: errorMessage(error, "The appendices could not be changed. Reload and try again.") }); return false; }
-    finally { setBusy(false); }
+    try {
+      const response = await work();
+      if (!current()) return false;
+      onReport(response.data); setMessage({ error: false, text: done }); return true;
+    }
+    catch (error) {
+      if (current()) setMessage({ error: true, text: errorMessage(error, "The appendices could not be changed. Reload and try again.") });
+      return false;
+    }
+    finally {
+      if (request.current === operation) { request.current = null; setBusy(false); endMutation?.(); }
+    }
   }
   const listed = (next: SalvageAppendix[]) => next.map((a) => ({ id: a.id, title: edits[a.id]?.title ?? a.title, note: edits[a.id]?.note ?? a.note }));
   const reorder = (index: number, by: number) => {

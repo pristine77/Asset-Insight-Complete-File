@@ -7,6 +7,8 @@ import {
 import { normalizeSalvageReportData, salvageNumber } from "../salvageReportData.js";
 import { presentSalvageSnapshot } from "../salvagePresentation.js";
 import { salvageReportSections, safeSalvageReportLink, type SalvageReportSection } from "../salvageReportSections.js";
+import { hasSalvageAppraisalFields } from "../salvageAppraisalExport.js";
+import { generateSalvageAppraisalXlsx } from "./salvageAppraisalXlsxService.js";
 
 /**
  * Builds a portable Salvage workbook with the six established data sheets,
@@ -20,6 +22,7 @@ function safe(val?: any): string {
 
 export async function generateSalvageXlsx(reportData: any): Promise<Buffer> {
   reportData = presentSalvageSnapshot(normalizeSalvageReportData(reportData));
+  if (hasSalvageAppraisalFields(reportData)) return generateSalvageAppraisalXlsx(reportData);
   const enterprise = reportData?.assessment?.schemaVersion === 2;
   const enrichment = salvageReportSections(reportData);
   // Only shipped dictionaries are selectable. Unknown or legacy locale values

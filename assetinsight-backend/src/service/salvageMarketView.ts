@@ -18,6 +18,8 @@
  * section names, ledger lines and the figures summary are our own.
  */
 
+import { salvageCurrencyName, salvageReportCurrency } from "./salvageReportCurrency.js";
+
 type Lang = "en" | "fr" | "es";
 type Json = Record<string, any>;
 
@@ -154,6 +156,8 @@ export function buildSalvageMarketView(report: Json, lang: Lang = "en"): Salvage
   const inputs = object(canonical ? assessment.inputs : report.assessment_inputs);
   const details = new Map<string, any>(list(object(assessment.vehicleDetails).fields).map((field: any) => [field.key, field]));
   const fieldValue = (key: string) => text(details.get(key)?.value);
+  const odometerField = fieldValue("odometer");
+  const observedOdometer = odometerField ? num(Number(odometerField)) : null;
   const year = first(fieldValue("year"), inputs.year, report.year);
   const make = first(fieldValue("make"), inputs.make, report.make);
   const model = first(fieldValue("model"), inputs.model, report.item_model);
@@ -219,7 +223,7 @@ export function buildSalvageMarketView(report: Json, lang: Lang = "en"): Salvage
         row("category", "Category", fieldValue("category")),
         row("bodyType", "Body Type", bodyType),
         row("driveType", "Drive Type", fieldValue("driveType")),
-        row("odometer", "Odometer", odometerText(num(Number(fieldValue("odometer"))) ?? inputs.odometer, fieldValue("odometerUnit") || inputs.odometerUnit),
+        row("odometer", "Odometer", odometerText(observedOdometer ?? inputs.odometer, fieldValue("odometerUnit") || inputs.odometerUnit),
           odometerText(comp?.odometer, comp?.odometerUnit)),
         row("brand", "Brand / Title", first(inputs.documentedBrand, L.notEstablished), text(comp?.brand)),
         row("location", "Location", [inputs.market, inputs.province].map(text).filter(Boolean).join(", "),
@@ -334,7 +338,7 @@ export function buildSalvageMarketView(report: Json, lang: Lang = "en"): Salvage
   ];
   const providedBy = [
     `Loss vehicle information was provided by ${first(report.adjuster_name, report.insured_name, "the client")}${report.company_name ? ` for ${text(report.company_name)}` : ""}`.replace(/\.?$/, "."),
-    "All values are in Canadian dollars.",
+    `All values are in ${salvageCurrencyName(salvageReportCurrency(report))}.`,
   ];
   const process = canonical ? [
     "Public Canadian market listings were researched for comparable vehicles, in the subject's market first and nationally where needed.",

@@ -1,4 +1,4 @@
-import { isSalvageAssessmentV2, projectSalvageAssessmentLegacyFields } from "./salvageAssessment.js";
+import { isSalvageAssessmentV2, normalizeSalvageAssessmentInputs, projectSalvageAssessmentLegacyFields, refreshSalvageAssessment } from "./salvageAssessment.js";
 
 /**
  * Units 2 onward in the Salvage report job (owner, 2026-11-01: one report
@@ -11,12 +11,48 @@ import { isSalvageAssessmentV2, projectSalvageAssessmentLegacyFields } from "./s
 type Json = Record<string, any>;
 const isObject = (value: unknown): value is Json => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "");
+const own = (value: Json, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+
+/**
+ * Additional units use their reviewed scalar fields as the editable identity.
+ * Recalculate the current assessment inputs, preserving its researched baseline,
+ * evidence and provenance. Client-supplied assessment objects never enter here.
+ */
+export function refreshReviewedSalvageUnitIdentity(unit: Json, supplied: Json = unit): Json {
+  if (!isSalvageAssessmentV2(unit.assessment)) return unit;
+  const assessment = unit.assessment;
+  let inputs: Json = { ...(isObject(unit.assessment_inputs) ? unit.assessment_inputs : assessment.inputs) };
+  const overrides: Json = { ...(inputs.vehicleOverrides || {}) };
+  let changed = false;
+  const aliases: Record<string, string> = { year: "year", make: "make", item_model: "model", vin: "vin", item_condition: "condition", damage_description: "damageDescription" };
+  for (const [alias, key] of Object.entries(aliases)) {
+    if (!own(supplied, alias)) continue;
+    const next = normalizeSalvageAssessmentInputs({ ...inputs, [key]: unit[alias] });
+    const previous = normalizeSalvageAssessmentInputs(inputs);
+    if (JSON.stringify(next[key as keyof typeof next]) === JSON.stringify(previous[key as keyof typeof previous])) continue;
+    inputs[key] = unit[alias];
+    if (["year", "make", "model", "vin"].includes(key)) overrides[key] = text(unit[alias]) || null;
+    changed = true;
+  }
+  if (own(supplied, "item_type") && assessment.vehicleDetails?.schemaVersion === 1) {
+    const previous = assessment.vehicleDetails?.fields.find((field) => field.key === "bodyType")?.value;
+    if (text(unit.item_type) !== text(previous)) {
+      overrides.bodyType = text(unit.item_type) || null;
+      changed = true;
+    }
+  }
+  if (!changed) return unit;
+  inputs = { ...inputs, vehicleOverrides: overrides };
+  const refreshed = refreshSalvageAssessment(assessment, inputs);
+  return { ...unit, assessment: refreshed, assessment_inputs: refreshed.inputs };
+}
 
 /** The claim's market context, shared by every unit. */
 const SHARED_CONTEXT = ["province", "market", "effectiveDate", "lossType", "brandProvince"] as const;
 
 /** What the research pipeline reads for one unit. */
 export function salvageUnitResearchSnapshot(facts: Json, unit: Json): Json {
+  unit = refreshReviewedSalvageUnitIdentity(unit);
   const reportInputs = isObject(facts.assessment_inputs) ? facts.assessment_inputs : {};
   const context = Object.fromEntries(SHARED_CONTEXT.filter((key) => reportInputs[key] !== undefined).map((key) => [key, reportInputs[key]]));
   // A unit already researched keeps its own saved inputs (and appraiser edits).

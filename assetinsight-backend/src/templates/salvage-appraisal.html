@@ -208,7 +208,7 @@
       {{#each v.figures}}
       <div class="figure{{#if accent}} accent{{/if}}">
         <span class="k">{{label}}</span>
-        <strong>{{#if (eq amount null)}}{{#if note}}{{../v.units.length}}{{else}}{{../v.labels.notEstablished}}{{/if}}{{else}}{{currencyFormat amount}}{{/if}}</strong>
+        <strong>{{#if (eq amount null)}}{{#if count}}{{count}}{{else}}{{../v.labels.notEstablished}}{{/if}}{{else}}{{currencyFormat amount}}{{/if}}</strong>
         {{#if note}}<span class="note">{{note}}</span>{{/if}}
       </div>
       {{/each}}
@@ -341,8 +341,8 @@
         <table class="grid-table">
           <thead><tr><th>{{market.labels.description}}</th><th class="num" style="width:16%">{{market.labels.qty}}</th><th class="num" style="width:20%">{{market.labels.amount}}</th></tr></thead>
           <tbody>
-            {{#each market.repairRows}}<tr><td>{{description}}</td><td class="num">{{quantity}}</td><td class="num">{{#if amount}}{{currencyFormat amount}}{{else}}—{{/if}}</td></tr>{{/each}}
-            <tr class="sum"><td>{{market.labels.totalRepair}}</td><td></td><td class="num">{{#if market.repairTotal}}{{currencyFormat market.repairTotal}}{{else}}—{{/if}}</td></tr>
+            {{#each market.repairRows}}<tr><td>{{description}}</td><td class="num">{{quantity}}</td><td class="num">{{#if (eq amount null)}}—{{else}}{{currencyFormat amount}}{{/if}}</td></tr>{{/each}}
+            <tr class="sum"><td>{{market.labels.totalRepair}}</td><td></td><td class="num">{{#if (eq market.repairTotal null)}}—{{else}}{{currencyFormat market.repairTotal}}{{/if}}</td></tr>
           </tbody>
         </table>
         {{/if}}

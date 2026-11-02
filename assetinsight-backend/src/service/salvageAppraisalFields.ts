@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { normalizeSalvageDamageMarks } from "../utils/salvageDamageMarks.js";
+import { refreshReviewedSalvageUnitIdentity } from "./salvageUnitResearch.js";
 
 /**
  * Fields of the full MCD Appraisals Salvage report (owner, 2026-11-01): the
@@ -192,7 +193,7 @@ export function mergeSalvageUnitsFromClient(current: unknown, incoming: unknown)
     const existing = typeof raw.id === "string" && !used.has(raw.id) ? saved.get(raw.id) : undefined;
     if (existing) {
       used.add(existing.id);
-      return { ...existing, ...editableUnitFields(raw, existing.imageUrls.length) };
+      return refreshReviewedSalvageUnitIdentity({ ...existing, ...editableUnitFields(raw, existing.imageUrls.length) }, raw);
     }
     const { damage_marks: _ignored, ...rest } = raw;
     return { id: `u-${randomUUID().slice(0, 12)}`, ...editableUnitFields(rest, 0), imageUrls: [], research: false };

@@ -29,6 +29,8 @@
  * prints as "Not established" or is left out.
  */
 import { buildSalvageMarketView, type SalvageMarketView } from "./salvageMarketView.js";
+import { salvageCurrencyName, salvageReportCurrency } from "./salvageReportCurrency.js";
+import { refreshReviewedSalvageUnitIdentity } from "./salvageUnitResearch.js";
 
 type Lang = "en" | "fr" | "es";
 type Json = Record<string, any>;
@@ -76,6 +78,8 @@ export interface UnitView {
   photoCount: number;
 }
 export interface SalvageAppraisalView {
+  currency: string;
+  totalValueLabel: string;
   brand: typeof SALVAGE_REPORT_BRAND;
   reportNumberText: string;
   title: string;
@@ -85,7 +89,7 @@ export interface SalvageAppraisalView {
   opinion: { type: string; comments: string };
   comments: string;
   followUp: string;
-  figures: { label: string; amount: number | null; note?: string; accent?: boolean }[];
+  figures: { label: string; amount: number | null; note?: string; accent?: boolean; count?: number }[];
   units: UnitView[];
   totals: { value: number | null; reserve: number | null; salvage: number | null };
   appraiser: { name: string; designation: string; title: string; phone: string; email: string; company: string };
@@ -152,8 +156,10 @@ const list = (value: unknown): any[] => (Array.isArray(value) ? value : []);
 /** A money value typed as a number or as text such as "$105,000.00"; null when it holds no amount. */
 export const money = (value: unknown): number | null => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const match = text(value).replace(/,/g, "").match(/-?\d+(\.\d+)?/);
-  return match ? Number(match[0]) : null;
+  const cleaned = text(value).replace(/(?:CAD|USD|EUR|GBP|CA\$|US\$|[$€£,\s])/gi, "");
+  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(cleaned)) return null;
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) ? amount : null;
 };
 const sum = (values: (number | null)[]): number | null => (values.some((v) => v !== null) ? values.reduce<number>((total, v) => total + (v ?? 0), 0) : null);
 const dateText = (value: unknown, lang: Lang): string => {
@@ -179,6 +185,7 @@ function repairableOf(value: unknown): "yes" | "no" | "tbd" {
 }
 
 function buildUnit(unit: Json, index: number, lang: Lang, L: Record<string, string>, appendixLetter: (id: unknown) => string): UnitView {
+  if (index > 0) unit = refreshReviewedSalvageUnitIdentity(unit);
   const market = buildSalvageMarketView(unit, lang);
   const assessment = object(unit.assessment);
   const researched = market.canonical;
@@ -229,6 +236,7 @@ function buildUnit(unit: Json, index: number, lang: Lang, L: Record<string, stri
   const misc = sum([typed("miscellaneous", "miscellaneous"), charges]);
   const taxes = typed("taxes", "taxes");
   const repairTotal = sum([parts, betterment === null ? null : -Math.abs(betterment), labour, shop, misc, taxes]);
+  const incompleteRepair = researched && repairs.status !== "complete";
   const appendix = appendixLetter(unit.repair_estimate_appendix);
   const repairLines = [
     { label: "Parts", amount: parts },
@@ -237,16 +245,22 @@ function buildUnit(unit: Json, index: number, lang: Lang, L: Record<string, stri
     { label: "Shop Supplies", amount: shop },
     { label: "Miscellaneous", amount: misc },
     { label: "Taxes", amount: taxes },
-    { label: L.total.toUpperCase(), amount: repairTotal, kind: "total" as const },
+    { label: incompleteRepair ? "KNOWN SUBTOTAL" : L.total.toUpperCase(), amount: repairTotal, kind: "total" as const },
   ].map((line) => (line.amount === null ? { ...line, text: "—" } : line));
-  const repairNote = appendix ? `${L.seeAppendix} ${appendix} for the complete repair estimate.` : "";
+  const repairNote = [
+    appendix ? `${L.seeAppendix} ${appendix} for the complete repair estimate.` : "",
+    incompleteRepair ? "Known amounts only; the complete repair estimate is not established." : "",
+  ].filter(Boolean).join(" ");
 
   const valueBasis = text(unit.value_basis).toLowerCase().startsWith("rep") ? "replacement" : "acv";
   const preLoss = money(object(object(assessment.valuations).preLoss).amount);
-  // The report normaliser stores a missing ACV / replacement cost as 0, so 0
-  // means "not entered": the researched pre-loss value is used instead.
+  // Only the legacy root normaliser used 0 for a missing value. Additional
+  // units retain presence/null/zero, so an appraiser's zero or cleared value
+  // must never be replaced with a prior researched amount.
   const entered = (value: unknown) => { const amount = money(value); return amount !== null && amount > 0 ? amount : null; };
-  const valueAmount = valueBasis === "replacement" ? entered(unit.replacement_cost) : entered(unit.actual_cash_value) ?? preLoss;
+  const explicitAmount = (key: string, fallback: number | null) => index > 0 && Object.prototype.hasOwnProperty.call(unit, key)
+    ? money(unit[key]) : entered(unit[key]) ?? fallback;
+  const valueAmount = valueBasis === "replacement" ? explicitAmount("replacement_cost", null) : explicitAmount("actual_cash_value", preLoss);
   const valueNote = valueAmount === null ? L.notEstablished : "";
   const sources = [...new Set(market.comparables.map((c) => c.source).filter(Boolean))];
   const references = first(unit.replacement_cost_references,
@@ -273,6 +287,7 @@ function buildUnit(unit: Json, index: number, lang: Lang, L: Record<string, stri
 
 export function buildSalvageAppraisalView(report: Json, lang: Lang = "en"): SalvageAppraisalView {
   const L = LABELS[lang] || LABELS.en;
+  const currency = salvageReportCurrency(report);
 
   // Appendices in upload order, lettered A, B, C ...
   const appendices: AppendixView[] = list(report.appendices)
@@ -316,11 +331,13 @@ export function buildSalvageAppraisalView(report: Json, lang: Lang = "en"): Salv
     { label: "Report Date", value: dateText(report.report_date, lang) },
   ].map((row) => ({ ...row, value: row.value || "N/A" }));
 
+  const totalValueLabel = units.every((u) => u.valueBasis === "replacement") ? L.replacement
+    : units.every((u) => u.valueBasis === "acv") ? L.acv : L.value;
   const figures = [
     { label: L.reserve, amount: totals.reserve, note: L.lessDeductible, accent: true },
-    { label: units.every((u) => u.valueBasis === "replacement") ? L.replacement : L.acv, amount: totals.value },
+    { label: totalValueLabel, amount: totals.value },
     { label: L.salvage, amount: totals.salvage },
-    { label: L.units, amount: null, note: units.map((u) => u.status).join(" · ") },
+    { label: L.units, amount: null, count: units.length, note: units.map((u) => u.status).join(" · ") },
   ];
 
   const definitions: Row[] = [
@@ -341,7 +358,7 @@ export function buildSalvageAppraisalView(report: Json, lang: Lang = "en"): Salv
   const marketLimitations = units.flatMap((u) => u.market.notes.general);
   const limitations = [...new Set([
     "This report is prepared for the insurer named in the assignment and for the claim identified; it is not to be used for any other purpose or by any other party without our written consent.",
-    "Values are in Canadian dollars, exclude taxes unless stated, and apply on the report date. Market conditions change.",
+    `Values are in ${salvageCurrencyName(currency)}, exclude taxes unless stated, and apply on the report date. Market conditions change.`,
     "The inspection was visual. It is not a mechanical, structural, title or lien inspection; damage hidden from view or found on teardown may change the repair estimate and the opinions in this report.",
     "Information supplied by the insured, the insurer, repair facilities and dealers is assumed to be accurate.",
     ...marketLimitations,
@@ -349,6 +366,7 @@ export function buildSalvageAppraisalView(report: Json, lang: Lang = "en"): Salv
 
   const coverLines = units.map((u) => [u.label, u.name].filter(Boolean).join(" — "));
   return {
+    currency, totalValueLabel,
     brand: SALVAGE_REPORT_BRAND,
     reportNumberText: `${L.report} ${NUMBER_WORDS[reportNumber] || reportNumber}`,
     title: L.title,

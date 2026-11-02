@@ -370,3 +370,58 @@ describe("Retrieved comparable evidence", () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });
+
+
+describe("bounded marked-photo requests", () => {
+  const urls = Array.from({ length: 10 }, (_, index) => `marked-photo-${index + 1}`);
+  const marks = urls.map((_, photoIndex) => ({ photoIndex,
+    loops: Array.from({ length: 4 }, () => ({ points: [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2]] as [number, number][] })),
+    regions: Array.from({ length: 4 }, () => ({ x: 0.1, y: 0.1, width: 0.1, height: 0.1 })),
+  }));
+  const photoRequests = () => mocks.create.mock.calls.map(([params]) => params as any)
+    .filter((params) => params.text.format.name === "salvage_photo_observations");
+  const prepare = () => mocks.prepare.mockImplementation(async (batch: string[], options: any) => batch.map((url, index) => ({
+    buffer: Buffer.from(url), width: 1, height: 1,
+    damageCrops: (options.damageMarks[index]?.regions || []).map((_: unknown, area: number) => Buffer.from(`${url}-crop-${area + 1}`)),
+  })));
+
+  it("keeps unmarked stage boundaries and subdivides only marked groups without dropping photos or crops", async () => {
+    expect(salvagePhotoBatches([...urls, "last-photo"]).map((batch) => [batch.startIndex, batch.urls.length])).toEqual([[0, 10], [10, 1]]);
+    expect(salvagePhotoBatches([...urls, "last-photo"], marks).map((batch) => [batch.startIndex, batch.urls.length]))
+      .toEqual([[0, 2], [2, 2], [4, 2], [6, 2], [8, 2], [10, 1]]);
+    prepare();
+    let checkpoint: any;
+    const result: any = await runEnterpriseSalvageAssessment({ snapshot: { assessment_inputs: subject }, imageUrls: urls, damageMarks: marks,
+      onCheckpoint: async (saved) => { checkpoint = saved; } });
+    const calls = photoRequests();
+    expect(calls).toHaveLength(5);
+    expect(calls.map((params) => params.input[0].content.filter((part: any) => part.type === "input_image").length)).toEqual([10, 10, 10, 10, 10]);
+    const contents = calls.flatMap((params) => params.input[0].content);
+    expect(contents.filter((part: any) => part.type === "input_text" && /marked damage area/.test(part.text))).toHaveLength(40);
+    expect(contents.filter((part: any) => part.type === "input_text" && /^photo-\d{3}$/.test(part.text)).map((part: any) => part.text))
+      .toEqual(urls.map((_, index) => `photo-${String(index + 1).padStart(3, "0")}`));
+    expect(mocks.prepare.mock.calls.flatMap(([batch]) => batch)).toEqual(urls);
+    expect(result.assessment.photoFindings).toHaveLength(10);
+    expect(result.assessment.photoFindings.every((photo: any) => photo.status === "analyzed")).toBe(true);
+    expect(checkpoint.result).toBeDefined();
+    expect(result.analysis_warning).not.toMatch(/call limit|bounded request/i);
+  });
+
+  it("resumes an interruption after a completed marked stage without repeating any inspection request", async () => {
+    prepare();
+    let checkpoint: any, interrupted = false;
+    const options = { snapshot: { assessment_inputs: subject }, imageUrls: urls, damageMarks: marks,
+      onCheckpoint: async (saved: any) => {
+        checkpoint = structuredClone(saved);
+        if (!interrupted && saved.calls.some((call: any) => call.stage === "photos-2" && call.status === "complete")) {
+          interrupted = true; throw new Error("Synthetic interruption after checkpoint persistence");
+        }
+      } };
+    await expect(runEnterpriseSalvageAssessment(options)).rejects.toThrow("Synthetic interruption");
+    const completed = structuredClone(checkpoint);
+    const result: any = await runEnterpriseSalvageAssessment({ ...options, checkpoint: completed });
+    expect(photoRequests()).toHaveLength(5);
+    expect(result.assessment.photoFindings.map((photo: any) => photo.photoId)).toEqual(urls.map((_, index) => `photo-${String(index + 1).padStart(3, "0")}`));
+    expect(checkpoint.calls.filter((call: any) => /^photos-/.test(call.stage)).map((call: any) => call.stage)).toEqual(["photos-0", "photos-2", "photos-4", "photos-6", "photos-8"]);
+  });
+});

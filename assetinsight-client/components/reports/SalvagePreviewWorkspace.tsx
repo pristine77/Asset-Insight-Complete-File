@@ -66,6 +66,7 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [appendixBusy, setAppendixBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -77,11 +78,12 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
   const version = useRef(0);
   const dirtyRef = useRef(false);
   const mutation = useRef(false);
+  const appendixMutation = useRef(false);
   const fetching = useRef(false);
   const downloadLock = useRef(false);
 
   const load = useCallback(async (replace = false) => {
-    if (fetching.current || mutation.current) return;
+    if (fetching.current || mutation.current || appendixMutation.current) return;
     fetching.current = true;
     const epoch = version.current;
     setRefreshing(true);
@@ -111,8 +113,9 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
     version.current += 1;
     fetching.current = false;
     mutation.current = false;
+    appendixMutation.current = false;
     dirtyRef.current = false;
-    setReport(null); setDraft({}); setDirty(false); setLoading(true); setBusy(null); setError(null); setNotice(null); setConflict(false);
+    setReport(null); setDraft({}); setDirty(false); setLoading(true); setBusy(null); setAppendixBusy(false); setError(null); setNotice(null); setConflict(false);
     void load(true);
     return () => { version.current += 1; };
   }, [load]);
@@ -130,11 +133,11 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
   }, [processing, load]);
 
   useEffect(() => {
-    if (!dirty && !busy) return;
+    if (!dirty && !busy && !appendixBusy) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, busy]);
+  }, [dirty, busy, appendixBusy]);
 
   useEffect(() => {
     if (photo !== null) dialog.current?.showModal();
@@ -149,7 +152,7 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
   };
 
   const run = async (action: "save" | "submit" | "retry" | "research") => {
-    if (!report || loading || processing || mutation.current || fetching.current) return;
+    if (!report || loading || processing || mutation.current || appendixMutation.current || fetching.current) return;
     if (action !== "retry" && (!Number.isInteger(report.revision) || conflict)) return;
     if (action === "submit" && dirtyRef.current) { setError("Save your changes before submitting."); return; }
     if (action === "retry" && dirtyRef.current) { setError("Save or reload your changes before retrying."); return; }
@@ -189,22 +192,22 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
   };
 
   const reload = () => {
-    if (mutation.current) return;
+    if (mutation.current || appendixMutation.current) return;
     if (dirtyRef.current && !window.confirm("Reload the latest saved report? Unsaved changes on this page will be discarded.")) return;
     void load(true);
   };
   const back = () => {
-    if (mutation.current) return;
+    if (mutation.current || appendixMutation.current) return;
     if (dirtyRef.current && !window.confirm("Leave this report? Unsaved changes will be lost.")) return;
     router.push("/reports");
   };
   const showProgress = () => {
-    if (mutation.current) return;
+    if (mutation.current || appendixMutation.current) return;
     if (dirtyRef.current && !window.confirm("Close preview and view progress? Unsaved changes will be lost.")) return;
     router.push(salvageStatusPath(reportId));
   };
   const download = async (fileId: string, kind: string) => {
-    if (!report?.downloadable || processing || dirtyRef.current || mutation.current || downloadLock.current) return;
+    if (!report?.downloadable || processing || dirtyRef.current || mutation.current || appendixMutation.current || downloadLock.current) return;
     downloadLock.current = true; setDownloading(kind); setError(null);
     try {
       const result = await ReportsService.downloadReport(fileId);
@@ -272,14 +275,14 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
 
   return <main className={styles.page} aria-label="Salvage report workspace">
     <header className={styles.header}><div><h1>Salvage report preview</h1><p className={styles.muted}>{report?.file_number || "Report review"} · {stage}</p></div>
-      <div className={styles.actions}><button className="app-button" type="button" disabled={Boolean(busy)} onClick={back}><ArrowLeft className="size-4" /> Reports</button><button className="app-button" type="button" disabled={Boolean(busy)} onClick={showProgress}>Close preview / View progress</button><button className="app-button" type="button" disabled={Boolean(busy) || refreshing} onClick={reload}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /> {conflict ? "Reload latest" : "Refresh"}</button></div>
+      <div className={styles.actions}><button className="app-button" type="button" disabled={Boolean(busy) || appendixBusy} onClick={back}><ArrowLeft className="size-4" /> Reports</button><button className="app-button" type="button" disabled={Boolean(busy) || appendixBusy} onClick={showProgress}>Close preview / View progress</button><button className="app-button" type="button" disabled={Boolean(busy) || appendixBusy || refreshing} onClick={reload}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /> {conflict ? "Reload latest" : "Refresh"}</button></div>
     </header>
     {error ? <div role="alert" className={`${styles.notice} ${styles.error}`}>{error}{!report ? <button className="app-button mt-2" type="button" disabled={refreshing} onClick={reload}>Try again</button> : null}</div> : null}
     {notice ? <p role="status" className={styles.notice}>{notice}</p> : null}
     {loading ? <p role="status" className={styles.notice}>Loading salvage report…</p> : report ? <>
       <section className={styles.notice} aria-label="Report status" aria-live="polite"><strong>{stage}</strong><p>{salvageSystemText(report.workflow_message) || (processing ? "Your report is being processed. You can return here from Reports or Previews." : "Review the details below. Save edits, then submit to generate the report files.")}</p>
         {processing ? <progress className={styles.progress} aria-label="Salvage processing progress" max={100} value={Math.max(0, Math.min(100, report.workflow_progress_percent || 0))} /> : null}
-        {failed ? <><p className="mt-2">{salvageSystemText(report.job_error) || "Processing did not finish. Retry this report to keep its saved details and photos."}</p><button className="app-button mt-2" type="button" disabled={Boolean(busy) || dirty} onClick={() => void run("retry")}>Retry processing</button></> : null}
+        {failed ? <><p className="mt-2">{salvageSystemText(report.job_error) || "Processing did not finish. Retry this report to keep its saved details and photos."}</p><button className="app-button mt-2" type="button" disabled={Boolean(busy) || appendixBusy || dirty} onClick={() => void run("retry")}>Retry processing</button></> : null}
         {report.decline_reason ? <p className="mt-2">Review note: {report.decline_reason}</p> : null}
       </section>
       {Object.keys(draft).length > 0 && (report.preview_available !== false || dirty) && (!processing || dirty) ? <>
@@ -320,13 +323,24 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
           <span>Photo {index + 1}</span></button>;
       })}</div></section>
       {/* Appendices change with their own requests; a pending preview edit keeps its base revision. */}
-      <SalvageAppendicesPanel report={report} disabled={processing || Boolean(busy) || conflict}
-        onReport={(next) => setReport((old) => (old && dirtyRef.current ? { ...next, revision: old.revision } : next))} />
-      <section className={styles.section}><h2>Report files</h2><p className={`${styles.muted} mb-3`}>{dirty ? "Save and submit your changes to generate updated files." : report.downloadable ? "Available files for this saved report." : processing ? "Files will appear after generation, approval and release are complete." : "Downloads become available after the required approval and release. Use Submit to generate a preview's report files."}</p><div className={styles.actions}>{FILES.map(([kind, label]) => <button key={kind} type="button" className="app-button" disabled={!report.downloadable || !report.files?.[kind] || processing || dirty || Boolean(busy) || Boolean(downloading)} onClick={() => void download(report.files![kind]!, kind)}>{downloading === kind ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />} {label}</button>)}</div></section>
-      <footer className={styles.footer}><span role="status" className={styles.muted}>{busy ? "Please wait until this request finishes. Do not close the page." : dirty ? "Unsaved changes" : `Saved revision ${report.revision ?? "—"}`}</span><div className={styles.actions}>
-        <button type="button" className="app-button" disabled={!canEdit || dirty || conflict || refreshing || failed} onClick={() => void run("research")}><RefreshCw className="size-4" /> Research again</button>
-        <button type="button" className="app-button" disabled={!canEdit || !dirty || conflict || refreshing} onClick={() => void run("save")}><Save className="size-4" /> {busy === "save" ? "Saving…" : "Save changes"}</button>
-        <button type="button" className="app-button app-button--primary" disabled={!canEdit || !salvageHasPreview(report) || dirty || conflict || refreshing || failed || !["preview", "declined", "pending_approval", "approved", "cancelled"].includes(report.status)} onClick={() => void run("submit")}><Send className="size-4" /> {busy === "submit" ? "Submitting…" : ["pending_approval", "approved", "cancelled"].includes(report.status) ? "Resubmit report" : "Submit report"}</button>
+      <SalvageAppendicesPanel report={report} disabled={processing || Boolean(busy) || conflict || refreshing}
+        beginMutation={() => {
+          if (mutation.current || appendixMutation.current || fetching.current) return false;
+          appendixMutation.current = true; setAppendixBusy(true); return true;
+        }}
+        endMutation={() => { appendixMutation.current = false; setAppendixBusy(false); }}
+        onReport={(next) => setReport((old) => {
+          if (!old || (next.reportId || next._id) !== (old.reportId || old._id) || Number(next.appendices_version || 0) <= Number(old.appendices_version || 0)) return old;
+          // This endpoint owns appendices, not the preview revision, draft or
+          // generation lifecycle. Its older full snapshot must not replace them.
+          return { ...old, appendices: next.appendices || [], appendices_version: next.appendices_version,
+            files_ready: false, downloadable: false, download_access: { ...object(old.download_access), allowed: false } };
+        })} />
+      <section className={styles.section}><h2>Report files</h2><p className={`${styles.muted} mb-3`}>{dirty ? "Save and submit your changes to generate updated files." : report.downloadable ? "Available files for this saved report." : processing ? "Files will appear after generation, approval and release are complete." : "Downloads become available after the required approval and release. Use Submit to generate a preview's report files."}</p><div className={styles.actions}>{FILES.map(([kind, label]) => <button key={kind} type="button" className="app-button" disabled={!report.downloadable || !report.files?.[kind] || processing || dirty || Boolean(busy) || appendixBusy || Boolean(downloading)} onClick={() => void download(report.files![kind]!, kind)}>{downloading === kind ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />} {label}</button>)}</div></section>
+      <footer className={styles.footer}><span role="status" className={styles.muted}>{busy || appendixBusy ? "Please wait until this request finishes. Do not close the page." : dirty ? "Unsaved changes" : `Saved revision ${report.revision ?? "—"}`}</span><div className={styles.actions}>
+        <button type="button" className="app-button" disabled={!canEdit || appendixBusy || dirty || conflict || refreshing || failed} onClick={() => void run("research")}><RefreshCw className="size-4" /> Research again</button>
+        <button type="button" className="app-button" disabled={!canEdit || appendixBusy || !dirty || conflict || refreshing} onClick={() => void run("save")}><Save className="size-4" /> {busy === "save" ? "Saving…" : "Save changes"}</button>
+        <button type="button" className="app-button app-button--primary" disabled={!canEdit || appendixBusy || !salvageHasPreview(report) || dirty || conflict || refreshing || failed || !["preview", "declined", "pending_approval", "approved", "cancelled"].includes(report.status)} onClick={() => void run("submit")}><Send className="size-4" /> {busy === "submit" ? "Submitting…" : ["pending_approval", "approved", "cancelled"].includes(report.status) ? "Resubmit report" : "Submit report"}</button>
       </div></footer>
     </> : null}
     <dialog ref={dialog} className={styles.viewer} aria-label="Report photo viewer" onCancel={() => setPhoto(null)} onClose={() => setPhoto(null)}><div className={styles.actions}><p>Photo {photo === null ? "" : photo + 1} of {photos.length}</p>

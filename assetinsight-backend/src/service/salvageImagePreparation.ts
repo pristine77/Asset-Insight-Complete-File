@@ -72,10 +72,23 @@ export async function prepareSalvagePhotos(imageUrls: string[], options: {
 }
 
 /** Bound each AI request independently; a document's complete gallery is not one AI request. */
-export function salvagePhotoBatches(imageUrls: string[]): { startIndex: number; urls: string[] }[] {
+export function salvagePhotoBatches(imageUrls: string[], marks: (SalvageDamageMark | undefined)[] = []): { startIndex: number; urls: string[] }[] {
   if (imageUrls.length > SALVAGE_MAX_PHOTOS) throw new Error("Salvage supports at most 50 photos; no photos were discarded.");
-  return Array.from({ length: Math.ceil(imageUrls.length / SALVAGE_AI_BATCH_SIZE) }, (_, batch) => ({
-    startIndex: batch * SALVAGE_AI_BATCH_SIZE,
-    urls: imageUrls.slice(batch * SALVAGE_AI_BATCH_SIZE, (batch + 1) * SALVAGE_AI_BATCH_SIZE),
-  }));
+  const batches: { startIndex: number; urls: string[] }[] = [];
+  // Keep every existing unmarked ten-photo group and stage identity. Only a
+  // marked group is subdivided; each original plus all its crops stays together.
+  for (let start = 0; start < imageUrls.length; start += SALVAGE_AI_BATCH_SIZE) {
+    let current: { startIndex: number; urls: string[] } = { startIndex: start, urls: [] };
+    let images = 0;
+    for (let index = start; index < Math.min(start + SALVAGE_AI_BATCH_SIZE, imageUrls.length); index++) {
+      const count = 1 + (marks[index]?.regions.length || 0);
+      if (count > SALVAGE_AI_BATCH_SIZE) throw new Error("A photo's damage close-ups exceed the bounded request size.");
+      if (images + count > SALVAGE_AI_BATCH_SIZE && current.urls.length) {
+        batches.push(current); current = { startIndex: index, urls: [] }; images = 0;
+      }
+      current.urls.push(imageUrls[index]); images += count;
+    }
+    if (current.urls.length) batches.push(current);
+  }
+  return batches;
 }
