@@ -10,6 +10,14 @@ import ImageAnnotatorModal, { type AnnotatorAction, type DamageLoop } from "./sa
 import { salvageSystemText } from "@/lib/salvagePresentation";
 import CollapsibleSection from "./real-estate/CollapsibleSection";
 import { FIELD_CLASS } from "./real-estate/Field";
+import SalvageUnitsEditor, { salvageUnitPayload, type SalvageUnitDraft } from "./salvage/SalvageUnitsEditor";
+import { ClipboardList, Layers } from "lucide-react";
+
+/* Unit 1's details as the company's appraisal reports print them (owner, 2026-11-01). */
+const UNIT_ONE_FIELDS = [
+  ["unit_label", "Unit name", "Heavy Truck #807"], ["licence_plate", "Licence plate", ""], ["limit_of_insurance", "Limit of insurance", "$85,240.00"],
+  ["coverage", "Coverage", "Collision"], ["deductible", "Deductible", "$1,000.00"], ["hours", "Hour / kilometre reading", ""],
+] as const;
 
 type Props = {
   onSuccess?: (message?: string) => void;
@@ -71,7 +79,18 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
     language: "en",
     currency: "CAD",
     assessment_inputs: initialAssessment(),
+    report_number: 1,
+    follow_up: "",
+    unit_label: "",
+    licence_plate: "",
+    limit_of_insurance: "",
+    coverage: "",
+    deductible: "",
+    hours: "",
+    pre_existing_damage: "",
   });
+  // Units 2 onward, each with its own photos (owner, 2026-11-01: several units per report).
+  const [units, setUnits] = useState<SalvageUnitDraft[]>([]);
 
   const [images, setImages] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
@@ -246,11 +265,13 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
         report_date: details.report_date,
         date_received: details.date_received,
         next_report_due: details.next_report_due,
+        report_number: Math.min(20, Math.max(1, Math.round(Number(details.report_number) || 1))),
+        ...(units.length ? { additional_units: units.map(salvageUnitPayload) } : {}),
       };
 
       const res = await SalvageService.create(payload, images, {
         onUploadProgress: (fraction) => setUploadProgress(Math.round(fraction * 100)),
-      });
+      }, units.map((unit) => unit.images));
       accepted = true;
       const msg = res.jobId
         ? "Upload accepted. Your salvage report is processing in the background. Review the preview when it is ready, then submit to generate the report files."
@@ -266,6 +287,7 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
       setImages([]);
       setPreviews([]);
       setPhotoEdits([]);
+      setUnits([]);
       onSubmittingChange?.(false);
       try {
         if (res.reportId && onReportAccepted) onReportAccepted(res.reportId);
@@ -297,7 +319,7 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
           {uploadProgress < 100 ? "Uploading salvage report" : "Confirming your upload"}
         </h2>
         <progress aria-label="Report upload progress" value={uploadProgress} max={100} className="h-2 w-full accent-[var(--app-accent)]" />
-        <p className="text-sm text-[var(--app-text)]">{uploadProgress}% uploaded · {images.length} photo{images.length === 1 ? "" : "s"}</p>
+        <p className="text-sm text-[var(--app-text)]">{uploadProgress}% uploaded · {images.length + units.reduce((sum, unit) => sum + unit.images.length, 0)} photo{images.length + units.reduce((sum, unit) => sum + unit.images.length, 0) === 1 ? "" : "s"}{units.length ? ` · ${units.length + 1} units` : ""}</p>
         <p className="text-sm text-[var(--app-text-muted)]">Keep this page open until the server accepts the upload. Closing now may lose this submission. Report generation and approval continue in the background afterward.</p>
       </section>
     );
@@ -322,6 +344,12 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
     field and button styles. The fields drew an extra dark ring before; the
     drawer's header names the form, so the repeated title card is gone. Every
     field, label and value is as before.
+
+    Full MCD Appraisals report (owner, 2026-11-01): 1 also takes the report
+    number and follow-up; 3 "Unit details" (licence plate, limit of
+    insurance, coverage, deductible, reading, pre-existing damage) and
+    4 "More units" (each unit with its own photos and research) follow the
+    photos; market, contacts and comments become 5 to 7.
   */
   return (
     <form className="flex min-h-full flex-col" onSubmit={onSubmit}>
@@ -351,6 +379,14 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
             </SalvageField>
             <SalvageField id="salvage-next-report-due" label="Next Report Due">
               <input id="salvage-next-report-due" type="date" className={FIELD_CLASS} value={details.next_report_due} onChange={(e) => handleChange("next_report_due", e.target.value)} />
+            </SalvageField>
+            <SalvageField id="salvage-report-number" label="Report number">
+              <select id="salvage-report-number" className={FIELD_CLASS} value={String(details.report_number || 1)} onChange={(e) => handleChange("report_number", e.target.value)}>
+                {["One", "Two", "Three", "Four", "Five", "Six"].map((word, index) => <option key={word} value={index + 1}>Report {word}</option>)}
+              </select>
+            </SalvageField>
+            <SalvageField id="salvage-follow-up" label="Follow-up">
+              <input id="salvage-follow-up" className={FIELD_CLASS} value={details.follow_up || ""} maxLength={300} placeholder="Upon Request" onChange={(e) => handleChange("follow_up", e.target.value)} />
             </SalvageField>
             <SalvageField id="salvage-language" label="Language">
               <select id="salvage-language" className={FIELD_CLASS} value={details.language || "en"} onChange={(e) => handleChange("language", e.target.value as any)}>
@@ -448,7 +484,24 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection step={3} title="Canadian market & loss details" description="Enter verified facts; leave anything unknown blank. Market and date identify the comparable search area. A documented brand must match the registration or inspection evidence—it must not be guessed from damage." icon={<MapPin />}>
+        <CollapsibleSection step={3} title="Unit details" description="As the appraisal report prints them for this unit. Leave anything that does not apply blank; it prints as N/A." icon={<ClipboardList />} optional>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-3">
+            {UNIT_ONE_FIELDS.map(([key, label, placeholder]) => (
+              <SalvageField key={key} id={`salvage-${key}`} label={label}>
+                <input id={`salvage-${key}`} className={FIELD_CLASS} value={String(details[key] ?? "")} placeholder={placeholder || undefined} onChange={(e) => handleChange(key, e.target.value)} />
+              </SalvageField>
+            ))}
+            <SalvageField id="salvage-pre-existing-damage" label="Pre-existing damage" span="full">
+              <textarea id="salvage-pre-existing-damage" rows={2} className={`${FIELD_CLASS} resize-y`} value={details.pre_existing_damage || ""} placeholder="None" onChange={(e) => handleChange("pre_existing_damage", e.target.value)} />
+            </SalvageField>
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection step={4} title="More units" description="One report can cover several units, such as a truck and its trailers or a row of grain bins. Each unit gets its own pages, value and reserve, and a total on the summary." icon={<Layers />} optional>
+          <SalvageUnitsEditor units={units} onChange={setUnits} disabled={submitting} />
+        </CollapsibleSection>
+
+        <CollapsibleSection step={5} title="Canadian market & loss details" description="Enter verified facts; leave anything unknown blank. Market and date identify the comparable search area. A documented brand must match the registration or inspection evidence—it must not be guessed from damage." icon={<MapPin />}>
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-3">
             {ASSESSMENT_CONTEXT_FIELDS.map((field) => (
               <SalvageField key={field.key} id={`salvage-${field.key}`} label={field.label}>
@@ -477,7 +530,7 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection step={4} title="Contacts" description="The appraiser, adjuster, insured and company named in the report." icon={<Users />}>
+        <CollapsibleSection step={6} title="Contacts" description="The appraiser, adjuster, insured and company named in the report." icon={<Users />}>
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-3">
             <SalvageField id="salvage-appraiser-name" label="Appraiser Name">
               <input id="salvage-appraiser-name" className={FIELD_CLASS} value={details.appraiser_name} onChange={(e) => handleChange("appraiser_name", e.target.value)} />
@@ -503,7 +556,7 @@ export default function SalvageForm({ onSuccess, onCancel, onSubmittingChange, o
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection step={5} title="Comments" description="Anything the reader of the report should know." icon={<MessageSquare />} optional>
+        <CollapsibleSection step={7} title="Comments" description="Anything the reader of the report should know." icon={<MessageSquare />} optional>
           <SalvageField id="salvage-appraiser-comments" label="Appraiser Comments">
             <textarea id="salvage-appraiser-comments" className={`${FIELD_CLASS} resize-y`} rows={3} value={details.appraiser_comments} onChange={(e) => handleChange("appraiser_comments", e.target.value)} />
           </SalvageField>

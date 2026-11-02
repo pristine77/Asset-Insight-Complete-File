@@ -138,7 +138,8 @@ describe("Salvage form upload/acceptance workflow", () => {
     expect(SalvageService.create).toHaveBeenCalledWith(expect.objectContaining({ currency: "CAD", assessment_inputs: expect.objectContaining({
       province: "ON", market: "Ottawa", effectiveDate: "2026-09-08", lossType: "Collision", documentedBrand: "Salvage", brandProvince: "ON",
       condition: null, damageDescription: "Front bumper damaged", currency: "CAD",
-    }) }), [], expect.any(Object));
+      // The fourth argument is the photos of units 2 onward (none here).
+    }) }), [], expect.any(Object), []);
     const inputs = vi.mocked(SalvageService.create).mock.calls[0][0].assessment_inputs;
     for (const key of ["year", "make", "model", "trim", "powertrain", "vin", "odometer", "odometerUnit"]) {
       expect(inputs).not.toHaveProperty(key);

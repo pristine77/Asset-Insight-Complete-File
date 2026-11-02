@@ -19,6 +19,7 @@ import { captureAuthSession, isAuthSessionCurrent, type AuthSessionSnapshot } fr
 import { UserService } from "@/services/user";
 import { useAuthContext } from "@/context/AuthContext";
 import { useOutlookCalendar } from "@/hooks/useOutlookCalendar";
+import AppraiserProfileSection from "@/components/settings/AppraiserProfileSection";
 
 const OutlookConnectionDialog = dynamic(
   () => import("@/components/outlook/OutlookConnectionDialog"),
@@ -506,6 +507,8 @@ export default function SettingsPage() {
               </button>
             </div>
           </section>
+
+          <AppraiserProfileSection profile={(user as any)?.appraiserProfile} onSaved={refresh} />
 
           <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)]">
             <div className="border-b border-[var(--app-border)] px-4 py-4 sm:px-5">

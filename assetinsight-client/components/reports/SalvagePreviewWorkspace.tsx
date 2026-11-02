@@ -14,6 +14,8 @@ import SalvageReportContextEditor from "./SalvageReportContextEditor";
 import styles from "./SalvagePreviewWorkspace.module.css";
 import ImageAnnotatorModal from "@/components/forms/salvage/ImageAnnotatorModal";
 import { DamageLoopOverlay, marksWithLoops, photoLoops } from "./SalvageDamageLoops";
+import { SalvageAppendicesPanel, SalvageAppraisalFields, SalvageUnitsPreview } from "./SalvageAppraisalEditor";
+import type { SalvageUnit } from "@/services/salvage";
 
 type Field = readonly [key: string, label: string, type?: "date" | "textarea" | "number" | "email", readOnly?: boolean];
 const REPORT_FIELDS: Field[] = [
@@ -288,6 +290,8 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
           {selection("priority_level", "Priority", [["High", "High"], ["Medium", "Medium"], ["Low", "Low"]])}
         </div></section>
         <SalvageReportContextEditor value={draft.report_context} language={scalar(draft.language)} disabled={!canEdit || conflict} onChange={value => update("report_context", value)} />
+        {/* The full MCD Appraisals report (owner, 2026-11-01): front sheet and unit 1's appraisal fields. */}
+        <SalvageAppraisalFields draft={draft} update={update} disabled={!canEdit || conflict} researched={Boolean(assessment)} appendices={report.appendices || []} />
         {assessment ? <SalvageAssessmentEditor assessment={assessment} inputs={draft.assessment_inputs || assessment.inputs}
           disabled={!canEdit || conflict} onChange={(inputs) => update("assessment_inputs", inputs)} photos={photos} onViewPhoto={setPhoto} /> : <>
         {section("Vehicle & condition", VEHICLE_FIELDS)}
@@ -303,16 +307,21 @@ export default function SalvagePreviewWorkspace({ reportId }: { reportId: string
         {estimates("repair_items", "Repair parts", PART_FIELDS)}
         {estimates("labour_breakdown", "Labour estimate", LABOUR_FIELDS)}
         </>}
+        <SalvageUnitsPreview units={Array.isArray(draft.additional_units) ? draft.additional_units as SalvageUnit[] : []}
+          onChange={(units) => update("additional_units", units)} disabled={!canEdit || conflict} appendices={report.appendices || []} />
         {section("Procurement & safety", NOTES_FIELDS)}
         {section("Appraiser & company", CONTACT_FIELDS)}
         {!assessment && Object.keys(analysis).length ? <section className={styles.section}><details><summary className="cursor-pointer text-sm font-semibold">Original analysis (read-only)</summary><dl className={`${styles.analysis} mt-3`}>{Object.entries(analysis).filter(([, value]) => typeof value === "string" || typeof value === "number").map(([key, value]) => <div key={key} className="contents"><dt>{key.replaceAll("_", " ")}</dt><dd>{scalar(value)}</dd></div>)}</dl></details></section> : null}
       </> : null}
-      <section className={styles.section}><h2>Photos ({photos.length})</h2><p className={`${styles.muted} mb-3`}>Original report photos are preserved. Open a photo to see its damage loops, or to mark or change them; Save changes keeps them, the report prints them, and Research again inspects the marked areas.</p><div className={styles.photos}>{photos.map((url, index) => {
+      <section className={styles.section}><h2>{Array.isArray(draft.additional_units) && draft.additional_units.length ? "Unit 1 photos" : "Photos"} ({photos.length})</h2><p className={`${styles.muted} mb-3`}>Original report photos are preserved. Open a photo to see its damage loops, or to mark or change them; Save changes keeps them, the report prints them, and Research again inspects the marked areas.</p><div className={styles.photos}>{photos.map((url, index) => {
         const loops = photoLoops(damageMarks, index);
         return <button key={`${url}-${index}`} type="button" className={`${styles.photo} relative`} onClick={() => setPhoto(index)} aria-label={`View photo ${index + 1}`}><img src={url} alt={`Report photo ${index + 1}`} loading="lazy" />
           {loops.length ? <span className="absolute left-1.5 top-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm" style={{ background: "#dc2626" }}>{loops.length} damage {loops.length === 1 ? "area" : "areas"}</span> : null}
           <span>Photo {index + 1}</span></button>;
       })}</div></section>
+      {/* Appendices change with their own requests; a pending preview edit keeps its base revision. */}
+      <SalvageAppendicesPanel report={report} disabled={processing || Boolean(busy) || conflict}
+        onReport={(next) => setReport((old) => (old && dirtyRef.current ? { ...next, revision: old.revision } : next))} />
       <section className={styles.section}><h2>Report files</h2><p className={`${styles.muted} mb-3`}>{dirty ? "Save and submit your changes to generate updated files." : report.downloadable ? "Available files for this saved report." : processing ? "Files will appear after generation, approval and release are complete." : "Downloads become available after the required approval and release. Use Submit to generate a preview's report files."}</p><div className={styles.actions}>{FILES.map(([kind, label]) => <button key={kind} type="button" className="app-button" disabled={!report.downloadable || !report.files?.[kind] || processing || dirty || Boolean(busy) || Boolean(downloading)} onClick={() => void download(report.files![kind]!, kind)}>{downloading === kind ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />} {label}</button>)}</div></section>
       <footer className={styles.footer}><span role="status" className={styles.muted}>{busy ? "Please wait until this request finishes. Do not close the page." : dirty ? "Unsaved changes" : `Saved revision ${report.revision ?? "—"}`}</span><div className={styles.actions}>
         <button type="button" className="app-button" disabled={!canEdit || dirty || conflict || refreshing || failed} onClick={() => void run("research")}><RefreshCw className="size-4" /> Research again</button>

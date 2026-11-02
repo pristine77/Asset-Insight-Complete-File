@@ -57,4 +57,37 @@ export const UserService = {
     const { data } = await API.delete<AuthUser>("/user/avatar");
     return data;
   },
+
+  /*
+    Appraiser profile printed on Salvage appraisal reports (owner, 2026-11-01:
+    "Profile, set once"): designation and title, a signature image and a CV PDF.
+  */
+  async updateAppraiserProfile(payload: { designation?: string; title?: string }): Promise<AuthUser> {
+    const { data } = await API.patch<AuthUser>("/user/appraiser-profile", payload);
+    return data;
+  },
+
+  async uploadAppraiserSignature(file: File): Promise<AuthUser> {
+    const body = new FormData();
+    body.append("signature", file);
+    const { data } = await API.post<AuthUser>("/user/appraiser-profile/signature", body);
+    return data;
+  },
+
+  async deleteAppraiserSignature(): Promise<AuthUser> {
+    const { data } = await API.delete<AuthUser>("/user/appraiser-profile/signature");
+    return data;
+  },
+
+  async uploadAppraiserCvPdf(file: File): Promise<AuthUser> {
+    const body = new FormData();
+    body.append("cv", file);
+    const { data } = await API.post<AuthUser>("/user/appraiser-profile/cv", body);
+    return data;
+  },
+
+  async deleteAppraiserCvPdf(): Promise<AuthUser> {
+    const { data } = await API.delete<AuthUser>("/user/appraiser-profile/cv");
+    return data;
+  },
 };
