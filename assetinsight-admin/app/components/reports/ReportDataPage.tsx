@@ -14,7 +14,10 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
-import AssetScheduleSheet from "@/app/components/reports/AssetScheduleSheet";
+import AssetScheduleSheet, {
+  type AssetSheetPreviewOrigin,
+  type AssetSheetSaveOutcome,
+} from "@/app/components/reports/AssetScheduleSheet";
 import ReportLotNavigationControls from "@/app/components/reports/ReportLotNavigationControls";
 import { lotPreviewDisplay, usesLotTitleDescription } from "@/lib/lotPreviewDisplay";
 import SalvageReportEnrichment from "@/app/components/reports/SalvageReportEnrichment";
@@ -481,11 +484,36 @@ function ReportDataPanel({
 
 export type { ReportPreviewPayload } from "@/app/components/reports/reportPreviewTypes";
 
+/**
+ * How often an open Proposal Valuation looks for someone else's save (owner,
+ * 2026-11-03: "the 30-second check" instead of a live connection, so the
+ * Asset Insight server is not changed). Only while the page is on screen and
+ * not saving; each check reads the report preview once.
+ */
+const PV_CHECK_INTERVAL_MS = 30_000;
+
+async function fetchReportPreview(reportId: string, signal?: AbortSignal): Promise<ReportPreviewPayload> {
+  const response = await fetch(`/api/admin/reports/${encodeURIComponent(reportId)}/preview`, {
+    cache: "no-store",
+    signal,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error((payload as { message?: string })?.message || "Failed to load report data");
+  }
+  return payload as ReportPreviewPayload;
+}
+
 export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: ReportDataPageProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReportPreviewPayload | null>(null);
+  const [previewOrigin, setPreviewOrigin] = useState<AssetSheetPreviewOrigin>({ kind: "load" });
+  // Read by the save and the 30-second check without waiting for a render.
+  const previewRef = useRef<ReportPreviewPayload | null>(null);
+  const savingRef = useRef(false);
+  const sheetDirtyRef = useRef(false);
   const [savingAssetSheet, setSavingAssetSheet] = useState(false);
   const [assetSheetSaveError, setAssetSheetSaveError] = useState<string | null>(null);
   const [assetSheetSaveSuccess, setAssetSheetSaveSuccess] = useState<string | null>(null);
@@ -497,31 +525,30 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
     router.prefetch(returnTo);
   }, [returnTo, router]);
 
+  const showPreview = useCallback((next: ReportPreviewPayload | null, origin: AssetSheetPreviewOrigin) => {
+    previewRef.current = next;
+    setPreview(next);
+    setPreviewOrigin(origin);
+  }, []);
+
+  const handleSheetDirtyChange = useCallback((dirty: boolean) => {
+    sheetDirtyRef.current = dirty;
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
 
     async function loadPreview() {
       setLoading(true);
       setError(null);
-      setPreview(null);
+      showPreview(null, { kind: "load" });
       setAssetSheetSaveError(null);
       setAssetSheetSaveSuccess(null);
       setAssetSheetSaveWarning(null);
 
       try {
-        const response = await fetch(`/api/admin/reports/${encodeURIComponent(reportId)}/preview`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(
-            (payload as { message?: string })?.message || "Failed to load report data"
-          );
-        }
-
-        const nextPreview = payload as ReportPreviewPayload;
-        setPreview(nextPreview);
+        const nextPreview = await fetchReportPreview(reportId, controller.signal);
+        showPreview(nextPreview, { kind: "load" });
         setSelectedLot(0);
         setActiveTab(
           pvOnly || nextPreview.variant === "assetScheduleSheet" ? "schedule" : "data"
@@ -536,14 +563,16 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
 
     void loadPreview();
     return () => controller.abort();
-  }, [pvOnly, reportId]);
+  }, [pvOnly, reportId, showPreview]);
 
   const saveAssetScheduleSheet = useCallback(
-    async (assetScheduleSheet: AssetAdminScheduleSheet): Promise<boolean> => {
+    async (assetScheduleSheet: AssetAdminScheduleSheet): Promise<AssetSheetSaveOutcome> => {
+      savingRef.current = true;
       setSavingAssetSheet(true);
       setAssetSheetSaveError(null);
       setAssetSheetSaveSuccess(null);
       setAssetSheetSaveWarning(null);
+      const baseRevision = previewRef.current?.revision;
 
       try {
         const response = await fetch(
@@ -553,30 +582,37 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               assetScheduleSheet,
-              ...(typeof preview?.revision === "number"
-                ? { baseRevision: preview.revision }
-                : {}),
+              ...(typeof baseRevision === "number" ? { baseRevision } : {}),
             }),
           }
         );
         const payload = await response.json().catch(() => ({}));
-        if (response.status === 409) {
-          const conflict = payload as { code?: string; message?: string; currentRevision?: number };
-          throw new Error(
-            conflict.code === "PV_REVISION_CONFLICT"
-              ? "Another user saved newer Proposal Valuation changes. Reload this page before continuing."
-              : conflict.message || "Proposal Valuation changed in another session. Reload and try again."
-          );
+        if (response.status === 409 && (payload as { code?: string }).code === "PV_REVISION_CONFLICT") {
+          // Someone else saved first. The server refused the whole sheet so
+          // their work is not overwritten. Load their copy: the sheet puts
+          // these edits on top of it and saves again. Never reload the page,
+          // which is what lost file 95099's appraisal (2026-11-03).
+          let latest: ReportPreviewPayload;
+          try {
+            latest = await fetchReportPreview(reportId);
+          } catch {
+            throw new Error(
+              "Someone else saved changes to this file, and their version could not be loaded. Your changes are still on this page. Press Save changes again."
+            );
+          }
+          showPreview(latest, { kind: "newer", afterRefusedSave: true });
+          return "conflict";
         }
         if (!response.ok) {
           throw new Error(
-            (payload as { message?: string })?.message ||
-              "Failed to save asset schedule sheet"
+            `${String((payload as { message?: string })?.message || "The changes could not be saved")
+              .trim()
+              .replace(/[.!]?$/, ".")} Your changes are still on this page.`
           );
         }
 
         const nextPreview = payload as ReportPreviewPayload;
-        setPreview(nextPreview);
+        showPreview(nextPreview, { kind: "own-save", submitted: assetScheduleSheet });
         if (nextPreview.files_regeneration_warning) {
           setAssetSheetSaveWarning(nextPreview.files_regeneration_warning);
         } else {
@@ -588,18 +624,63 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
                 : "Changes saved."
           );
         }
-        return true;
+        return "saved";
       } catch (saveError) {
         setAssetSheetSaveError(
-          saveError instanceof Error ? saveError.message : "Failed to save asset schedule sheet"
+          saveError instanceof Error
+            ? saveError.message
+            : "The changes could not be saved. Your changes are still on this page."
         );
-        return false;
+        return "failed";
       } finally {
+        savingRef.current = false;
         setSavingAssetSheet(false);
       }
     },
-    [preview?.revision, reportId]
+    [reportId, showPreview]
   );
+
+  // The 30-second check for someone else's save. A newer copy goes to the
+  // sheet, which shows their changes and keeps any unsaved edits on top, so a
+  // later Save is not refused. Skipped while hidden or saving; a failed check
+  // is simply tried again next time.
+  const hasProposalValuation = Boolean(preview?.assetScheduleSheet);
+  useEffect(() => {
+    if (!hasProposalValuation) return;
+    let stopped = false;
+    let inFlight: AbortController | null = null;
+
+    const check = async () => {
+      if (stopped || inFlight || savingRef.current || document.visibilityState === "hidden") return;
+      const controller = new AbortController();
+      inFlight = controller;
+      try {
+        const latest = await fetchReportPreview(reportId, controller.signal);
+        // A save that started meanwhile brings its own copy back.
+        if (stopped || savingRef.current) return;
+        const known = previewRef.current?.revision ?? 0;
+        if (typeof latest.revision === "number" && latest.revision > known) {
+          showPreview(latest, { kind: "newer" });
+        }
+      } catch {
+        // Offline or a brief server error: the next check tries again.
+      } finally {
+        if (inFlight === controller) inFlight = null;
+      }
+    };
+
+    const timer = window.setInterval(() => void check(), PV_CHECK_INTERVAL_MS);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      inFlight?.abort();
+    };
+  }, [hasProposalValuation, reportId, showPreview]);
 
   const reportData = useMemo(
     () => (preview?.data && typeof preview.data === "object" ? preview.data : {}),
@@ -661,7 +742,17 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
         <Button
           color="inherit"
           startIcon={<ArrowLeft size={18} strokeWidth={1.8} />}
-          onClick={() => router.push(returnTo)}
+          onClick={() => {
+            if (
+              sheetDirtyRef.current &&
+              !window.confirm(
+                "Leave without saving? Your unsaved Proposal Valuation changes stay in this browser and come back when you reopen this file."
+              )
+            ) {
+              return;
+            }
+            router.push(returnTo);
+          }}
           sx={{
             minHeight: 40,
             mb: pvOnly ? 0.25 : { xs: 1, sm: 1.5 },
@@ -789,11 +880,13 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
               >
                 <AssetScheduleSheet
                   preview={preview}
+                  previewOrigin={previewOrigin}
                   saving={savingAssetSheet}
                   saveError={assetSheetSaveError}
                   saveSuccess={assetSheetSaveSuccess}
                   saveWarning={assetSheetSaveWarning}
                   onSave={saveAssetScheduleSheet}
+                  onDirtyChange={handleSheetDirtyChange}
                   pageMode
                 />
               </Box>

@@ -23,6 +23,7 @@ import {
   AccordionDetails,
   AccordionSummary,
   Alert,
+  alpha,
   Autocomplete,
   Avatar,
   Box,
@@ -76,17 +77,73 @@ import {
   makeEvaluatorColumnId,
   recalculateAssetScheduleSheet,
 } from "@/app/components/reports/assetScheduleSheetUtils";
+import {
+  assignCellValue,
+  type CellOverlap,
+  type CellValue,
+  cellValue,
+  changedCellKeys,
+  describeCell,
+  draftStorageKey,
+  parseStoredDraft,
+  rebaseEdits,
+  sheetEdits,
+  type StoredDraft,
+  tableCellKey,
+} from "@/app/components/reports/proposalValuationDraft";
+
+/** What a save came to: stored, refused because someone else saved first, or failed. */
+export type AssetSheetSaveOutcome = "saved" | "conflict" | "failed";
+
+/**
+ * Why the page was handed a new saved copy. "own-save" carries the sheet that
+ * was sent, so edits typed while it was saving stay unsaved; "newer" is
+ * someone else's save, found by the 30-second check or by a refused save.
+ */
+export type AssetSheetPreviewOrigin =
+  | { kind: "load" }
+  | { kind: "own-save"; submitted: AssetAdminScheduleSheet }
+  | { kind: "newer"; afterRefusedSave?: boolean };
 
 type AssetScheduleSheetProps = {
   preview: ReportPreviewPayload;
+  previewOrigin?: AssetSheetPreviewOrigin;
   saving: boolean;
   saveError: string | null;
   saveSuccess: string | null;
   saveWarning: string | null;
-  onSave: (sheet: AssetAdminScheduleSheet) => Promise<boolean>;
+  onSave: (sheet: AssetAdminScheduleSheet) => Promise<AssetSheetSaveOutcome>;
+  onDirtyChange?: (dirty: boolean) => void;
   onClose?: () => void;
   pageMode?: boolean;
 };
+
+/** A refused save is merged and sent again by itself at most this many times. */
+const MAX_AUTOMATIC_SAVE_RETRIES = 3;
+
+type SheetNotice = { severity: "success" | "info" | "warning"; text: string };
+
+function formatCellValue(value: CellValue | undefined) {
+  if (value === null || value === undefined || value === "") return "blank";
+  if (typeof value === "number") return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
+  return value.length > 60 ? `${value.slice(0, 57)}…` : value;
+}
+
+function readStoredDraft(reportId: string): StoredDraft | null {
+  try {
+    return parseStoredDraft(window.localStorage.getItem(draftStorageKey(reportId)), reportId);
+  } catch {
+    return null;
+  }
+}
+
+function removeStoredDraft(reportId: string) {
+  try {
+    window.localStorage.removeItem(draftStorageKey(reportId));
+  } catch {
+    // Storage blocked: nothing was kept, so nothing to remove.
+  }
+}
 
 type AssetSheetTab = "scheduleA" | "fileSummary";
 
@@ -276,11 +333,13 @@ const NumericDraftField = memo(function NumericDraftField({
       }}
       onBlur={commitDraft}
       onKeyDown={(event) => {
-        if (event.key === "Enter") event.currentTarget.blur();
+        // event.target is the input; currentTarget is MUI's wrapper <div>,
+        // whose blur() did nothing, so Enter never finished the entry.
+        if (event.key === "Enter") (event.target as HTMLElement).blur();
         if (event.key === "Escape") {
           revertOnBlurRef.current = true;
           setDraft(numericDraftValue(value));
-          event.currentTarget.blur();
+          (event.target as HTMLElement).blur();
         }
       }}
       placeholder="0.00"
@@ -510,11 +569,12 @@ const TextDraftField = memo(function TextDraftField({
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commitDraft}
       onKeyDown={(event) => {
-        if (!multiline && event.key === "Enter") event.currentTarget.blur();
+        // The input itself, not MUI's wrapper <div> (see NumericDraftField).
+        if (!multiline && event.key === "Enter") (event.target as HTMLElement).blur();
         if (event.key === "Escape") {
           revertOnBlurRef.current = true;
           setDraft(value);
-          event.currentTarget.blur();
+          (event.target as HTMLElement).blur();
         }
       }}
       multiline={multiline}
@@ -958,11 +1018,13 @@ function SummaryInput({
 
 export default function AssetScheduleSheet({
   preview,
+  previewOrigin,
   saving,
   saveError,
   saveSuccess,
   saveWarning,
   onSave,
+  onDirtyChange,
   onClose,
   pageMode = false,
 }: AssetScheduleSheetProps) {
@@ -986,30 +1048,197 @@ export default function AssetScheduleSheet({
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const sheetRef = useRef(sheet);
-  const reportIdRef = useRef(preview.reportId);
   const dirtyRef = useRef(false);
+  // The saved copy this page's edits are measured against, and its revision.
+  // Unsaved edits are always "this page minus base", so a newer saved copy can
+  // take the base's place with the edits re-applied on top of it.
+  const baseRef = useRef<{ reportId: string | undefined; sheet: AssetAdminScheduleSheet | null; revision: number }>({
+    reportId: undefined,
+    sheet: null,
+    revision: -1,
+  });
+  const adoptedPreviewRef = useRef<ReportPreviewPayload | null>(null);
+  const saveAttemptRef = useRef(0);
+  const handleSaveRef = useRef<(attempt?: number) => Promise<void>>(async () => {});
+  const draftTimerRef = useRef<number | null>(null);
+  const [overlaps, setOverlaps] = useState<CellOverlap[]>([]);
+  const [droppedEdits, setDroppedEdits] = useState(0);
+  const [othersChanged, setOthersChanged] = useState<{ keys: Set<string>; at: Date } | null>(null);
+  const [restoredDraft, setRestoredDraft] = useState<{ cells: number; savedAt: string } | null>(null);
+  const [sheetNotice, setSheetNotice] = useState<SheetNotice | null>(null);
+  const [draftBackupFailed, setDraftBackupFailed] = useState(false);
+
+  /** Keep this browser's copy of the unsaved edits in step with the page. */
+  const writeDraftNow = useCallback(() => {
+    if (draftTimerRef.current !== null) {
+      window.clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+    const { reportId, sheet: base, revision } = baseRef.current;
+    const current = sheetRef.current;
+    if (!reportId) return;
+    const edits = dirtyRef.current && base && current ? sheetEdits(base, current) : [];
+    if (!edits.length) {
+      removeStoredDraft(reportId);
+      return;
+    }
+    const draft: StoredDraft = { version: 1, reportId, revision, savedAt: new Date().toISOString(), edits };
+    try {
+      window.localStorage.setItem(draftStorageKey(reportId), JSON.stringify(draft));
+      setDraftBackupFailed(false);
+    } catch {
+      // Storage full or blocked: the page still works, without the backup.
+      setDraftBackupFailed(true);
+    }
+  }, []);
+
+  const scheduleDraftWrite = useCallback(() => {
+    if (draftTimerRef.current !== null) window.clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = window.setTimeout(writeDraftNow, 400);
+  }, [writeDraftNow]);
+
+  // A new saved copy arrived: the first one for this report, the result of
+  // this page's own save, or someone else's newer save.
+  useEffect(() => {
+    if (adoptedPreviewRef.current === preview) return;
+    adoptedPreviewRef.current = preview;
+    const latest = preview.assetScheduleSheet ? cloneAssetScheduleSheet(preview.assetScheduleSheet) : null;
+    const revision = typeof preview.revision === "number" ? preview.revision : 0;
+    const base = baseRef.current;
+
+    if (base.reportId !== preview.reportId || !base.sheet || !latest) {
+      // First copy of this report: start from it, then bring back any edits
+      // this browser kept from an earlier visit.
+      if (base.reportId !== undefined && base.reportId !== preview.reportId) {
+        setActiveTab("scheduleA");
+        setSelectedMobileLot(0);
+        setPagination((current) => ({ ...current, pageIndex: 0 }));
+        setEvaluatorQuery("");
+        setDebouncedEvaluatorQuery("");
+        setExportError(null);
+      }
+      baseRef.current = { reportId: preview.reportId, sheet: latest, revision };
+      setOverlaps([]);
+      setDroppedEdits(0);
+      setOthersChanged(null);
+      setRestoredDraft(null);
+      setSheetNotice(null);
+      let next = latest;
+      let dirty = false;
+      const stored = latest && preview.reportId ? readStoredDraft(preview.reportId) : null;
+      if (stored && latest) {
+        const restored = rebaseEdits(latest, stored.edits);
+        if (restored.pending.length) {
+          next = recalculateAssetScheduleSheet(restored.sheet);
+          dirty = true;
+          setOverlaps(restored.overlaps);
+          setDroppedEdits(restored.dropped.length);
+          setRestoredDraft({
+            cells: restored.pending.filter((edit) => edit.kind === "cell").length,
+            savedAt: stored.savedAt,
+          });
+        } else if (preview.reportId) {
+          removeStoredDraft(preview.reportId);
+        }
+      }
+      sheetRef.current = next;
+      setSheet(next);
+      dirtyRef.current = dirty;
+      setSheetDirty(dirty);
+      return;
+    }
+
+    const submitted = previewOrigin?.kind === "own-save" ? previewOrigin.submitted : null;
+    if (!submitted && revision <= base.revision) return;
+    // Edits still unsaved: typed after the save was sent, or not saved yet.
+    const startedFrom = submitted ?? base.sheet;
+    const current = sheetRef.current ?? startedFrom;
+    const edits = submitted || dirtyRef.current ? sheetEdits(startedFrom, current) : [];
+    const result = rebaseEdits(latest, edits);
+    const next = result.pending.length ? recalculateAssetScheduleSheet(result.sheet) : latest;
+    const dirty = result.pending.length > 0;
+    baseRef.current = { reportId: preview.reportId, sheet: latest, revision };
+    sheetRef.current = next;
+    setSheet(next);
+    dirtyRef.current = dirty;
+    setSheetDirty(dirty);
+    scheduleDraftWrite();
+
+    if (submitted) {
+      // Saved: overlaps were decided by saving, and a restored copy is stored.
+      setOverlaps([]);
+      setDroppedEdits(0);
+      setRestoredDraft(null);
+      return;
+    }
+
+    const changed = changedCellKeys(base.sheet, latest);
+    if (changed.size) {
+      setOthersChanged((previous) => ({
+        keys: new Set([...(previous?.keys ?? []), ...changed]),
+        at: new Date(),
+      }));
+    }
+    const pendingKeys = new Set(
+      result.pending.flatMap((edit) => (edit.kind === "cell" ? [edit.key] : []))
+    );
+    setOverlaps((previous) => {
+      const byKey = new Map(previous.filter((overlap) => pendingKeys.has(overlap.key)).map((overlap) => [overlap.key, overlap]));
+      for (const overlap of result.overlaps) byKey.set(overlap.key, overlap);
+      return [...byKey.values()];
+    });
+    if (result.dropped.length) setDroppedEdits((count) => count + result.dropped.length);
+
+    if (previewOrigin?.kind === "newer" && previewOrigin.afterRefusedSave) {
+      // The refused save's edits now sit on top of the newer copy. Send them
+      // again unless the other person changed some of the same cells, which
+      // this person should look at first.
+      const attempt = saveAttemptRef.current + 1;
+      if (!dirty) {
+        setSheetNotice({ severity: "info", text: "Someone else saved this file first, with the same values you entered. Nothing else needed saving." });
+      } else if (result.overlaps.length || result.dropped.length) {
+        setSheetNotice({ severity: "warning", text: "Someone else saved this file while you were working. Your changes are kept on top of theirs. Check the cells listed below, then press Save changes." });
+      } else if (attempt <= MAX_AUTOMATIC_SAVE_RETRIES) {
+        window.setTimeout(() => void handleSaveRef.current(attempt), 0);
+      } else {
+        setSheetNotice({ severity: "warning", text: "This file keeps changing while you save. Your changes are still here; press Save changes again." });
+      }
+    }
+  }, [preview, previewOrigin, scheduleDraftWrite]);
 
   useEffect(() => {
-    const reportChanged = reportIdRef.current !== preview.reportId;
-    if (reportChanged || !dirtyRef.current) {
-      const nextSheet = preview.assetScheduleSheet
-        ? cloneAssetScheduleSheet(preview.assetScheduleSheet)
-        : null;
-      sheetRef.current = nextSheet;
-      setSheet(nextSheet);
-    }
-    if (reportChanged) {
-      reportIdRef.current = preview.reportId;
-      dirtyRef.current = false;
-      setSheetDirty(false);
-      setActiveTab("scheduleA");
-      setSelectedMobileLot(0);
-      setPagination((current) => ({ ...current, pageIndex: 0 }));
-      setEvaluatorQuery("");
-      setDebouncedEvaluatorQuery("");
-      setExportError(null);
-    }
-  }, [preview.assetScheduleSheet, preview.reportId]);
+    onDirtyChange?.(sheetDirty);
+  }, [onDirtyChange, sheetDirty]);
+
+  // Unsaved edits: ask before the page is refreshed or closed, and keep the
+  // browser copy current when the tab is hidden or the page is left.
+  useEffect(() => {
+    // A number still in its box counts only once the box is left; leave it
+    // now so the last entry is in the warning and the browser copy too.
+    const finishTyping = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur();
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      finishTyping();
+      writeDraftNow();
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") return;
+      finishTyping();
+      writeDraftNow();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      writeDraftNow();
+    };
+  }, [writeDraftNow]);
 
   useEffect(() => {
     const timeout = window.setTimeout(
@@ -1097,14 +1326,19 @@ export default function AssetScheduleSheet({
     const current = sheetRef.current;
     if (!current) return;
 
-    dirtyRef.current = true;
-    setSheetDirty(true);
     // Keep the ref current synchronously so a Save click immediately following
     // an input blur always includes that field's last edit.
     const nextSheet = recalculateAssetScheduleSheet(mutator(cloneAssetScheduleSheet(current)));
     sheetRef.current = nextSheet;
     setSheet(nextSheet);
-  }, []);
+    // Unsaved only while something differs from the saved copy, so typing a
+    // value back to what it was clears the warning and the browser copy.
+    const base = baseRef.current.sheet;
+    const dirty = base ? sheetEdits(base, nextSheet).length > 0 : true;
+    dirtyRef.current = dirty;
+    setSheetDirty(dirty);
+    scheduleDraftWrite();
+  }, [scheduleDraftWrite]);
 
   const addEvaluator = useCallback((option: AssetAdminScheduleEvaluatorOption) => {
     updateSheet((draft) => {
@@ -1179,17 +1413,65 @@ export default function AssetScheduleSheet({
   );
   const linkedEvaluatorLimitReached = sheet ? additionalEvaluatorIds(sheet, preview.ownerColumnId).size >= 4 : false;
 
-  async function handleSave() {
+  // The page takes the saved copy from the result (previewOrigin "own-save");
+  // a refused save comes back as a newer copy, merged above and sent again.
+  const handleSave = useCallback(async (attempt = 0) => {
     const current = sheetRef.current;
     if (!current) return;
-    const payload = recalculateAssetScheduleSheet(current);
-    const saved = await onSave(payload);
-    if (!saved) return;
+    if (attempt === 0) setSheetNotice(null);
+    saveAttemptRef.current = attempt;
+    const outcome = await onSave(recalculateAssetScheduleSheet(current));
+    if (outcome === "saved" && attempt > 0) {
+      setSheetNotice({
+        severity: "success",
+        text: "Someone else saved this file while you were working. Your changes were added on top of theirs and saved.",
+      });
+    }
+  }, [onSave]);
+
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
+
+  const keepTheirs = useCallback((keys: readonly string[]) => {
+    const byKey = new Map(overlaps.map((overlap) => [overlap.key, overlap]));
+    updateSheet((draft) => {
+      for (const key of keys) {
+        const overlap = byKey.get(key);
+        if (overlap) assignCellValue(draft, key, overlap.theirs);
+      }
+      return draft;
+    });
+    setOverlaps((current) => current.filter((overlap) => !keys.includes(overlap.key)));
+  }, [overlaps, updateSheet]);
+
+  const discardChanges = useCallback(() => {
+    if (!window.confirm("Discard your unsaved changes to this Proposal Valuation? This cannot be undone.")) return;
+    const base = baseRef.current.sheet;
+    const next = base ? cloneAssetScheduleSheet(base) : null;
+    sheetRef.current = next;
+    setSheet(next);
     dirtyRef.current = false;
     setSheetDirty(false);
-    sheetRef.current = payload;
-    setSheet(payload);
-  }
+    setOverlaps([]);
+    setDroppedEdits(0);
+    setRestoredDraft(null);
+    setSheetNotice(null);
+    writeDraftNow();
+  }, [writeDraftNow]);
+
+  // Overlaps the person has since resolved (typed their value again, or
+  // matched theirs) drop out of the list.
+  const openOverlaps = useMemo(() => {
+    if (!sheet) return [];
+    return overlaps.flatMap((overlap) => {
+      const yours = cellValue(sheet, overlap.key);
+      if (yours === undefined || yours === overlap.theirs) return [];
+      const { lot, field } = describeCell(sheet, overlap.key);
+      return [{ ...overlap, yours, lot, field }];
+    });
+  }, [overlaps, sheet]);
+  const overlapKeys = useMemo(() => new Set(openOverlaps.map((overlap) => overlap.key)), [openOverlaps]);
 
   const exportProposalValuation = useCallback(async () => {
     if (saving || exporting || dirtyRef.current) return;
@@ -2042,6 +2324,100 @@ export default function AssetScheduleSheet({
             {saveWarning}
           </Alert>
         ) : null}
+        {sheetNotice ? (
+          <Alert
+            severity={sheetNotice.severity}
+            onClose={() => setSheetNotice(null)}
+            sx={{ mx: 2, my: 1, borderRadius: 1 }}
+          >
+            {sheetNotice.text}
+          </Alert>
+        ) : null}
+        {restoredDraft && sheetDirty ? (
+          <Alert
+            severity="info"
+            sx={{ mx: 2, my: 1, borderRadius: 1 }}
+            action={
+              <Button color="inherit" size="small" onClick={discardChanges} sx={{ textTransform: "none" }}>
+                Discard them
+              </Button>
+            }
+          >
+            Unsaved changes from{" "}
+            {new Date(restoredDraft.savedAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}{" "}
+            were brought back from this browser
+            {restoredDraft.cells ? ` (${restoredDraft.cells} ${restoredDraft.cells === 1 ? "cell" : "cells"})` : ""}.
+            Press Save changes to keep them.
+          </Alert>
+        ) : null}
+        {othersChanged ? (
+          <Alert
+            severity="info"
+            onClose={() => setOthersChanged(null)}
+            sx={{ mx: 2, my: 1, borderRadius: 1 }}
+          >
+            Someone else saved changes to this file at{" "}
+            {othersChanged.at.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" }).replace(/\.$/, "")}.{" "}
+            {othersChanged.keys.size === 1 ? "The changed cell is" : `The ${othersChanged.keys.size} changed cells are`}{" "}
+            highlighted in blue
+            {sheetDirty ? "; your unsaved changes are kept on top of theirs" : ""}.
+          </Alert>
+        ) : null}
+        {openOverlaps.length ? (
+          <Alert
+            severity="warning"
+            sx={{ mx: 2, my: 1, borderRadius: 1, "& .MuiAlert-message": { width: "100%" } }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+              <span>
+                You and someone else both changed {openOverlaps.length === 1 ? "this cell" : `these ${openOverlaps.length} cells`} (outlined in orange).
+                Your value is kept and will be saved unless you keep theirs.
+              </span>
+              {openOverlaps.length > 1 ? (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => keepTheirs(openOverlaps.map((overlap) => overlap.key))}
+                  sx={{ flex: "0 0 auto", textTransform: "none" }}
+                >
+                  Keep all of theirs
+                </Button>
+              ) : null}
+            </Box>
+            <Box component="ul" sx={{ m: 0, mt: 0.75, pl: 2, maxHeight: 160, overflowY: "auto" }}>
+              {openOverlaps.map((overlap) => (
+                <Box component="li" key={overlap.key} sx={{ py: 0.25, fontSize: 13 }}>
+                  {overlap.lot ? `Lot ${overlap.lot}, ` : ""}
+                  {overlap.field}: theirs <strong>{formatCellValue(overlap.theirs)}</strong>, yours{" "}
+                  <strong>{formatCellValue(overlap.yours)}</strong>{" "}
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => keepTheirs([overlap.key])}
+                    sx={{ minHeight: 0, py: 0, textTransform: "none", textDecoration: "underline" }}
+                  >
+                    Keep theirs
+                  </Button>
+                </Box>
+              ))}
+            </Box>
+          </Alert>
+        ) : null}
+        {droppedEdits ? (
+          <Alert
+            severity="warning"
+            onClose={() => setDroppedEdits(0)}
+            sx={{ mx: 2, my: 1, borderRadius: 1 }}
+          >
+            {droppedEdits === 1 ? "One of your changes was" : `${droppedEdits} of your changes were`} for a lot or
+            evaluator that someone else has since removed, so {droppedEdits === 1 ? "it" : "they"} could not be kept.
+          </Alert>
+        ) : null}
+        {draftBackupFailed && sheetDirty ? (
+          <Alert severity="warning" sx={{ mx: 2, my: 1, borderRadius: 1 }}>
+            This browser could not keep a backup copy of your unsaved changes. Save them before leaving this page.
+          </Alert>
+        ) : null}
         {activeTab === "scheduleA" && !isCompactLayout && evaluatorOptionsError ? (
           <Alert severity="warning" sx={{ mx: 1.5, my: 0.75, py: 0, borderRadius: 1 }}>
             {evaluatorOptionsError}
@@ -2179,10 +2555,26 @@ export default function AssetScheduleSheet({
                         >
                           {row.getVisibleCells().map((cell) => {
                             const stickyAssetId = cell.column.id === "asset_id";
+                            const key = tableCellKey(row.original.lot_id, cell.column.id);
+                            const overlapping = key !== null && overlapKeys.has(key);
+                            const changedByOthers = key !== null && Boolean(othersChanged?.keys.has(key));
                             return (
                               <TableCell
                                 key={cell.id}
+                                data-pv-cell-state={overlapping ? "both-changed" : changedByOthers ? "changed-by-others" : undefined}
                                 sx={{
+                                  // Tripled selector: the row's striped and hover
+                                  // backgrounds would otherwise cover the highlight.
+                                  ...(overlapping || changedByOthers
+                                    ? {
+                                        "&&&": {
+                                          bgcolor: (theme) =>
+                                            alpha(overlapping ? theme.palette.warning.main : theme.palette.info.main, 0.12),
+                                          boxShadow: (theme) =>
+                                            `inset 0 0 0 2px ${overlapping ? theme.palette.warning.main : theme.palette.info.main}`,
+                                        },
+                                      }
+                                    : null),
                                   position: stickyAssetId ? "sticky" : "static",
                                   left: stickyAssetId ? 0 : "auto",
                                   zIndex: stickyAssetId ? 2 : "auto",
