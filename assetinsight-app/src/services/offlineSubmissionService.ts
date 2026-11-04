@@ -1,3 +1,4 @@
+import { assertOrdinaryReport } from './arrivalPhotoDraft';
 import NetInfo from '@react-native-community/netinfo';
 import AutoSaveService, { OfflineReportDraft } from './autoSaveService';
 import OfflineCaptureStore from './offlineCaptureStore';
@@ -11,6 +12,7 @@ import { UPLOAD_WAITING_FOR_CONNECTION } from './uploadResumePolicy';
  * (uploadAutoResume.ts, backgroundUploadManager.ts).
  */
 export async function prepareOfflineSubmission(draft: OfflineReportDraft) {
+  assertOrdinaryReport(draft.formData);
   const owner = OfflineCaptureStore.getOwnerId();
   if (!owner || draft.ownerId !== owner) throw new Error('Sign in to the account that owns this draft.');
   // Only a reported disconnect refuses here (2026-10-02). NetInfo's
@@ -25,6 +27,7 @@ export async function prepareOfflineSubmission(draft: OfflineReportDraft) {
   }
   const current = await AutoSaveService.getDraft(draft.id);
   if (!current) throw new Error('This draft is unavailable. Reopen Drafts before submitting.');
+  assertOrdinaryReport(current.formData);
   if (current.formData.legacyRequiresIncomingReview) throw new Error('This recovered draft needs its original Incoming assignment verified. Reopen Incoming before submitting; the local photos remain safe.');
   if (current.submissionState === 'accepted' || current.submissionState === 'submitted') {
     throw new Error('This upload was already accepted. Open Previews to review its processing status.');

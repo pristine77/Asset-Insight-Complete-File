@@ -1,3 +1,4 @@
+import { isArrivalPhotoDraft } from './arrivalPhotoDraft';
 import type { OfflineReportDraft } from './autoSaveService';
 import { pauseActiveUploads } from './uploadCancellation';
 
@@ -20,5 +21,5 @@ export function setDraftCaptureMode(id: string, mode: 'online' | 'offline') {
   }
 }
 export function allowsCloudDraft(draft: OfflineReportDraft) {
-  return !held.has(draft.id) && !draft.manualSubmissionRequired && !draft.formData.manualSubmissionRequired && draft.captureMode !== 'offline' && draft.formData.captureMode !== 'offline';
+  return !isArrivalPhotoDraft(draft.formData) && !held.has(draft.id) && !draft.manualSubmissionRequired && !draft.formData.manualSubmissionRequired && draft.captureMode !== 'offline' && draft.formData.captureMode !== 'offline';
 }

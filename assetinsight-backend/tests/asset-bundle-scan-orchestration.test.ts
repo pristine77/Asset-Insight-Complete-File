@@ -185,6 +185,17 @@ describe("Asset Bundle scan orchestration", () => {
     expect(lots.map((lot: any) => lot.lot_number)).toEqual(["157", "1000A"]);
     expect(lots.map((lot: any) => lot.analysis_metadata.bundle_lot_number_detection.numberSource)).toEqual(["first_main_photo", "first_main_photo"]);
   });
+  it.each(["modern", "legacy"])("%s preserves capture labels and original media through persistence and enrichment", async (mode) => {
+    const jobInput = input("mixed");
+    jobInput.details.mixed_lots!.forEach((group, index) => Object.assign(group, { capture_lot_id: `capture-${index}`, capture_lot_number: index ? "35A" : "27.1" }));
+    await (mode === "modern" ? runAssetPreviewJob : runAssetReportJob)(jobInput);
+    const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
+    const lots = mode === "modern" ? report.preview_data.lots : report.lots;
+    expect(mocks.detect.mock.calls[0][0]).toEqual([]);
+    expect(lots.map((lot: any) => lot.lot_number)).toEqual(["27.1", "35A"]);
+    expect(lots.map((lot: any) => lot.image_urls.length)).toEqual([104,15]);
+    expect(lots.map((lot: any) => lot.analysis_metadata.capture_lot_identity.id)).toEqual(["capture-0","capture-1"]);
+  });
   it.each(["modern", "legacy"])("%s keeps reviewed lot numbers and all source media without another sign scan", async (mode) => {
     const jobInput = input("mixed");
     (jobInput.details as any).smart_upload_grouping_method = "lot_number";
@@ -204,6 +215,7 @@ describe("Asset Bundle scan orchestration", () => {
       { mode: "per_item", count: 2, extra_count: 0, cover_index: 0 },
       { mode: "per_item", count: 2, extra_count: 0, cover_index: 0 },
     ];
+    jobInput.details.mixed_lots.forEach((group,index) => Object.assign(group, {capture_lot_id:`manual-${index}`,capture_lot_number:String(index+1)}));
     const sharedUrl = "https://assetinsight.test/shared-original.jpg";
     mocks.publicUrl.mockImplementation((key: string) =>
       /(\/00000[02]-|photo-[02]\.jpg$)/.test(key) ? sharedUrl : `https://assetinsight.test/${key}`,
@@ -227,6 +239,7 @@ describe("Asset Bundle scan orchestration", () => {
       { mode: "per_item", count: 2, extra_count: 0, cover_index: 0 },
       { mode: "per_item", count: 2, extra_count: 0, cover_index: 0 },
     ];
+    jobInput.details.mixed_lots.forEach((group,index) => Object.assign(group, {capture_lot_id:`manual-${index}`,capture_lot_number:String(index+1)}));
     let firstPhoto = "";
     mocks.analyze.mockImplementation(async (photos: string[]) => {
       firstPhoto ||= photos[0];
@@ -261,6 +274,14 @@ describe("Asset Bundle scan orchestration", () => {
       title: photos[0], description: "Independent submitted unit", estimated_value: "CAD 100",
       image_indexes: [0], lot_number: "222",
     }] }));
+    if (number) {
+      const before = structuredClone(jobInput.details);
+      await expect(runAssetPreviewJob(jobInput)).rejects.toThrow("Duplicate lot number 222");
+      expect(jobInput.details).toEqual(before);
+      expect(jobInput.images).toHaveLength(122);
+      expect(await AssetReport.countDocuments({user:jobInput.user.id})).toBe(0);
+      return;
+    }
     await runAssetPreviewJob(jobInput);
     const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
     const lots = report.preview_data.lots;

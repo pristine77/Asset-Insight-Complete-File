@@ -1,5 +1,7 @@
 "use client";
 
+import { notifyAdminSessionChange } from "@/lib/adminSession";
+
 import {
   CheckCircle2,
   Camera,
@@ -202,6 +204,7 @@ export default function AdminNavbarV2({ children }: { children?: ReactNode }) {
   async function onLogout() {
     try {
       setLoggingOut(true);
+      notifyAdminSessionChange();
       await fetch("/api/admin/logout", { method: "POST" });
       router.push("/login");
       router.refresh();

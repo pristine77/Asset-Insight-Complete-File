@@ -800,7 +800,10 @@ export const AuctioneerService = {
   async getArrivalPhotoRequests(): Promise<ArrivalPhotoRequest[]> {
     const response = await API.get("/auctioneer/arrival-photo-requests");
     const payload = unwrap(response.data);
-    return (Array.isArray(payload) ? payload : []) as ArrivalPhotoRequest[];
+    if (asRecord(response.data).success !== true || !Array.isArray(payload)) {
+      throw new Error("Arrival photo requests could not be confirmed. Please try again.");
+    }
+    return payload as ArrivalPhotoRequest[];
   },
 
   async sendArrivalPhotos(
@@ -808,6 +811,9 @@ export const AuctioneerService = {
     files: File[],
     onProgress?: (percent: number) => void,
   ): Promise<{ sent: number; stored: number; skipped: number; photoCount: number }> {
+    if (!requestId.trim() || !files.length || files.length > 60) {
+      throw new Error("Choose a request and send between 1 and 60 photos at a time.");
+    }
     const form = new FormData();
     files.forEach((file) => form.append("photos", file, file.name));
     const response = await API.post(
@@ -816,17 +822,20 @@ export const AuctioneerService = {
       {
         timeout: 10 * 60_000,
         onUploadProgress: (event) => {
-          if (onProgress && event.total) onProgress(Math.round((event.loaded / event.total) * 100));
+          if (onProgress && event.total) onProgress(Math.min(95, Math.round((event.loaded / event.total) * 95)));
         },
       },
     );
     const data = asRecord(unwrap(response.data));
-    return {
-      sent: Number(data.sent) || 0,
-      stored: Number(data.stored) || 0,
-      skipped: Number(data.skipped) || 0,
-      photoCount: Number(data.photoCount) || 0,
-    };
+    const counts = [data.sent, data.stored, data.skipped, data.photoCount];
+    if (asRecord(response.data).success !== true ||
+        !counts.every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+        data.sent !== files.length || Number(data.stored) + Number(data.skipped) !== files.length ||
+        Number(data.photoCount) < Number(data.stored)) {
+      throw new Error("Auctioneer did not confirm all the photos. Your photos are still here. Check the request before retrying.");
+    }
+    onProgress?.(100);
+    return { sent: Number(data.sent), stored: Number(data.stored), skipped: Number(data.skipped), photoCount: Number(data.photoCount) };
   },
 
   async getIncomingSummary(): Promise<{ availableCount: number }> {

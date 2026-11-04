@@ -14,13 +14,23 @@ import type { ArrivalPhotoRequest } from "@/services/auctioneer";
 export default function ArrivalPhotoRequests({
   requests,
   loading,
+  error,
   onRefresh,
 }: {
   requests: ArrivalPhotoRequest[];
   loading: boolean;
+  error?: string | null;
   onRefresh: () => void;
 }) {
   const router = useRouter();
+  if (error || (loading && !requests.length)) {
+    return <div className="flex flex-col items-center gap-3 px-6 py-12 text-center" role={error ? "alert" : "status"}>
+      <p>{error || "Loading arrival photo requests…"}</p>
+      {error ? <button type="button" className="app-button app-button--secondary" onClick={onRefresh} disabled={loading}>
+        <RefreshCw size={15} aria-hidden /> Try again
+      </button> : null}
+    </div>;
+  }
   if (!requests.length) {
     return (
       <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">

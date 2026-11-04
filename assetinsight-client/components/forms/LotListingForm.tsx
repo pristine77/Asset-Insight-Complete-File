@@ -404,29 +404,60 @@ export default function LotListingForm({
      AuctioneerService.sendArrivalPhotos: no report, no AI, no draft.
   */
   const [arrivalPhotos, setArrivalPhotos] = useState(false);
+  const [arrivalModeReady, setArrivalModeReady] = useState(false);
+  const arrivalModeLocked = Boolean(auctioneer || resumeDraft || restoreDraftOnMount || resumeLocalDraftScopeId || continuationDetails);
+  const arrivalHasMedia = mixedLots.some((lot) => lot.files.length || lot.extraFiles.length || lot.videoFiles?.length);
+  const arrivalMountedRef = useRef(false);
+  const arrivalContextRef = useRef({ userId, requestId: "" });
+  const arrivalSentRef = useRef(false);
+  const arrivalActorRef = useRef(userId);
+  useEffect(() => {
+    if (arrivalActorRef.current === userId) return;
+    arrivalActorRef.current = userId;
+    if (!arrivalPhotos) return;
+    setMixedLots([]);
+    setArrivalRequestId("");
+    setArrivalRequests([]);
+    setSubmitting(false);
+    submitLockRef.current = false;
+    setError("The signed-in account changed. Open its arrival photo request to continue.");
+  }, [userId, arrivalPhotos]);
+  useEffect(() => {
+    arrivalMountedRef.current = true;
+    return () => { arrivalMountedRef.current = false; };
+  }, []);
   // Read by the draft autosave: arrival photos are sent, never kept as a
   // Lot Listing draft (a draft would upload every photo to the account too).
   const arrivalPhotosRef = useRef(false);
-  arrivalPhotosRef.current = arrivalPhotos;
+  arrivalPhotosRef.current = !arrivalModeReady || arrivalPhotos;
   const [arrivalRequestId, setArrivalRequestId] = useState("");
   const [arrivalRequests, setArrivalRequests] = useState<ArrivalPhotoRequest[]>([]);
-  const hasAuctioneerWork = Boolean(auctioneer);
+  const [arrivalRequestError, setArrivalRequestError] = useState<string | null>(null);
+  const [arrivalRequestLoading, setArrivalRequestLoading] = useState(false);
+  const [arrivalRequestRetry, setArrivalRequestRetry] = useState(0);
+  arrivalContextRef.current = { userId, requestId: arrivalRequestId };
   useEffect(() => {
     // Read after mount, so the server render and the first client render agree.
     const fromLink = new URLSearchParams(window.location.search).get("arrivalRequest");
-    if (fromLink && !hasAuctioneerWork) {
+    if (fromLink && !arrivalModeLocked) {
       setArrivalPhotos(true);
       setArrivalRequestId(fromLink);
     }
-  }, [hasAuctioneerWork]);
+    setArrivalModeReady(true);
+  }, [arrivalModeLocked]);
   useEffect(() => {
-    if (!arrivalPhotos) return;
+    if (!arrivalPhotos || !userId) return;
     let cancelled = false;
+    const session = captureAuthSession();
+    setArrivalRequestLoading(true);
+    setArrivalRequestError(null);
+    setArrivalRequests([]);
     AuctioneerService.getArrivalPhotoRequests()
-      .then((rows) => { if (!cancelled) setArrivalRequests(rows); })
-      .catch(() => { if (!cancelled) setArrivalRequests([]); });
+      .then((rows) => { if (!cancelled && isAuthSessionCurrent(session)) setArrivalRequests(rows); })
+      .catch(() => { if (!cancelled && isAuthSessionCurrent(session)) setArrivalRequestError("Arrival photo requests could not be loaded. Your photos stay here while you retry."); })
+      .finally(() => { if (!cancelled && isAuthSessionCurrent(session)) setArrivalRequestLoading(false); });
     return () => { cancelled = true; };
-  }, [arrivalPhotos]);
+  }, [arrivalPhotos, userId, arrivalRequestRetry]);
   /*
      Owner 2026-10-28: on a work item that requires it, the appraiser chooses
      which Schedule A item this listing's lots belong to. The kept choice only
@@ -479,7 +510,7 @@ export default function LotListingForm({
   const restoreBlocked = restoringDraft || accountRestoreBlocked;
   const restoreBlockedRef = useRef(restoreBlocked);
   restoreBlockedRef.current = restoreBlocked;
-  useReportActivity(userId, draftScopeId, "lot-listing", contractNo, mixedLots, watermarkImages, !restoreBlocked);
+  useReportActivity(userId, draftScopeId, "lot-listing", contractNo, mixedLots, watermarkImages, !restoreBlocked && arrivalModeReady && !arrivalPhotos);
   const [confirmAction, setConfirmAction] = useState<
     "clear" | "discard" | null
   >(null);
@@ -1024,7 +1055,7 @@ export default function LotListingForm({
   );
 
   useEffect(() => {
-    if (!draftKey || !userId || resumeDraft) return;
+    if (!draftKey || !userId || resumeDraft || !arrivalModeReady || arrivalPhotos) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -1075,7 +1106,7 @@ export default function LotListingForm({
     return () => {
       cancelled = true;
     };
-  }, [draftKey, draftScopeId, reportDraftStatus, resumeDraft, userId]);
+  }, [draftKey, draftScopeId, reportDraftStatus, resumeDraft, userId, arrivalModeReady, arrivalPhotos]);
 
   const clearFieldError = (field: string) => {
     setErrors((current) => {
@@ -1097,7 +1128,7 @@ export default function LotListingForm({
   );
 
   const restoreDraft = useCallback(async () => {
-    if (!draftKey || !userId) return;
+    if (!draftKey || !userId || arrivalPhotosRef.current) return;
     setRestoringDraft(true);
     setDraftIssue(null);
 
@@ -1604,7 +1635,7 @@ export default function LotListingForm({
      stays as it is.
   */
   const submitArrivalPhotos = useCallback(async () => {
-    if (!arrivalRequestId) {
+    if (!arrivalRequestId || !userId || arrivalRequestLoading || arrivalRequestError) {
       const message = "Choose the arrival photo request these photos are for.";
       setError(message);
       toast.error(message);
@@ -1613,8 +1644,8 @@ export default function LotListingForm({
     const files = mixedLots
       .flatMap((lot) => [...lot.files, ...lot.extraFiles])
       .filter((file) => (file.type || "image/").startsWith("image/"));
-    if (!files.length) {
-      const message = "Add the arrival photos before sending.";
+    if (!files.length || files.length > 60) {
+      const message = files.length > 60 ? "Send up to 60 arrival photos at a time." : "Add the arrival photos before sending.";
       setError(message);
       toast.error(message);
       return;
@@ -1625,33 +1656,41 @@ export default function LotListingForm({
     setError(null);
     setSubmitting(true);
     setUploadPercent(0);
+    setUploadStats({ totalFiles: files.length, totalSize: files.reduce((sum, file) => sum + file.size, 0), uploadedBytes: 0 });
+    const session = captureAuthSession();
+    const context = { userId, requestId: arrivalRequestId };
+    const current = () => arrivalMountedRef.current && isAuthSessionCurrent(session) &&
+      arrivalContextRef.current.userId === context.userId && arrivalContextRef.current.requestId === context.requestId;
     try {
-      const result = await AuctioneerService.sendArrivalPhotos(arrivalRequestId, files, setUploadPercent);
+      const result = await AuctioneerService.sendArrivalPhotos(arrivalRequestId, files, (percent) => { if (current()) setUploadPercent(percent); });
+      if (!current()) return;
+      arrivalSentRef.current = true;
       toast.success(
-        `${result.stored} arrival photo${result.stored === 1 ? "" : "s"} sent to Auctioneer, watermarked, in the lot's Office Only section.`
+        `${result.sent} arrival photo${result.sent === 1 ? "" : "s"} confirmed in Auctioneer's Office Only section${result.skipped ? ` (${result.skipped} already there)` : ""}.`
       );
       router.push("/incoming?tab=arrival");
     } catch (sendError) {
+      if (!current()) return;
       // The server's own words (e.g. "This request was cancelled…") first.
       const serverMessage = (sendError as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
       const message =
         typeof serverMessage === "string" && serverMessage.trim()
           ? serverMessage
-          : "The arrival photos could not be sent. Check the connection and try again.";
+          : sendError instanceof Error ? sendError.message : "The arrival photos could not be confirmed. Your photos are still here. Check the request before retrying.";
       setError(message);
       toast.error(message);
     } finally {
       submitLockRef.current = false;
-      setSubmitting(false);
+      if (current()) setSubmitting(false);
     }
-  }, [arrivalRequestId, mixedLots, router]);
+  }, [arrivalRequestId, mixedLots, router, userId, arrivalRequestLoading, arrivalRequestError]);
   const arrivalSubmitRef = useRef<null | (() => Promise<void>)>(null);
   arrivalSubmitRef.current = arrivalPhotos ? submitArrivalPhotos : null;
 
   const onSubmit = useCallback(
     async (event?: React.FormEvent, continueWithNewLot = false) => {
       event?.preventDefault();
-      if (activeFormOperationRef.current || submitLockRef.current || restoreBlockedRef.current) return;
+      if (!arrivalModeReady || activeFormOperationRef.current || submitLockRef.current || restoreBlockedRef.current) return;
       // Arrival Photos: send the photos to the request, and nothing else.
       if (arrivalSubmitRef.current) {
         await arrivalSubmitRef.current();
@@ -2011,6 +2050,7 @@ export default function LotListingForm({
       setSubmissionFinalizing(false);
     },
     [
+      arrivalModeReady,
       auctioneer,
       buildDraftEnvelope,
       draftScopeId,
@@ -2100,14 +2140,14 @@ export default function LotListingForm({
   };
 
   useEffect(() => {
-    if (!draftSaving && !submitting && !separateDraftSaving) return;
+    if (!draftSaving && !submitting && !separateDraftSaving && !(arrivalPhotos && arrivalHasMedia && !arrivalSentRef.current)) return;
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warnBeforeLeaving);
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
-  }, [draftSaving, submitting, separateDraftSaving]);
+  }, [draftSaving, submitting, separateDraftSaving, arrivalPhotos, arrivalHasMedia]);
 
   return (
     <form
@@ -2127,14 +2167,14 @@ export default function LotListingForm({
           transferredBytes={draftSaveProgress?.uploadedBytes}
           cancelling={cancellingOperation}
           finalizing={draftSaveProgress?.phase === "complete"}
-          onCancel={cancelActiveOperation}
+          onCancel={arrivalPhotos ? undefined : cancelActiveOperation}
         />
       ) : null}
       {submitting && uploadStats ? (
         <FormTransferProgressScreen
           mode="report-upload"
           percent={uploadPercent}
-          message={preparingBackgroundUpload ? "Saving the report and original media on this browser before closing the form. Keep this page open." : `Uploading ${uploadStats.totalFiles} file${
+          message={arrivalPhotos ? "Sending photos to Auctioneer. Keep this page open while their receipt is confirmed." : preparingBackgroundUpload ? "Saving the report and original media on this browser before closing the form. Keep this page open." : `Uploading ${uploadStats.totalFiles} file${
             uploadStats.totalFiles === 1 ? "" : "s"
           }`}
           totalFiles={uploadStats.totalFiles}
@@ -2142,7 +2182,7 @@ export default function LotListingForm({
           transferredBytes={uploadStats.uploadedBytes}
           cancelling={cancellingOperation}
           finalizing={submissionFinalizing}
-          onCancel={cancelActiveOperation}
+          onCancel={arrivalPhotos ? undefined : cancelActiveOperation}
         />
       ) : null}
       {separateDraftSaving ? <p role="status" className="p-4 text-sm">Saving the separate draft and media. Keep this page open.</p> : null}
@@ -2416,13 +2456,16 @@ export default function LotListingForm({
                 <FormSwitch
                   id="lot-arrival-photos"
                   label="Arrival Photos"
-                  description="Watermarked and sent to the lot's Office Only in Auctioneer. Not processed."
+                  description="Choose before adding photos. Sends to the lot's Office Only in Auctioneer without analysis. Use a new form for arrival photos when resuming a draft."
                   checked={arrivalPhotos}
                   onChange={(event) => {
+                    if (arrivalModeLocked || arrivalHasMedia) return;
+                    arrivalPhotosRef.current = event.target.checked;
+                    arrivalSentRef.current = false;
                     setArrivalPhotos(event.target.checked);
                     if (!event.target.checked) setArrivalRequestId("");
                   }}
-                  disabled={submitting}
+                  disabled={submitting || !arrivalModeReady || arrivalModeLocked || arrivalHasMedia}
                 />
               </div> : null}
 
@@ -2453,10 +2496,10 @@ export default function LotListingForm({
                     required
                     value={arrivalRequestId}
                     onChange={(event) => setArrivalRequestId(event.target.value)}
-                    disabled={submitting}
+                    disabled={submitting || arrivalRequestLoading}
                     className={formControlClass}
                   >
-                    <option value="">Choose the lot…</option>
+                    <option value="">{arrivalRequestLoading ? "Loading requests…" : "Choose the lot…"}</option>
                     {arrivalRequestId && !arrivalRequests.some((request) => request.requestId === arrivalRequestId) ? (
                       <option value={arrivalRequestId}>The request you opened</option>
                     ) : null}
@@ -2467,6 +2510,9 @@ export default function LotListingForm({
                       </option>
                     ))}
                   </select>
+                  {arrivalRequestError ? <div role="alert" className="mt-2 text-sm text-red-700">
+                    {arrivalRequestError} <button type="button" onClick={() => setArrivalRequestRetry((value) => value + 1)} disabled={submitting}>Try again</button>
+                  </div> : null}
                   <p className="mt-1 text-xs text-violet-900/80">
                     Add the photos below and press Submit. They are watermarked, not analysed, and kept in the lot&apos;s
                     Office Only section in Auctioneer. The other details on this form are not used.
@@ -2602,7 +2648,7 @@ export default function LotListingForm({
                 value={mixedLots}
                 onChange={handleLotsChange}
                 downloadPrefix={contractNo || "lot-listing"}
-                allowVideo
+                allowVideo={!arrivalPhotos}
                 analysisImageLimit={50}
                 sourceMappedLots={auctioneer?.kind === "scheduleA"}
                 photosOnly={arrivalPhotos}
@@ -2618,7 +2664,7 @@ export default function LotListingForm({
           <button
             type="button"
             onClick={() => void handleSaveDraft()}
-            disabled={submitting || restoreBlocked || draftSaving}
+            disabled={submitting || restoreBlocked || draftSaving || arrivalPhotos}
             className={secondaryButtonClass}
           >
             <Save className="h-4 w-4" aria-hidden="true" />
@@ -2638,7 +2684,7 @@ export default function LotListingForm({
           <button
             type="button"
             onClick={() => void handleSaveDraft()}
-            disabled={submitting || restoreBlocked || draftSaving}
+            disabled={submitting || restoreBlocked || draftSaving || arrivalPhotos}
             className={formClassNames(secondaryButtonClass, "min-w-0 px-2")}
           >
             <Save className="h-4 w-4 shrink-0" aria-hidden="true" />

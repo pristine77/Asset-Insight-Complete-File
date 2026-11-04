@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   Building2,
@@ -17,7 +17,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import Loading from "@/components/common/Loading";
 import { useAuthContext } from "@/context/AuthContext";
@@ -136,7 +136,9 @@ function visibleRefreshInterval() {
     : 0;
 }
 
-export default function IncomingPage() {
+function IncomingContent() {
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
   const { user, sessionPresent } = useAuthContext();
   const userId = user?._id || user?.id;
   const requestOwner = userId || (sessionPresent ? "pending-session" : null);
@@ -179,17 +181,23 @@ export default function IncomingPage() {
   const items = data?.items ?? [];
   // Arrival Photo Requests is the third tab (owner, 2026-11-03), opened
   // straight from a link such as /incoming?tab=arrival after photos are sent.
-  const [queueTab, setQueueTab] = useState<"outstanding" | "completed" | "arrival">(() =>
-    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "arrival"
-      ? "arrival"
-      : "outstanding"
-  );
+  const [queueTab, setQueueTab] = useState<"outstanding" | "completed" | "arrival">("outstanding");
+  useEffect(() => {
+    setQueueTab(requestedTab === "arrival" || requestedTab === "completed" ? requestedTab : "outstanding");
+    setSelectedKey(null);
+  }, [requestedTab]);
+  const selectTab = (tab: "outstanding" | "completed" | "arrival") => {
+    setQueueTab(tab);
+    setSelectedKey(null);
+    router.replace(`/incoming?tab=${tab}`, { scroll: false });
+  };
   /*
     Arrival photo requests (owner, 2026-11-03; ArrivalPhotoRequests.tsx): read
     from Auctioneer on the same schedule as the queue above.
   */
   const {
     data: arrivalRequestsData,
+    error: arrivalRequestsError,
     isValidating: arrivalRequestsLoading,
     mutate: refreshArrivalRequests,
   } = useSWR(
@@ -518,8 +526,7 @@ export default function IncomingPage() {
                 role="tab"
                 aria-selected={queueTab === "outstanding"}
                 onClick={() => {
-                  setQueueTab("outstanding");
-                  setSelectedKey(null);
+                  selectTab("outstanding");
                 }}
                 className={`${styles.tab} ${queueTab === "outstanding" ? styles.tabActive : ""}`}
               >
@@ -530,8 +537,7 @@ export default function IncomingPage() {
                 role="tab"
                 aria-selected={queueTab === "completed"}
                 onClick={() => {
-                  setQueueTab("completed");
-                  setSelectedKey(null);
+                  selectTab("completed");
                 }}
                 className={`${styles.tab} ${queueTab === "completed" ? styles.tabActive : ""}`}
               >
@@ -542,8 +548,7 @@ export default function IncomingPage() {
                 role="tab"
                 aria-selected={queueTab === "arrival"}
                 onClick={() => {
-                  setQueueTab("arrival");
-                  setSelectedKey(null);
+                  selectTab("arrival");
                 }}
                 className={`${styles.tab} ${queueTab === "arrival" ? styles.tabActive : ""}`}
               >
@@ -556,6 +561,7 @@ export default function IncomingPage() {
             <ArrivalPhotoRequests
               requests={arrivalRequests}
               loading={arrivalRequestsLoading}
+              error={arrivalRequestsError ? "Arrival photo requests could not be loaded. Check the connection and try again." : null}
               onRefresh={() => void refreshArrivalRequests()}
             />
           ) : !visibleItems.length ? (
@@ -907,4 +913,8 @@ export default function IncomingPage() {
 
     </div>
   );
+}
+
+export default function IncomingPage() {
+  return <Suspense fallback={<Loading />}><IncomingContent /></Suspense>;
 }

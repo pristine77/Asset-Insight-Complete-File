@@ -1,3 +1,6 @@
+import { isArrivalPhotoDraft } from '../../services/arrivalPhotoDraft';
+import { getAuthOperationEpoch } from '../../services/authSessionOperation';
+import { captureLotIdentity } from '../../services/captureLotIdentity';
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { cameraDeadline } from '../camera/cameraDeadline';
 import {
@@ -136,8 +139,8 @@ const LotListingFormSheet = ({
      watermarked and not processed by Asset Insight. They are just images that
      are sent to Auctioneer and saved in the 'Office Only' section." and "Its
      just file copy only". Submit then sends the photos to one arrival photo
-     request and nothing else: no report, no AI, no draft (a draft could later
-     be sent as an ordinary report). Offered on a plain Lot Listing only.
+     request and nothing else: no report or AI. A purpose-tagged local capture
+     preserves interruption recovery without allowing ordinary report submission.
   */
   const [arrivalPhotos, setArrivalPhotos] = useState(Boolean(arrivalRequest));
   const arrivalPhotosRef = useRef(arrivalPhotos);
@@ -216,7 +219,7 @@ const LotListingFormSheet = ({
   // The operation of the upload this form is running, so Pause stops only it.
   const activeOperationRef = useRef<UploadOperation | null>(null);
   const handlePauseUpload = () => {
-    // Arrival photos are one short request with nothing to pause.
+    // Arrival uploads cannot safely be cancelled once delivery may have started.
     if (arrivalPhotosRef.current) return;
     // Finalizing is when the server accepts the listing; pausing then only loses
     // the answer. See beginUploadFinalization in uploadCancellation.ts.
@@ -247,14 +250,14 @@ const LotListingFormSheet = ({
 
   // Opened from Incoming → Arrival Photos: the switch is on for that request.
   useEffect(() => {
-    if (!visible || !arrivalRequest) return;
+    if (!visible || !arrivalRequest || draftIdToLoad) return;
     setArrivalPhotos(true);
     setArrivalRequestId(arrivalRequest.requestId);
     setArrivalRequests((current) =>
       current.some((request) => request.requestId === arrivalRequest.requestId) ? current : [arrivalRequest, ...current]
     );
     setDetailsExpanded(true);
-  }, [visible, arrivalRequest]);
+  }, [visible, arrivalRequest, draftIdToLoad]);
 
   // The user's open requests, read while the switch is on.
   useEffect(() => {
@@ -264,7 +267,9 @@ const LotListingFormSheet = ({
     auctioneerService
       .getArrivalPhotoRequests()
       .then((rows) => {
-        if (!cancelled) setArrivalRequests(rows);
+        if (!cancelled) setArrivalRequests(current => rows.some(row => row.requestId === arrivalRequestId)
+          ? rows
+          : [...current.filter(row => row.requestId === arrivalRequestId), ...rows]);
       })
       .catch(() => undefined) // The list keeps what it had; Send reports any real problem.
       .finally(() => {
@@ -273,7 +278,7 @@ const LotListingFormSheet = ({
     return () => {
       cancelled = true;
     };
-  }, [visible, arrivalPhotos]);
+  }, [visible, arrivalPhotos, arrivalRequestId]);
   const auctionServices = useMemo(() => {
     return (auctionManagementTask?.serviceCatalog || []).flatMap((catalog) =>
       (catalog.services || []).map((service) => ({
@@ -371,10 +376,21 @@ const LotListingFormSheet = ({
     }
   };
 
+  const restoreArrivalMode = useCallback((data: AutoSaveFormData) => {
+    const arrival = isArrivalPhotoDraft(data);
+    arrivalPhotosRef.current = arrival;
+    setArrivalPhotos(arrival);
+    setArrivalRequestId(arrival ? data.arrivalPhotoRequestId || '' : '');
+    if (arrival && data.arrivalPhotoRequest) {
+      setArrivalRequests(current => [data.arrivalPhotoRequest!, ...current.filter(row => row.requestId !== data.arrivalPhotoRequest!.requestId)]);
+    }
+  }, []);
+
   const handleRestoreAutoSave = async () => {
     try {
       const data = await AutoSaveService.getAutoSave();
       if (data && data.formType === 'lotListing') {
+        restoreArrivalMode(data.formData);
         // Restore form data
         if (data.formData.contractNo) setContractNo(data.formData.contractNo);
         if (data.formData.effectiveDate) setSalesDate(data.formData.effectiveDate);
@@ -479,6 +495,7 @@ const LotListingFormSheet = ({
 
   const applyStoredDraftData = useCallback(
     (data: Pick<AutoSaveData, 'formData' | 'lots' | 'activeLotIdx'>) => {
+      restoreArrivalMode(data.formData);
       if (data.formData.auctionsoftSnapshot) setRecoveredAuctionTask(data.formData.auctionsoftSnapshot as AuctionManagementTaskPayload);
       if (data.formData.auctionServiceSelections) setAuctionServiceSelections(data.formData.auctionServiceSelections as Record<number, string[]>);
       if (typeof data.formData.auctionCloseContract === 'boolean') setAuctionCloseContract(data.formData.auctionCloseContract);
@@ -573,7 +590,7 @@ const LotListingFormSheet = ({
       setLots(restoredLots);
       setActiveLotIdx(Math.max(0, Math.min(data.activeLotIdx || 0, restoredLots.length - 1)));
     },
-    [setLots, setCurrency, restoreScheduleAItem]
+    [setLots, setCurrency, restoreScheduleAItem, restoreArrivalMode]
   );
 
   useEffect(() => {
@@ -619,6 +636,8 @@ const LotListingFormSheet = ({
     (): AutoSaveFormData => ({
       captureMode,
       manualSubmissionRequired,
+      ...(arrivalPhotos ? { capturePurpose: 'arrivalPhotos' as const, arrivalPhotoRequestId: arrivalRequestId,
+        arrivalPhotoRequest: arrivalRequests.find(row => row.requestId === arrivalRequestId) } : {}),
       // A "Check again" list replaces the snapshot's, so an item chosen from it
       // is still offered when this draft is reopened offline.
       // A Proposal list refreshed here (Refresh, Not found) does the same.
@@ -651,7 +670,7 @@ const LotListingFormSheet = ({
       watermarkImages,
       selectedValuationMethods: LOT_LISTING_VALUATION_METHODS,
     }),
-    [auctioneer, scheduleAItem.required, scheduleAItem.choices, scheduleAItem.parentLotId, proposalList.listed, proposalList.items, auctionManagementTask, auctionServiceSelections, auctionCloseContract, captureMode, manualSubmissionRequired, bankPhotosEnabled, contractNo, latitude, location, longitude, salesDate, currency, watermarkImages]
+    [arrivalPhotos, arrivalRequestId, arrivalRequests, auctioneer, scheduleAItem.required, scheduleAItem.choices, scheduleAItem.parentLotId, proposalList.listed, proposalList.items, auctionManagementTask, auctionServiceSelections, auctionCloseContract, captureMode, manualSubmissionRequired, bankPhotosEnabled, contractNo, latitude, location, longitude, salesDate, currency, watermarkImages]
   );
 
   const hasDraftableWork = useCallback((candidateLots: MixedLot[] = lots) => {
@@ -662,7 +681,7 @@ const LotListingFormSheet = ({
   }, [contractNo, lots]);
 
   const requireContractNumberForDraft = useCallback(() => {
-    if (contractNo.trim() || captureMode === 'offline') return true;
+    if (arrivalPhotosRef.current || contractNo.trim() || captureMode === 'offline') return true;
     Alert.alert(
       'Contract Number Required',
       'Enter a contract number before continuing, or choose Offline to save incomplete details on this device.'
@@ -677,14 +696,14 @@ const LotListingFormSheet = ({
     explicitActivitySave = false
   ) => {
     if (!hasValidAuctioneerLotStructure(auctioneer, lotsSnapshot)) throw new Error('Schedule A lots cannot be added, removed, reordered or regrouped.');
-    if (captureMode !== 'offline' && (!hasDraftableWork(lotsSnapshot) || !contractNo.trim())) return null;
+    if (!arrivalPhotosRef.current && captureMode !== 'offline' && (!hasDraftableWork(lotsSnapshot) || !contractNo.trim())) return null;
 
     const savePromise = AutoSaveService.saveDraft({
       explicitActivitySave,
       id: draftIdOverride || currentDraftId || draftIdentityRef.current,
       captureMode,
       type: 'lotListing',
-      title: contractNo.trim() || 'Lot Listing',
+      title: arrivalPhotosRef.current ? 'Arrival Photos' : contractNo.trim() || 'Lot Listing',
       formData: buildAutoSaveFormData(),
       lots: lotsSnapshot.map((lot, index) => ({ ...lot,
         lotNumber: lot.lotNumber || (auctioneer?.kind === 'scheduleA' ? auctioneer.lots[index]?.lotNumber : undefined),
@@ -715,7 +734,7 @@ const LotListingFormSheet = ({
 
   const handleSaveDraftPreview = useCallback(async () => {
     if (awaitingDraft || submitting) return;
-    if (captureMode === 'offline' || manualSubmissionRequired) {
+    if (arrivalPhotosRef.current || captureMode === 'offline' || manualSubmissionRequired) {
       try { await saveOnDevice(); } catch (error) { setLocalSaveError(error instanceof Error ? error.message : 'Save failed. Please try again.'); }
       return;
     }
@@ -812,8 +831,7 @@ const LotListingFormSheet = ({
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
     }
-    // Arrival photos are sent, never kept as a Lot Listing draft.
-    if (arrivalPhotosRef.current) return;
+    // Arrival captures keep their separate local purpose for interruption recovery.
 
     if (lotsSnapshot) {
       try {
@@ -842,7 +860,7 @@ const LotListingFormSheet = ({
 
   // Trigger auto-save when form fields or lots change after a contract number exists.
   useEffect(() => {
-    if (visible && !submitting && !savingLocal && !awaitingDraft && !arrivalPhotos && (captureMode === 'offline' || (contractNo.trim() && hasDraftableWork()))) {
+    if (visible && !submitting && !savingLocal && !awaitingDraft && (arrivalPhotos || captureMode === 'offline' || (contractNo.trim() && hasDraftableWork()))) {
       triggerAutoSave();
     }
     return () => { if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current); };
@@ -996,29 +1014,49 @@ const LotListingFormSheet = ({
       Alert.alert('No photos yet', 'Take or add the arrival photos, then tap Send.');
       return;
     }
+    const owner = OfflineCaptureStore.getOwnerId();
+    const epoch = getAuthOperationEpoch();
+    const scope = recoveryScopeRef.current;
+    const isCurrent = () => Boolean(owner && owner === OfflineCaptureStore.getOwnerId() &&
+      epoch === getAuthOperationEpoch() && scope === recoveryScopeRef.current);
+    if (!owner) { Alert.alert('Sign in required', 'Sign in before sending arrival photos.'); return; }
     submissionLockRef.current = true;
+    if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
     setSubmitting(true);
     setUploadStatus(null);
     setUploadProgress(1);
     try {
-      const result = await auctioneerService.sendArrivalPhotos(arrivalRequestId, photos, (percent) =>
-        setUploadProgress(Math.max(1, percent))
-      );
-      setSubmitting(false);
+      // Persist the exact capture purpose before bytes leave the phone. Recovery
+      // opens this same Arrival Send action, never the ordinary report workflow.
+      if (draftSavePromiseRef.current) await draftSavePromiseRef.current;
+      if (!isCurrent()) return;
+      const localDraft = await saveCurrentDraftNow();
+      if (!isCurrent()) return;
+      if (!localDraft) throw new Error('The arrival photos could not be saved. Keep this screen open and retry saving.');
+      const result = await auctioneerService.sendArrivalPhotos(arrivalRequestId, photos, (percent) => {
+        if (isCurrent()) setUploadProgress(Math.max(1, Math.min(95, percent)));
+      });
+      if (!isCurrent()) return;
+      // A validated receipt accounts for every selected photo before cleanup.
+      await AutoSaveService.removeDraftRecordOnly(localDraft.id);
+      if (!isCurrent()) return;
       await resetForm();
       onClose();
       Alert.alert(
         'Arrival photos sent',
-        `${result.stored} photo${result.stored === 1 ? '' : 's'} sent to Auctioneer, watermarked, in the lot's Office Only section.`
+        `${result.sent} photo${result.sent === 1 ? '' : 's'} confirmed in Auctioneer, watermarked, in the lot's Office Only section.`
       );
     } catch (error) {
+      if (!isCurrent()) return;
       Alert.alert(
-        'Not sent',
-        auctioneerErrorMessage(error, 'The arrival photos could not be sent. Check the connection and try again.')
+        'Arrival photos not confirmed',
+        auctioneerErrorMessage(error, 'Your photos are kept on this device. Check the lot in Incoming before sending again; the previous upload may have arrived.')
       );
     } finally {
-      submissionLockRef.current = false;
-      setSubmitting(false);
+      if (isCurrent()) {
+        submissionLockRef.current = false;
+        setSubmitting(false);
+      }
     }
   };
 
@@ -1028,7 +1066,11 @@ const LotListingFormSheet = ({
   ) => {
     if (submissionLockRef.current || saveLock.current || awaitingDraft || submitting || uploadAcceptedRef.current || auctioneerControl?.accepted) return;
     // Arrival Photos: send the photos to the request, and nothing else.
-    if (arrivalPhotosRef.current) { await submitArrivalPhotos(); return; }
+    if (arrivalPhotosRef.current) {
+      if (saveOnly) await handleSaveOfflineAndClose();
+      else await submitArrivalPhotos();
+      return;
+    }
     if (options.nextLot && captureMode === 'offline') return;
     if (saveOnly) { await handleSaveOfflineAndClose(); return; }
     const submissionCurrency = currencyForSubmission();
@@ -1184,6 +1226,7 @@ const LotListingFormSheet = ({
       // 2026-10-28); every other lot sends what it always did.
       const mixedLots = lots.map((lot, index) => ({
         ...auctioneerLotSource(auctioneer, index, lot),
+        ...(!auctioneer && !auctionManagementTask ? captureLotIdentity(lot, index) : {}),
         ...scheduleAItemLotField(scheduleAItem.parentLotId),
         count: lot.files.length,
         extra_count: lot.extraFiles?.length || 0,
@@ -1253,7 +1296,7 @@ const LotListingFormSheet = ({
           type: lot.videoFile.type || 'video/mp4',
           size: lot.videoFile.size,
         } : undefined,
-        lot_number: idx + 1,
+        lot_number: lot.lotNumber || idx + 1,
         mode: lot.mode,
         coverIndex: lot.coverIndex,
       }));
@@ -1475,16 +1518,6 @@ const LotListingFormSheet = ({
   const handleClose = async () => {
     if (submitting || saveLock.current) return;
     if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
-    // Arrival photos are never saved as a draft: closing discards them.
-    if (arrivalPhotosRef.current) {
-      const closeNow = () => { void resetForm(); onClose(); };
-      if (!totalImages) { closeNow(); return; }
-      Alert.alert('Discard arrival photos?', 'These photos have not been sent. Closing discards them.', [
-        { text: 'Keep', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: closeNow },
-      ]);
-      return;
-    }
     if (hasDraftableWork() && !requireContractNumberForDraft()) return;
     try {
       if (draftSavePromiseRef.current) {
@@ -1575,7 +1608,7 @@ const LotListingFormSheet = ({
                 </TouchableOpacity> : null}
                 <TouchableOpacity
                   accessibilityRole="button"
-                  accessibilityLabel={arrivalPhotos ? 'Send arrival photos' : saveOnly ? 'Save offline lot listing' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit lot listing'}
+                  accessibilityLabel={arrivalPhotos ? (saveOnly ? 'Save offline arrival photos' : 'Send arrival photos') : saveOnly ? 'Save offline lot listing' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit lot listing'}
                   style={[styles.submitBtn, auctioneer && styles.importedSubmitBtn, (arrivalPhotos ? !canTapSubmit : (!saveOnly && (!canTapSubmit || currencyLoading)) || savingDraftPreview) && styles.submitBtnDisabled]}
                   onPress={() => void handleSubmit()}
                   hitSlop={HEADER_HIT_SLOP}
@@ -1587,7 +1620,7 @@ const LotListingFormSheet = ({
                     // "Resume upload" on two lines keeps this button as narrow as
                     // "Submit": one line squeezed the title to one letter per line
                     // (2026-10-11 phone test). Incoming's full-width button keeps one line.
-                    <Text style={styles.submitBtnText}>{arrivalPhotos ? 'Send' : saveOnly ? 'Save' : uploadPaused ? (auctioneer ? 'Resume upload' : 'Resume\nupload') : auctioneer ? 'Create Lot & Close' : 'Submit'}</Text>
+                    <Text style={styles.submitBtnText}>{arrivalPhotos ? (saveOnly ? 'Save' : 'Send') : saveOnly ? 'Save' : uploadPaused ? (auctioneer ? 'Resume upload' : 'Resume\nupload') : auctioneer ? 'Create Lot & Close' : 'Submit'}</Text>
                   )}
                 </TouchableOpacity>
               </>
@@ -1613,11 +1646,11 @@ const LotListingFormSheet = ({
               <Text style={styles.progressMessage} accessibilityLiveRegion="polite">
                 {savingDraftPreview
                   ? `Uploading and verifying ${totalImages} ${totalImages === 1 ? 'image' : 'images'}, then starting preview processing.`
-                  : pausingUpload ? 'Stopping this transfer. Your saved draft will stay available; tap Resume upload when ready.' : uploadStatus?.message || `Preparing ${totalImages} images...`}
+                  : arrivalPhotos ? 'Sending photos to Auctioneer. Keep this screen open until delivery is confirmed.' : pausingUpload ? 'Stopping this transfer. Your saved draft will stay available; tap Resume upload when ready.' : uploadStatus?.message || `Preparing ${totalImages} images...`}
               </Text>
               {!savingDraftPreview ? (
                 <>
-                  {uploadStatus?.stage !== 'complete' && uploadStatus?.stage !== 'finalizing' && !uploadAcceptedRef.current ? (
+                  {!arrivalPhotos && uploadStatus?.stage !== 'complete' && uploadStatus?.stage !== 'finalizing' && !uploadAcceptedRef.current ? (
                     <TouchableOpacity accessibilityRole="button" accessibilityLabel={pausingUpload ? 'Pausing upload' : 'Pause upload'}
                       accessibilityState={{ disabled: pausingUpload }} disabled={pausingUpload} onPress={handlePauseUpload} style={{ minHeight: 44, padding: 12 }}>
                       <Text style={{ color: '#1D4ED8' }}>{pausingUpload ? 'Pausing upload…' : 'Pause upload'}</Text>
@@ -1832,6 +1865,11 @@ const LotListingFormSheet = ({
                     accessibilityState={{ checked: arrivalPhotos, disabled: submitting }}
                     disabled={submitting}
                     onPress={() => {
+                      if (currentDraftId || draftIdToLoad || draftSavePromiseRef.current || saveLock.current || lots.some(lot => lot.files.length || lot.extraFiles.length || lot.videoFile)) {
+                        Alert.alert('Start a new capture', 'This capture already contains saved work. Close it to keep the photos, then open a new Lot Listing to choose Arrival Photos.');
+                        return;
+                      }
+                      if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
                       const next = !arrivalPhotos;
                       setArrivalPhotos(next);
                       arrivalPhotosRef.current = next;

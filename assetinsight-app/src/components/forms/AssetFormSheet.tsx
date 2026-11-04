@@ -1,3 +1,4 @@
+import { captureLotIdentity } from '../../services/captureLotIdentity';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { cameraDeadline } from '../camera/cameraDeadline';
 import {
@@ -1264,6 +1265,7 @@ const AssetFormSheet = ({
       // 2026-10-28); every other lot sends what it always did.
       const mixedLotsMapping = lots.map((lot, index) => ({
         ...auctioneerLotSource(auctioneer, index, lot),
+        ...(!auctioneer ? captureLotIdentity(lot, index) : {}),
         ...scheduleAItemLotField(scheduleAItem.parentLotId),
         count: lot.files.length,
         extra_count: lot.extraFiles.length,
@@ -1345,6 +1347,7 @@ const AssetFormSheet = ({
       // Convert MixedLot to service format
       serviceLots = lots.map((lot) => ({
         id: lot.id,
+        lotNumber: lot.lotNumber,
         files: lot.files.map((f) => ({
           uri: getPhotoUploadUri(f),
           name: f.name,

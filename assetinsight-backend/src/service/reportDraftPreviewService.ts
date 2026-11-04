@@ -131,6 +131,10 @@ function composeNormalDraft(draft: any) {
       video_count: count.video,
       cover_index: Number(lots[index]?.coverIndex || 0),
       mode: lots[index]?.mode || "single_lot",
+      ...(!lots[index]?.source && !draft.formData?.auctioneer_work_item_id && !draft.formData?.auctionsoft_task_id ? {
+        capture_lot_id: draftLotId(lots[index], index),
+        capture_lot_number: String(lots[index]?.lotNumber || index + 1),
+      } : {}),
     })),
   };
 }

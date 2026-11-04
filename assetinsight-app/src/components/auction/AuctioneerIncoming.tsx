@@ -63,17 +63,20 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
   const uncertainReopens = useRef(new Set<string>());
   const receivedRevisions = useRef(new Map<string, string | number>());
   const queueOwner = useRef(OfflineCaptureStore.getOwnerId());
+  const queueAuthEpoch = useRef(getAuthOperationEpoch());
 
   const load = useCallback(async (refresh = false) => {
     const revision = ++readRevision.current;
     const owner = OfflineCaptureStore.getOwnerId();
     const authEpoch = getAuthOperationEpoch();
-    if (owner !== queueOwner.current) {
+    if (owner !== queueOwner.current || authEpoch !== queueAuthEpoch.current) {
       queueOwner.current = owner;
+      queueAuthEpoch.current = authEpoch;
       receivedRevisions.current.clear();
       uncertainReopens.current.clear();
       setItems([]);
       setArrivalRequests([]);
+      setArrivalRequest(null);
       setNotice('');
     }
     const isCurrent = () =>
@@ -100,6 +103,7 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
       if (!available) {
         setItems([]);
         setArrivalRequests([]);
+      setArrivalRequest(null);
         return false;
       }
       const [next, arrival] = await Promise.all([

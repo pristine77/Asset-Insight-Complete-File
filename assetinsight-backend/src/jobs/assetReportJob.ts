@@ -1,3 +1,4 @@
+import { readCaptureLotIdentity, applyCaptureLotIdentities, assertUniqueInitialLotNumbers } from "../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import {
   getR2PublicUrl,
@@ -566,6 +567,8 @@ export async function runAssetReportJob({
         cover_index?: number;
         mode: "single_lot" | "per_item" | "per_photo";
         reviewedLotNumber?: string;
+        captureLotId?: string;
+        captureLotNumber?: string;
       };
       const rawLots: any[] = Array.isArray(details?.mixed_lots)
         ? details.mixed_lots
@@ -594,6 +597,7 @@ export async function runAssetReportJob({
                   : 0,
             mode,
             ...(reviewedLotNumber ? { reviewedLotNumber } : {}),
+            ...readCaptureLotIdentity(x),
           } as MixedMap;
         })
         .filter(
@@ -605,7 +609,7 @@ export async function runAssetReportJob({
       if (useMappings.length > 0)
         startStep("ai_analysis", "Software analysis of images (mixed)");
       const detectorInputs = buildBundleLotNumberPhotoInputs(useMappings, imageUrls);
-      const detectedNumbers = await detectBundleLotNumbersFromPhotos(detectorInputs.filter((input) => !useMappings[input.groupIndex]?.reviewedLotNumber));
+      const detectedNumbers = await detectBundleLotNumbersFromPhotos(detectorInputs.filter((input) => !useMappings[input.groupIndex]?.reviewedLotNumber && !useMappings[input.groupIndex]?.captureLotNumber));
       const detectorInputByGroup = new Map(detectorInputs.map((input) => [input.groupIndex, input]));
       useMappings.forEach((mapping, groupIndex) => {
         if (mapping.mode !== "single_lot") return;
@@ -614,6 +618,7 @@ export async function runAssetReportJob({
           sourceImageIndex: detectorInputByGroup.get(groupIndex)?.sourceImageIndex,
           detectedLotNumber: detectedNumbers.get(groupIndex),
           reviewedLotNumber: mapping.reviewedLotNumber,
+          captureLotNumber: mapping.captureLotNumber,
           mainImageCount: mapping.count,
         }));
       });
@@ -1156,7 +1161,8 @@ export async function runAssetReportJob({
       }
     }
 
-    lots = reapplyBundleLotNumberDiagnostics(lots);
+    lots = applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(lots), details?.mixed_lots);
+    assertUniqueInitialLotNumbers(lots);
 
     // Rename images based on lot titles (e.g., "2014 Dodge Ram (1).jpg")
     if (Array.isArray(lots) && lots.length > 0 && imageUrls.length > 0) {

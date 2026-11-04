@@ -1,3 +1,4 @@
+import { normalizeEditableLotNumber } from "../utils/lotNumbers.js";
 import { imageUrlToBase64WithMime } from "./assetOpenAIService/imageUtils.js";
 import { getPositiveIntEnv, mapWithConcurrency } from "../utils/concurrency.js";
 import { parseLotNumberNumericPortion } from "../utils/lotDamagePolicy.js";
@@ -27,6 +28,7 @@ export type BundleLotAnalysisDiagnostic = {
     | "last_main_photo"
     | "first_main_photo"
     | "reviewed_upload"
+    | "capture_form"
     | "sequential_fallback";
   detectedValue: string | null;
   resolvedLotNumber: string | number;
@@ -145,12 +147,14 @@ export function resolveBundleLotAnalysisPolicy(input: {
   sourceImageIndex?: number | null;
   detectedLotNumber?: unknown;
   reviewedLotNumber?: unknown;
+  captureLotNumber?: unknown;
   mainImageCount: number;
   standardLimit?: number;
 }): BundleLotAnalysisDiagnostic {
+  const captureValue = normalizeEditableLotNumber(input.captureLotNumber);
   const reviewedValue = normalizeDetectedBundleLotNumber(input.reviewedLotNumber);
   const detectedValue = normalizeDetectedBundleLotNumber(input.detectedLotNumber);
-  const resolvedLotNumber = reviewedValue || detectedValue || input.groupIndex + 1;
+  const resolvedLotNumber = reviewedValue || captureValue || detectedValue || input.groupIndex + 1;
   const selectedImageLimit = getBundleLotAnalysisLimit(
     resolvedLotNumber,
     input.standardLimit ?? STANDARD_BUNDLE_IMAGE_LIMIT,
@@ -158,7 +162,7 @@ export function resolveBundleLotAnalysisPolicy(input: {
 
   return {
     groupIndex: input.groupIndex,
-    numberSource: reviewedValue ? "reviewed_upload" : detectedValue ? "first_main_photo" : "sequential_fallback",
+    numberSource: reviewedValue ? "reviewed_upload" : captureValue ? "capture_form" : detectedValue ? "first_main_photo" : "sequential_fallback",
     detectedValue,
     resolvedLotNumber,
     sourceImageIndex: Number.isInteger(input.sourceImageIndex)

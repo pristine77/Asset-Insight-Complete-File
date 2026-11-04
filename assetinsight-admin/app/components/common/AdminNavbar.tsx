@@ -1,5 +1,7 @@
 "use client";
 
+import { notifyAdminSessionChange } from "@/lib/adminSession";
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -62,6 +64,7 @@ export default function AdminNavbar() {
   async function onLogout() {
     try {
       setLoggingOut(true);
+      notifyAdminSessionChange();
       await fetch("/api/admin/logout", { method: "POST" });
       router.push("/login");
       router.refresh();

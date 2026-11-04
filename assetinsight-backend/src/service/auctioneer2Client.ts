@@ -328,6 +328,7 @@ export async function auctioneer2Request<T = Auctioneer2Record>(
   options: {
     ambiguousWriteOnNetworkFailure?: boolean;
     expectedStatuses?: readonly number[];
+    deadlineIncludesBody?: boolean;
   } = {}
 ): Promise<T> {
   const { baseUrl, apiKey, timeoutMs } = getConfig();
@@ -348,6 +349,7 @@ export async function auctioneer2Request<T = Auctioneer2Record>(
       signal: controller.signal,
     });
   } catch (error) {
+    clearTimeout(timeout);
     const timedOut = error instanceof Error && error.name === "AbortError";
     throw new Auctioneer2ClientError(
       timedOut
@@ -360,52 +362,69 @@ export async function auctioneer2Request<T = Auctioneer2Record>(
       }
     );
   } finally {
-    clearTimeout(timeout);
+    if (!options.deadlineIncludesBody) clearTimeout(timeout);
   }
 
-  if (!response.ok) {
-    if (response.status === 400 || response.status === 409) {
-      const text = await response.text().catch(() => "");
-      const validation = safeUpstreamValidation(response.status, text, apiKey);
-      if (validation) throw validation;
-    } else {
-      await response.arrayBuffer().catch(() => undefined);
+  const readBody = async (): Promise<T> => {
+    if (!response.ok) {
+      if (response.status === 400 || response.status === 409) {
+        const text = await response.text().catch(() => "");
+        const validation = safeUpstreamValidation(response.status, text, apiKey);
+        if (validation) throw validation;
+      } else {
+        await response.arrayBuffer().catch(() => undefined);
+      }
+      throw new Auctioneer2ClientError(
+        `Auctioneer 2.0 rejected the request with status ${response.status}.`,
+        {
+          statusCode: mapUpstreamStatus(response.status),
+          code:
+            response.status === 429
+              ? "auctioneer2_rate_limited"
+              : response.status === 401 || response.status === 403
+                ? "auctioneer2_auth_failed"
+                : "auctioneer2_upstream_error",
+          upstreamStatus: response.status,
+          // A received HTTP response is not a transport ambiguity. The special
+          // Unknown Lot reconciliation path is reserved for a timeout/network
+          // failure where the upstream may have committed before disconnecting.
+          ambiguousWrite: false,
+        }
+      );
     }
-    throw new Auctioneer2ClientError(
-      `Auctioneer 2.0 rejected the request with status ${response.status}.`,
-      {
-        statusCode: mapUpstreamStatus(response.status),
-        code:
-          response.status === 429
-            ? "auctioneer2_rate_limited"
-            : response.status === 401 || response.status === 403
-              ? "auctioneer2_auth_failed"
-              : "auctioneer2_upstream_error",
-        upstreamStatus: response.status,
-        // A received HTTP response is not a transport ambiguity. The special
-        // Unknown Lot reconciliation path is reserved for a timeout/network
-        // failure where the upstream may have committed before disconnecting.
-        ambiguousWrite: false,
-      }
-    );
-  }
 
-  if (
-    options.expectedStatuses?.length &&
-    !options.expectedStatuses.includes(response.status)
-  ) {
-    await response.arrayBuffer().catch(() => undefined);
-    throw new Auctioneer2ClientError(
-      `Auctioneer 2.0 returned an unexpected status ${response.status}.`,
-      {
-        statusCode: 502,
-        code: "auctioneer2_invalid_response",
-        upstreamStatus: response.status,
-      }
-    );
-  }
+    if (
+      options.expectedStatuses?.length &&
+      !options.expectedStatuses.includes(response.status)
+    ) {
+      await response.arrayBuffer().catch(() => undefined);
+      throw new Auctioneer2ClientError(
+        `Auctioneer 2.0 returned an unexpected status ${response.status}.`,
+        {
+          statusCode: 502,
+          code: "auctioneer2_invalid_response",
+          upstreamStatus: response.status,
+        }
+      );
+    }
 
-  return (await parseResponse(response)) as T;
+    return (await parseResponse(response)) as T;
+  };
+  if (!options.deadlineIncludesBody) return readBody();
+  let abortBody: (() => void) | undefined;
+  try {
+    const deadline = new Promise<never>((_resolve, reject) => {
+      abortBody = () => reject(new Auctioneer2ClientError("Auctioneer 2.0 did not confirm its response before the timeout.", {
+        statusCode: 504, code: "auctioneer2_timeout", ambiguousWrite: Boolean(options.ambiguousWriteOnNetworkFailure),
+      }));
+      if (controller.signal.aborted) abortBody();
+      else controller.signal.addEventListener("abort", abortBody, { once: true });
+    });
+    return await Promise.race([readBody(), deadline]);
+  } finally {
+    clearTimeout(timeout);
+    if (abortBody) controller.signal.removeEventListener("abort", abortBody);
+  }
 }
 
 function extractArray(
@@ -1263,7 +1282,11 @@ export async function listArrivalPhotoRequests(userId: string): Promise<ArrivalP
     });
   }
   const query = new URLSearchParams({ userId: normalizedUserId });
-  return requireArray(await auctioneer2Request(`/arrival-photo-requests?${query.toString()}`), ["items"]) as unknown as ArrivalPhotoRequestRecord[];
+  const response = await auctioneer2Request<Auctioneer2Record>(`/arrival-photo-requests?${query.toString()}`, {}, { deadlineIncludesBody: true });
+  if (response?.success !== true) throw new Auctioneer2ClientError("Auctioneer did not confirm the arrival request list. Try again.", { statusCode: 502, code: "auctioneer2_invalid_response" });
+  const items = requireArray(response, ["items"]);
+  if (items.some(item => typeof item.requestId !== "string" || !item.requestId.trim())) throw new Auctioneer2ClientError("Auctioneer returned an invalid arrival request list.", { statusCode: 502, code: "auctioneer2_invalid_response" });
+  return items as unknown as ArrivalPhotoRequestRecord[];
 }
 
 /** One batch (1 to 5) of a request's photos, already watermarked. */
@@ -1278,6 +1301,7 @@ export async function uploadArrivalPhotos(
       code: "auctioneer2_invalid_photo_batch",
     });
   }
+  let totalBytes = 0;
   const payloadPhotos = photos.map((photo, index) => {
     if (photo.buffer.byteLength > AUCTIONEER2_PHOTO_MAX_FILE_BYTES) {
       throw new Auctioneer2ClientError("An arrival photo exceeds the 20 MB limit.", {
@@ -1285,7 +1309,11 @@ export async function uploadArrivalPhotos(
         code: "auctioneer2_photo_too_large",
       });
     }
+    totalBytes += photo.buffer.byteLength;
     const contentType = String(photo.contentType || "image/jpeg").split(";")[0].trim().toLowerCase().replace(/^image\/jpg$/, "image/jpeg");
+    if (!photo.buffer.length || !AUCTIONEER2_PHOTO_CONTENT_TYPES.has(contentType) || !Number.isSafeInteger(photo.order ?? index) || (photo.order ?? index) < 0) {
+      throw new Auctioneer2ClientError("An arrival photo has invalid content or order.", { statusCode: 400, code: "auctioneer2_invalid_photo" });
+    }
     return {
       data: `data:${contentType};base64,${photo.buffer.toString("base64")}`,
       content_type: contentType,
@@ -1294,14 +1322,18 @@ export async function uploadArrivalPhotos(
       order: photo.order ?? index,
     };
   });
+  if (totalBytes > AUCTIONEER2_PHOTO_MAX_BATCH_BYTES) throw new Auctioneer2ClientError("An arrival batch exceeds the 35 MB limit.", { statusCode: 400, code: "auctioneer2_photo_batch_too_large" });
   const response = await auctioneer2Request<Auctioneer2Record>(
     `/arrival-photo-requests/${encodeURIComponent(requestId)}/photos`,
     { method: "POST", body: JSON.stringify({ photos: payloadPhotos, userId }) },
-    { expectedStatuses: [201] },
+    { expectedStatuses: [201], ambiguousWriteOnNetworkFailure: true, deadlineIncludesBody: true },
   );
-  return {
-    stored: Number(response.stored ?? 0),
-    skipped: Number(response.skipped ?? 0),
-    photoCount: Number(response.photoCount ?? 0),
-  };
+  const { stored, skipped, photoCount } = response || {};
+  if (response?.success !== true || ![stored, skipped, photoCount].every(value => Number.isSafeInteger(value) && Number(value) >= 0)
+    || Number(stored) + Number(skipped) !== photos.length || Number(photoCount) < Number(stored)) {
+    throw new Auctioneer2ClientError("Auctioneer did not confirm every arrival photo. Keep the photos and check this request before retrying.", {
+      statusCode: 502, code: "auctioneer2_invalid_arrival_receipt", upstreamStatus: 201, ambiguousWrite: true,
+    });
+  }
+  return { stored: Number(stored), skipped: Number(skipped), photoCount: Number(photoCount) };
 }

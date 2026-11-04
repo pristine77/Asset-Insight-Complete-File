@@ -102,8 +102,8 @@ describe.sequential("draft preview durable outbox", () => {
     expect(input.images.map((image: any) => image.originalname)).toEqual(["0.jpg", "2.jpg", "4.jpg", "1.jpg", "3.jpg"]);
     expect(input.images.map((image: any) => image.lotIndex)).toEqual([0, 0, 0, 1, 1]);
     expect(input.details.mixed_lots).toEqual([
-      { count: 2, extra_count: 1, video_count: 0, cover_index: 1, mode: "single_lot" },
-      { count: 2, extra_count: 0, video_count: 0, cover_index: 0, mode: "single_lot" },
+      expect.objectContaining({ count: 2, extra_count: 1, video_count: 0, cover_index: 1, mode: "single_lot", capture_lot_number: "1" }),
+      expect.objectContaining({ count: 2, extra_count: 0, video_count: 0, cover_index: 0, mode: "single_lot", capture_lot_number: "2" }),
     ]);
   });
 

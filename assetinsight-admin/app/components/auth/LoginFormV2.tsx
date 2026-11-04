@@ -1,5 +1,7 @@
 "use client";
 
+import { notifyAdminSessionChange } from "@/lib/adminSession";
+
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
@@ -495,6 +497,7 @@ export default function LoginFormV2({ embedded = false }: { embedded?: boolean }
     setLoading(true);
 
     try {
+      notifyAdminSessionChange();
       const res = await fetch("/api/admin/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

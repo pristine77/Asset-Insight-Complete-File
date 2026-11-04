@@ -1,3 +1,4 @@
+import { cleanupArrivalPhotoUpload } from "../middleware/arrivalPhotoUpload.js";
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware.js";
 import { Auctioneer2ClientError } from "../service/auctioneer2Client.js";
@@ -32,5 +33,7 @@ export async function sendArrivalPhotosController(req: AuthRequest, res: Respons
     return res.status(201).json({ success: true, data: result });
   } catch (error) {
     return sendArrivalError(res, error);
+  } finally {
+    await cleanupArrivalPhotoUpload(req);
   }
 }

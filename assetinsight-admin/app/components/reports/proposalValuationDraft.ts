@@ -105,7 +105,7 @@ export function parseCellKey(key: string): ParsedKey | null {
   try {
     if (parts[0] === "row" && parts.length === 3) {
       const field = decodeURIComponent(parts[2]);
-      if (!(field in ROW_TEXT_FIELDS) && !(field in ROW_NUMBER_FIELDS)) return null;
+      if (!Object.hasOwn(ROW_TEXT_FIELDS, field) && !Object.hasOwn(ROW_NUMBER_FIELDS, field)) return null;
       return { kind: "row", lotId: decodeURIComponent(parts[1]), field: field as RowTextField | RowNumberField };
     }
     if (parts[0] === "eval" && parts.length === 3) {
@@ -113,7 +113,7 @@ export function parseCellKey(key: string): ParsedKey | null {
     }
     if (parts[0] === "file" && parts.length === 2) {
       const field = decodeURIComponent(parts[1]);
-      if (!(field in FILE_SUMMARY_FIELDS)) return null;
+      if (!Object.hasOwn(FILE_SUMMARY_FIELDS, field)) return null;
       return { kind: "file", field: field as FileSummaryField };
     }
   } catch {
@@ -374,51 +374,80 @@ export function describeCell(sheet: AssetAdminScheduleSheet, key: string): { lot
 export const DRAFT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type StoredDraft = {
-  version: 1;
+  version: 2;
+  actorId: string;
   reportId: string;
-  /** The saved revision the edits were made against. */
+  draftId: string;
+  lineageId: string;
   revision: number;
   savedAt: string;
   edits: SheetEdit[];
+  overlaps: CellOverlap[];
+  dropped: SheetEdit[];
 };
 
-export function draftStorageKey(reportId: string) {
-  return `asset-insight:pv-draft:v1:${reportId}`;
+export function draftStoragePrefix(actorId: string, reportId: string) {
+  return `asset-insight:pv-draft:v2:${encodeURIComponent(actorId)}:${encodeURIComponent(reportId)}:`;
+}
+export function draftStorageKey(actorId: string, reportId: string, draftId: string) {
+  return `${draftStoragePrefix(actorId, reportId)}${encodeURIComponent(draftId)}`;
+}
+export function draftPointerKey(actorId: string, reportId: string) {
+  return `${draftStoragePrefix(actorId, reportId)}current`;
 }
 
 function isCellValue(value: unknown): value is CellValue {
   return value === null || typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
-
 function isColumn(value: unknown): value is AssetAdminScheduleEvaluatorColumn {
   return Boolean(value) && typeof value === "object" && typeof (value as { id?: unknown }).id === "string";
 }
+function isEdit(edit: unknown): edit is SheetEdit {
+  if (!edit || typeof edit !== "object") return false;
+  const value = edit as SheetEdit;
+  if (value.kind === "cell") return typeof value.key === "string" && !!parseCellKey(value.key) && isCellValue(value.from) && isCellValue(value.to);
+  return (value.kind === "add-column" || value.kind === "remove-column") && isColumn(value.column);
+}
+function isOverlap(value: unknown): value is CellOverlap {
+  if (!value || typeof value !== "object") return false;
+  const item = value as CellOverlap;
+  return typeof item.key === "string" && !!parseCellKey(item.key) && isCellValue(item.base) && isCellValue(item.theirs) && isCellValue(item.yours);
+}
 
-/** Read a stored copy back, refusing anything malformed, foreign or stale. */
-export function parseStoredDraft(raw: string | null, reportId: string, now = Date.now()): StoredDraft | null {
-  if (!raw) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return null;
+/** Rebase without forgetting an unresolved conflict or an edit to a removed row. */
+export function rebaseRecovery(latest: AssetAdminScheduleSheet, edits: readonly SheetEdit[],
+  previousOverlaps: readonly CellOverlap[] = [], previousDropped: readonly SheetEdit[] = []): RebaseResult {
+  const result = rebaseEdits(latest, edits);
+  const pending = new Set(result.pending.flatMap(edit => edit.kind === "cell" ? [edit.key] : []));
+  const overlaps = new Map<string, CellOverlap>();
+  for (const overlap of previousOverlaps) {
+    const theirs = cellValue(latest, overlap.key);
+    const yours = cellValue(result.sheet, overlap.key);
+    if (pending.has(overlap.key) && theirs !== undefined && yours !== undefined && theirs !== yours) {
+      overlaps.set(overlap.key, { ...overlap, theirs, yours });
+    }
   }
+  for (const overlap of result.overlaps) overlaps.set(overlap.key, overlap);
+  const dropped = new Map([...previousDropped, ...result.dropped].map(edit => [JSON.stringify(edit), edit]));
+  return { ...result, overlaps: [...overlaps.values()], dropped: [...dropped.values()] };
+}
+
+/** Unscoped legacy drafts are never attributed to the next signed-in person. */
+export function parseStoredDraft(raw: string | null, actorId: string, reportId: string, now = Date.now()): StoredDraft | null {
+  if (!raw || raw.length > 8 * 1024 * 1024) return null;
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return null; }
   const draft = value as Partial<StoredDraft>;
-  if (!draft || draft.version !== 1 || draft.reportId !== reportId || !Array.isArray(draft.edits)) return null;
+  if (!draft || draft.version !== 2 || !actorId || draft.actorId !== actorId || draft.reportId !== reportId ||
+      typeof draft.draftId !== "string" || !draft.draftId || !Array.isArray(draft.edits) ||
+      !Array.isArray(draft.overlaps) || !Array.isArray(draft.dropped)) return null;
   const savedAt = Date.parse(String(draft.savedAt || ""));
-  if (!Number.isFinite(savedAt) || now - savedAt > DRAFT_MAX_AGE_MS) return null;
-  const edits = draft.edits.filter((edit): edit is SheetEdit => {
-    if (!edit || typeof edit !== "object") return false;
-    if (edit.kind === "cell") return typeof edit.key === "string" && isCellValue(edit.from) && isCellValue(edit.to);
-    if (edit.kind === "add-column" || edit.kind === "remove-column") return isColumn(edit.column);
-    return false;
-  });
-  if (!edits.length) return null;
-  return {
-    version: 1,
-    reportId,
-    revision: Number.isInteger(draft.revision) ? Number(draft.revision) : 0,
-    savedAt: new Date(savedAt).toISOString(),
-    edits,
-  };
+  if (!Number.isFinite(savedAt) || now - savedAt > DRAFT_MAX_AGE_MS || savedAt - now > 60_000) return null;
+  const edits = draft.edits.filter(isEdit);
+  const overlaps = draft.overlaps.filter(isOverlap);
+  const dropped = draft.dropped.filter(isEdit);
+  // Empty checkpoints retire earlier copies after a successful save or discard.
+  return { version: 2, actorId, reportId, draftId: draft.draftId, lineageId: typeof draft.lineageId === "string" && draft.lineageId ? draft.lineageId : draft.draftId,
+    revision: Number.isSafeInteger(draft.revision) && Number(draft.revision) >= 0 ? Number(draft.revision) : 0,
+    savedAt: new Date(savedAt).toISOString(), edits, overlaps, dropped };
 }

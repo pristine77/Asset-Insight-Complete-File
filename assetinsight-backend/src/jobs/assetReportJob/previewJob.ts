@@ -1,3 +1,4 @@
+import { readCaptureLotIdentity, applyCaptureLotIdentities, assertUniqueInitialLotNumbers } from "../../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../../utils/photoWatermarkPolicy.js";
 import { normalizeAssetReportValuationMethods } from "../../utils/assetValuationSelection.js";
 import type { ValuationMethod } from "../../service/assetValuationService.js";
@@ -626,6 +627,8 @@ export async function runAssetPreviewJob(
          */
         scheduleAParentLotId?: string;
         reviewedLotNumber?: string;
+        captureLotId?: string;
+        captureLotNumber?: string;
       };
       const rawLots: any[] = Array.isArray(details?.mixed_lots)
         ? details.mixed_lots
@@ -645,6 +648,7 @@ export async function runAssetPreviewJob(
           return {
             count: Math.max(0, parseInt(String(entry?.count ?? 0), 10) || 0),
             ...(reviewedLotNumber ? { reviewedLotNumber } : {}),
+            ...readCaptureLotIdentity(entry),
             extraCount: Math.max(
               0,
               parseInt(String(entry?.extra_count ?? entry?.extraCount ?? 0), 10) || 0,
@@ -708,7 +712,7 @@ export async function runAssetPreviewJob(
 
         await assertAttemptOwned();
         const detectedNumbers =
-          await detectBundleLotNumbersFromPhotos(lotNumberPhotoInputs.filter((input) => !useMappings[input.groupIndex]?.reviewedLotNumber));
+          await detectBundleLotNumbersFromPhotos(lotNumberPhotoInputs.filter((input) => !useMappings[input.groupIndex]?.reviewedLotNumber && !useMappings[input.groupIndex]?.captureLotNumber));
         await assertAttemptOwned();
         const inputByGroup = new Map(
           lotNumberPhotoInputs.map((input) => [input.groupIndex, input]),
@@ -722,6 +726,7 @@ export async function runAssetPreviewJob(
               sourceImageIndex: inputByGroup.get(groupIndex)?.sourceImageIndex,
               detectedLotNumber: detectedNumbers.get(groupIndex),
               reviewedLotNumber: mapping.reviewedLotNumber,
+              captureLotNumber: mapping.captureLotNumber,
               mainImageCount: mapping.count,
             }),
           );
@@ -775,6 +780,8 @@ export async function runAssetPreviewJob(
             lotCounter += 1;
             let nextLot = {
               ...fallbackLot,
+              mixed_group_index: lotIdx + 1,
+              sub_mode: subMode,
               lot_id: `lot-${String(lotCounter).padStart(3, "0")}`,
               ...(bundleDiagnostic
                 ? {
@@ -1310,6 +1317,8 @@ export async function runAssetPreviewJob(
       });
     }
 
+    lots = applyCaptureLotIdentities(lots, details?.mixed_lots);
+
     // Assign event-scoped numbers only during initial analysis, after enrichment
     // has finished. Saves, file retries and delivery retain reviewed identities.
     lots = assignAssetLotVideos(lots, videos, videoUrls, details);
@@ -1322,6 +1331,8 @@ export async function runAssetPreviewJob(
         assertOwned: assertAttemptOwned,
       });
     }
+
+    assertUniqueInitialLotNumbers(lots);
 
     let valuationData = null;
     const selectedValuationMethods = normalizeAssetReportValuationMethods(details) as ValuationMethod[];

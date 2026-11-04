@@ -1,3 +1,4 @@
+import { assertOrdinaryReport } from './arrivalPhotoDraft';
 import api from './api';
 import { allowsCloudDraft } from './offlineDraftPolicy';
 import OfflineCaptureStore from './offlineCaptureStore';
@@ -330,6 +331,7 @@ const reportDraftService = {
     const operation = createUploadOperation();
     const assertAllowed = () => {
       operation.assertActive();
+      assertOrdinaryReport(draft.formData);
       if (!allowsCloudDraft(draft)) throw new Error('Offline captures save only on this device. Use Submit when you are ready to upload.');
       if (!draft.ownerId || draft.ownerId !== OfflineCaptureStore.getOwnerId()) throw new Error('Sign in to the account that owns this draft.');
     };

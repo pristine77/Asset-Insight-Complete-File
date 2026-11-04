@@ -17,6 +17,8 @@ import { advanceAuthSession } from "@/lib/auth-storage";
 
 const mocks = vi.hoisted(() => ({
   getIncoming: vi.fn(),
+  getArrivalPhotoRequests: vi.fn().mockResolvedValue([]),
+  search: "",
   getStatus: vi.fn(),
   getIncomingSummary: vi.fn(),
   claim: vi.fn(),
@@ -37,6 +39,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(mocks.search),
   useRouter: () => ({
     push: mocks.routerPush,
     replace: vi.fn(),
@@ -54,6 +57,7 @@ vi.mock("@/services/auctioneer", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/auctioneer")>();
   const service = {
     getIncoming: mocks.getIncoming,
+    getArrivalPhotoRequests: mocks.getArrivalPhotoRequests,
     getStatus: mocks.getStatus,
     getIncomingSummary: mocks.getIncomingSummary,
     claim: mocks.claim,
@@ -157,6 +161,8 @@ async function selectContract(contractNo: string) {
 
 describe("Incoming", () => {
   beforeEach(() => {
+    mocks.search = "";
+    mocks.getArrivalPhotoRequests.mockReset().mockResolvedValue([]);
     mocks.getIncoming.mockReset();
     mocks.getStatus.mockReset();
     mocks.getIncomingSummary.mockReset();
@@ -862,5 +868,29 @@ describe("Incoming", () => {
     expect(mocks.routerPush).toHaveBeenCalledWith(
       "/reports?search=CV%2F200%20%26%20300"
     );
+  });
+});
+
+
+describe("arrival request states", () => {
+  it("shows a load failure instead of an empty queue", async () => {
+    mocks.search = "arrival";
+    mocks.getIncoming.mockResolvedValue([]);
+    mocks.getStatus.mockResolvedValue({ enabled: true, configured: true });
+    mocks.getArrivalPhotoRequests.mockRejectedValue(new Error("network unavailable"));
+    render(<SWRConfig value={{ provider: () => new Map(), shouldRetryOnError: false }}><IncomingPage /></SWRConfig>);
+    fireEvent.click(await screen.findByRole("tab", { name: /Arrival Photo Requests/ }));
+    await screen.findByText(/Arrival photo requests could not be loaded/);
+    expect(screen.queryByText("No arrival photo requests")).not.toBeInTheDocument();
+  });
+  it("reacts to a cached route changing to the arrival query", async () => {
+    mocks.search = "";
+    mocks.getArrivalPhotoRequests.mockResolvedValue([]);
+    const view = render(<SWRConfig value={{ provider: () => new Map() }}><IncomingPage /></SWRConfig>);
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Outstanding/ })).toHaveAttribute("aria-selected", "true"));
+    mocks.search = "tab=arrival";
+    view.rerender(<SWRConfig value={{ provider: () => new Map() }}><IncomingPage /></SWRConfig>);
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Arrival Photo Requests/ })).toHaveAttribute("aria-selected", "true"));
+    mocks.search = "";
   });
 });

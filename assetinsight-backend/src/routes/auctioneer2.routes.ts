@@ -17,7 +17,7 @@ import {
   reconcileAuctioneerDeliveryController,
   sendAuctioneerDelivery,
 } from "../controller/auctioneer2.controller.js";
-import multer from "multer";
+import { arrivalPhotoUpload } from "../middleware/arrivalPhotoUpload.js";
 import { listArrivalPhotoRequestsController, sendArrivalPhotosController } from "../controller/arrivalPhotos.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
 import type { AuthRequest } from "../middleware/auth.middleware.js";
@@ -60,11 +60,9 @@ router.use((_req: AuthRequest, res: Response, next: NextFunction) => {
 
 router.get("/incoming", getAuctioneerIncoming);
 // Arrival photo requests (owner, 2026-11-03; service/arrivalPhotoService.ts):
-// the signed-in user's open requests, and one request's photos, held in memory
-// only long enough to watermark them and send them on to Auctioneer.
-const arrivalPhotoUpload = multer({ storage: multer.memoryStorage(), limits: { files: 60, fileSize: 20 * 1024 * 1024 } });
+// the signed-in user's open requests and bounded, disk-backed photo staging.
 router.get("/arrival-photo-requests", listArrivalPhotoRequestsController);
-router.post("/arrival-photo-requests/:requestId/photos", arrivalPhotoUpload.array("photos", 60), sendArrivalPhotosController);
+router.post("/arrival-photo-requests/:requestId/photos", arrivalPhotoUpload, sendArrivalPhotosController);
 router.get("/incoming/summary", getAuctioneerIncomingSummaryController);
 router.post("/incoming/:cycleKey/claim", claimAuctioneerWork);
 router.get("/work-items/:id/setup", getAuctioneerSetup);

@@ -50,6 +50,12 @@ beforeEach(() => {
 });
 
 describe("Lot Listing Bundle initial scan orchestration", () => {
+  it("keeps capture identity instead of reading equipment numbers and retains every photo", async () => {
+    const photos = urls(4);
+    const result = await analyzeLotListingGroupsWithAssetService([{ count:4, mode:"single_lot", capture_lot_id:"stable-native-id", capture_lot_number:"27.1" }], photos, [], "en", "CAD", false);
+    expect(vi.mocked(detectBundleLotNumbersFromPhotos).mock.calls[0][0]).toEqual([]);
+    expect(result.lots[0]).toMatchObject({lot_number:"27.1", image_urls:photos, analysis_metadata:{capture_lot_identity:{id:"stable-native-id",number:"27.1",applied:true}}});
+  });
   it("keeps reviewed upload numbers without re-reading their sign photos", async () => {
     const photos = urls(104);
     const result = await analyzeLotListingGroupsWithAssetService(

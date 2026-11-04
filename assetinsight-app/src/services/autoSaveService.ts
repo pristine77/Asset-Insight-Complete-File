@@ -1,3 +1,4 @@
+import { isArrivalPhotoDraft, type ArrivalPhotoDraftData } from './arrivalPhotoDraft';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -93,7 +94,7 @@ export interface SavedLotData {
   coverIndex: number;
 }
 
-export interface AutoSaveFormData {
+export interface AutoSaveFormData extends ArrivalPhotoDraftData {
   manualSubmissionRequired?: boolean;
   auctionServiceSelections?: Record<string, unknown>;
   auctionCloseContract?: boolean;
@@ -858,12 +859,15 @@ export const AutoSaveService = {
     if (OfflineCaptureStore.getOwnerId() !== ownerId) throw new Error('The signed-in account changed while saving.');
     const contractNo = args.formData.contractNo?.trim();
     const normalizedContractNo = normalizeDraftContractNo(contractNo);
-    if (!normalizedContractNo && (args.captureMode || args.formData.captureMode || 'online') !== 'offline') {
+    if (!isArrivalPhotoDraft(args.formData) && !normalizedContractNo && (args.captureMode || args.formData.captureMode || 'online') !== 'offline') {
       throw new Error('Contract number is required before saving this draft.');
     }
 
     // A contract groups multiple independent reports; only an exact draft ID is a retry.
     const existing = args.id ? await OfflineCaptureStore.getDraft(args.id) : null;
+    if (existing && isArrivalPhotoDraft(existing.formData) !== isArrivalPhotoDraft(args.formData)) {
+      throw new Error('This saved capture has a different purpose. Start a new capture; the original photos remain safe.');
+    }
     const formData: AutoSaveFormData = { ...existing?.formData, ...args.formData,
       clientSubmissionId: args.formData.clientSubmissionId || existing?.formData.clientSubmissionId,
       auctioneerWorkItemId: args.formData.auctioneerWorkItemId || existing?.formData.auctioneerWorkItemId,

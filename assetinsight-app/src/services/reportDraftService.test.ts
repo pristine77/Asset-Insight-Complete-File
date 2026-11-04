@@ -426,3 +426,10 @@ it('never returns cloud detail into a different account after a delayed GET', as
   });
   await expect(reportDraftService.get('cloud-draft')).rejects.toThrow('account changed');
 });
+
+
+test('arrival recovery drafts cannot create a cloud report preview', async () => {
+  await expect(reportDraftService.upsertFromLocalDraft(draftWith({ type: 'lotListing', formData: { capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: 'request' } }))).rejects.toThrow('Arrival Photos');
+  expect(api.post).not.toHaveBeenCalled();
+  expect(uploadLocalFileToPresignedUrl).not.toHaveBeenCalled();
+});

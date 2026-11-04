@@ -70,3 +70,13 @@ test('legacy imported metadata without a verified mapping remains review-only', 
   await expect(prepareOfflineSubmission(draft)).rejects.toThrow('assignment verified');
   expect(auctioneer.getSetup).not.toHaveBeenCalled();
 });
+
+
+test('arrival captures cannot enter the ordinary offline submit queue', async () => {
+  await expect(prepareOfflineSubmission({ ...draft, formData: { ...draft.formData, capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: 'request' } })).rejects.toThrow('Arrival Photos');
+  expect(auctioneer.getSetup).not.toHaveBeenCalled();
+});
+test('a freshly reloaded arrival marker also blocks an old ordinary snapshot', async () => {
+  jest.mocked(autoSave.getDraft).mockResolvedValue({ ...draft, formData: { ...draft.formData, capturePurpose: 'arrivalPhotos' } });
+  await expect(prepareOfflineSubmission(draft)).rejects.toThrow('Arrival Photos');
+});

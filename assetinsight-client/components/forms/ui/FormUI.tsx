@@ -685,7 +685,7 @@ export type FormTransferProgressScreenProps = {
   transferredBytes?: number;
   cancelling?: boolean;
   finalizing?: boolean;
-  onCancel: () => void;
+  onCancel?: () => void;
   className?: string;
 };
 
@@ -754,7 +754,7 @@ export function FormTransferProgressScreen({
   const dialogRef = useRef<HTMLElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const onCancelRef = useRef(onCancel);
-  const canCancelRef = useRef(!cancelling && !finalizing);
+  const canCancelRef = useRef(Boolean(onCancel) && !cancelling && !finalizing);
   const generatedId = useId();
   const titleId = `form-transfer-title-${generatedId}`;
   const descriptionId = `form-transfer-description-${generatedId}`;
@@ -773,7 +773,7 @@ export function FormTransferProgressScreen({
   const TransferIcon = mode === "draft-save" ? Save : CloudUpload;
 
   onCancelRef.current = onCancel;
-  canCancelRef.current = !cancelling && !finalizing;
+  canCancelRef.current = Boolean(onCancel) && !cancelling && !finalizing;
 
   useEffect(() => {
     const previouslyFocused =
@@ -797,7 +797,7 @@ export function FormTransferProgressScreen({
         focusTransferControl();
       } else if (event.key === "Escape" && canCancelRef.current) {
         event.preventDefault();
-        onCancelRef.current();
+        onCancelRef.current?.();
       }
     };
     document.addEventListener("keydown", containFocus);
@@ -943,7 +943,7 @@ export function FormTransferProgressScreen({
               />
               {config.finalizingLabel}
             </div>
-          ) : (
+          ) : onCancel ? (
             <button
               ref={cancelButtonRef}
               type="button"
@@ -964,7 +964,7 @@ export function FormTransferProgressScreen({
               )}
               {cancelling ? config.cancellingLabel : config.cancelLabel}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     </section>

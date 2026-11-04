@@ -564,3 +564,36 @@ describe('arrival photo requests', () => {
     await expect(auctioneerService.sendArrivalPhotos('request-1', [{ uri: 'file:///a.jpg' }])).rejects.toThrow('did not confirm');
   });
 });
+
+
+describe('arrival delivery confirmation safety', () => {
+  it.each([{}, { sent: 1, stored: 0, skipped: 0, photoCount: 0 },
+    { sent: 2, stored: 2, skipped: 0, photoCount: 2 },
+    { sent: 1, stored: 1, skipped: 0, photoCount: 0 },
+    { sent: 1, stored: -1, skipped: 2, photoCount: 1 },
+    { sent: 1, stored: 0.5, skipped: 0.5, photoCount: 1 },
+  ])('refuses incomplete or invalid receipts: %j', async data => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data } });
+    await expect(auctioneerService.sendArrivalPhotos('request', [{ uri: 'file:///original.jpg' }])).rejects.toThrow('did not confirm');
+  });
+  it('accepts a fully accounted duplicate receipt', async () => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data: { sent: 2, stored: 0, skipped: 2, photoCount: 1 } } });
+    await expect(auctioneerService.sendArrivalPhotos('request', [{ uri: 'file:///a.jpg' }, { uri: 'file:///same.jpg' }])).resolves.toMatchObject({ sent: 2, skipped: 2 });
+    expect(jest.mocked(api.post).mock.calls[0][2]).toMatchObject({ skipAuthRefreshReplay: true });
+  });
+  it('ignores progress and receipt after a sign-in session changes', async () => {
+    let resolve!: (value: any) => void;
+    jest.mocked(api.post).mockReturnValue(new Promise(done => { resolve = done; }));
+    const progress = jest.fn();
+    const sent = auctioneerService.sendArrivalPhotos('request', [{ uri: 'file:///a.jpg' }], progress);
+    const settled = sent.catch(error => error);
+    const options = jest.mocked(api.post).mock.calls[0][2] as any;
+    options.onUploadProgress({ loaded: 10, total: 10 });
+    expect(progress).toHaveBeenLastCalledWith(95);
+    invalidateAuthOperations();
+    options.onUploadProgress({ loaded: 10, total: 10 });
+    expect(progress).toHaveBeenCalledTimes(1);
+    resolve({ data: { success: true, data: { sent: 1, stored: 1, skipped: 0, photoCount: 1 } } });
+    expect(await settled).toMatchObject({ code: 'ERR_CANCELED' });
+  });
+});

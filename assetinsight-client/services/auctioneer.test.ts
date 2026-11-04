@@ -675,3 +675,45 @@ describe("AuctioneerService contract close", () => {
     await expect(AuctioneerService.closeContractPart("contract-1")).resolves.toMatchObject(outcome);
   });
 });
+
+describe("arrival photo receipts", () => {
+  const files = [new File(["one"], "one.jpg", { type: "image/jpeg" }), new File(["two"], "two.jpg", { type: "image/jpeg" })];
+  beforeEach(() => { vi.mocked(API.get).mockReset(); vi.mocked(API.post).mockReset(); });
+  it.each([
+    { success: false }, {}, { success: true, data: {} },
+    { success: true, data: { sent: 1, stored: 1, skipped: 0, photoCount: 1 } },
+    { success: true, data: { sent: 2, stored: 0, skipped: 0, photoCount: 0 } },
+    { success: true, data: { sent: 2, stored: 2, skipped: 0, photoCount: 1 } },
+    { success: true, data: { sent: 2, stored: 3, skipped: -1, photoCount: 3 } },
+    { success: true, data: { sent: "2", stored: 2, skipped: 0, photoCount: 2 } },
+  ])("refuses an unconfirmed or partial receipt %#", async (data) => {
+    vi.mocked(API.post).mockResolvedValue({ data });
+    const progress = vi.fn();
+    await expect(AuctioneerService.sendArrivalPhotos("request-one", files, progress)).rejects.toThrow(/did not confirm/);
+    expect(progress).not.toHaveBeenCalledWith(100);
+  });
+  it("accepts acknowledged originals and already-stored retry photos", async () => {
+    const data = { sent: 2, stored: 0, skipped: 2, photoCount: 6 };
+    vi.mocked(API.post).mockResolvedValue({ data: { success: true, data } });
+    const progress = vi.fn();
+    await expect(AuctioneerService.sendArrivalPhotos("request-one", files, progress)).resolves.toEqual(data);
+    expect(progress).toHaveBeenLastCalledWith(100);
+  });
+  it("holds upload progress below completion until a receipt arrives", async () => {
+    vi.mocked(API.post).mockImplementation(async (_url, _body, config) => {
+      config?.onUploadProgress?.({ loaded: 100, total: 100 } as never);
+      throw new Error("lost response");
+    });
+    const progress = vi.fn();
+    await expect(AuctioneerService.sendArrivalPhotos("request-one", files, progress)).rejects.toThrow("lost response");
+    expect(progress).toHaveBeenLastCalledWith(95);
+  });
+  it("does not call the server with oversized photo counts", async () => {
+    await expect(AuctioneerService.sendArrivalPhotos("request-one", Array(61).fill(files[0]))).rejects.toThrow(/60/);
+    expect(API.post).not.toHaveBeenCalled();
+  });
+  it.each([{ success: false, data: [] }, {}, { success: true, data: {} }])("does not turn a malformed list into an empty queue %#", async (data) => {
+    vi.mocked(API.get).mockResolvedValue({ data });
+    await expect(AuctioneerService.getArrivalPhotoRequests()).rejects.toThrow(/could not be confirmed/);
+  });
+});

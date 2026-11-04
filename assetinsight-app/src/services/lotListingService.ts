@@ -1,3 +1,5 @@
+import { captureLotIdentity } from './captureLotIdentity';
+import { assertOrdinaryReport } from './arrivalPhotoDraft';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import api from "./api";
 import { createUploadOperation, cancellableUploadRequest, type UploadOperation } from './uploadCancellation';
@@ -33,6 +35,8 @@ export interface LotListingDetails {
   watermark_images?: boolean;
   valuation_methods?: Array<'FML' | 'TKV' | 'OLV' | 'FLV'>;
   mixed_lots?: Array<{
+    capture_lot_id?: string;
+    capture_lot_number?: string;
     count: number;
     extra_count?: number;
     video_count?: number;
@@ -68,6 +72,7 @@ export interface LotFile {
 }
 
 export interface LotListingLot {
+  lotNumber?: string;
   id: string;
   files: LotFile[];
   extraFiles?: LotFile[];
@@ -163,8 +168,14 @@ class LotListingService {
     onUploadProgress?: DirectUploadProgressCallback,
     options?: { operation?: UploadOperation; handoff?: ReportTransferHandoff }
   ): Promise<{ jobId: string; message: string; reportId?: string; status?: string; phase?: string; backgroundStaged?: boolean }> {
+    assertOrdinaryReport(details);
     const operation = createUploadOperation(options?.operation);
     const mixedLots = lots.map((lot, index) => ({
+      ...(!details.auctioneer_work_item_id && !details.auctionsoft ? {
+        ...captureLotIdentity(lot, index),
+        ...(details.mixed_lots?.[index]?.capture_lot_id ? { capture_lot_id: details.mixed_lots[index].capture_lot_id } : {}),
+        ...(details.mixed_lots?.[index]?.capture_lot_number ? { capture_lot_number: details.mixed_lots[index].capture_lot_number } : {}),
+      } : {}),
       ...(details.auctioneer_work_item_id ? {
         source_key: details.mixed_lots?.[index]?.source_key,
         source_lot_id: details.mixed_lots?.[index]?.source_lot_id,

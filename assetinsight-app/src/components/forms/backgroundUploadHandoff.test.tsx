@@ -554,7 +554,8 @@ describe('Arrival Photos Submit', () => {
   };
 
   async function mountArrival() {
-    jest.mocked(AutoSaveService.getDraft).mockResolvedValue(ordinaryDraft('lotListing') as any);
+    const draft = ordinaryDraft('lotListing');
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft, formData: { ...draft.formData, capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId, arrivalPhotoRequest: request } } as any);
     jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
     const closed = jest.fn();
     await render(<LotListingFormSheet visible backgroundUploads draftIdToLoad="local-parent" arrivalRequest={request} onClose={closed} />);
@@ -582,9 +583,89 @@ describe('Arrival Photos Submit', () => {
     });
     const closed = await mountArrival();
     await fireEvent.press(await screen.findByRole('button', { name: 'Send arrival photos' }));
-    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Not sent', expect.any(String)));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Arrival photos not confirmed', expect.any(String)));
     expect(closed).not.toHaveBeenCalled();
     expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
     expect(lotListingService.createLotListing).not.toHaveBeenCalled();
   });
+
+  it('refuses to repurpose an existing ordinary draft or its photos', async () => {
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue(ordinaryDraft('lotListing') as any);
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    await fireEvent.press(screen.getByTestId('arrival-photos-switch'));
+    expect(Alert.alert).toHaveBeenCalledWith('Start a new capture', expect.any(String));
+    expect(screen.getByTestId('arrival-photos-switch').props.accessibilityState.checked).toBe(false);
+    expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
+    expect(auctioneerService.sendArrivalPhotos).not.toHaveBeenCalled();
+  });
+
+  it('restores saved Arrival purpose without an Incoming prop, saves offline, then sends only Arrival', async () => {
+    const draft = ordinaryDraft('lotListing');
+    const saved = { ...draft, formData: { ...draft.formData, capturePurpose: 'arrivalPhotos' as const,
+      arrivalPhotoRequestId: request.requestId, arrivalPhotoRequest: request } };
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue(saved as any);
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    expect(screen.getByTestId('arrival-photos-switch').props.accessibilityState.checked).toBe(true);
+    await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
+    await waitFor(() => expect(AutoSaveService.saveDraft).toHaveBeenCalled());
+    const latest = jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0];
+    expect(latest.formData).toMatchObject({ capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId });
+    await cleanup();
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...saved, captureMode: 'offline', formData: latest.formData } as any);
+    jest.mocked(auctioneerService.sendArrivalPhotos).mockResolvedValue({ sent: 3, stored: 3, skipped: 0, photoCount: 3 });
+    const closed = jest.fn();
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={closed} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    await fireEvent.press(screen.getByRole('button', { name: 'Send arrival photos' }));
+    await waitFor(() => expect(closed).toHaveBeenCalledTimes(1));
+    expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+    expect(auctioneerService.sendArrivalPhotos).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not offer ineffective Pause while delivery is pending and retains photos on uncertainty', async () => {
+    let reject!: (cause: any) => void;
+    jest.mocked(auctioneerService.sendArrivalPhotos).mockReturnValue(new Promise((_, fail) => { reject = fail; }));
+    const closed = await mountArrival();
+    const pressed = fireEvent.press(screen.getByRole('button', { name: 'Send arrival photos' }));
+    await waitFor(() => expect(auctioneerService.sendArrivalPhotos).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: 'Pause upload' })).toBeNull();
+    expect(screen.getByTestId('lot-upload-progress').props.visible).toBe(true);
+    await act(async () => { reject(new Error('Network Error')); });
+    await pressed;
+    expect(closed).not.toHaveBeenCalled();
+    expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
+    expect(AutoSaveService.removeDraftRecordOnly).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledWith('Arrival photos not confirmed', expect.any(String));
+  });
+
+  it('does not clean up or notify the next account after a late response', async () => {
+    let resolve!: (receipt: any) => void;
+    jest.mocked(auctioneerService.sendArrivalPhotos).mockReturnValue(new Promise(done => { resolve = done; }));
+    const closed = await mountArrival();
+    const pressed = fireEvent.press(screen.getByRole('button', { name: 'Send arrival photos' }));
+    await waitFor(() => expect(auctioneerService.sendArrivalPhotos).toHaveBeenCalledTimes(1));
+    mockOwner = 'new-owner'; setUploadOwner(mockOwner);
+    await act(async () => { resolve({ sent: 3, stored: 3, skipped: 0, photoCount: 3 }); });
+    await pressed;
+    expect(closed).not.toHaveBeenCalled();
+    expect(AutoSaveService.removeDraftRecordOnly).not.toHaveBeenCalled();
+    expect(Alert.alert).not.toHaveBeenCalledWith('Arrival photos sent', expect.any(String));
+  });
+
+
+  it('keeps a recovered target visible when it has left the open-request list', async () => {
+    const draft = ordinaryDraft('lotListing');
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft, formData: { ...draft.formData,
+      capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId, arrivalPhotoRequest: request } } as any);
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([]);
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    await waitFor(() => expect(auctioneerService.getArrivalPhotoRequests).toHaveBeenCalled());
+    expect(screen.getByRole('radio', { name: 'Lot 3012, Tractor' }).props.accessibilityState.selected).toBe(true);
+  });
+
 });

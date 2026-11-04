@@ -3,6 +3,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Braces, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { ADMIN_SESSION_EVENT, ADMIN_SESSION_STORAGE } from "@/lib/adminSession";
 import {
   Alert,
   alpha,
@@ -504,11 +505,23 @@ async function fetchReportPreview(reportId: string, signal?: AbortSignal): Promi
   return payload as ReportPreviewPayload;
 }
 
+async function fetchAdminActor(signal?: AbortSignal): Promise<string> {
+  const response = await fetch("/api/admin/me", { cache: "no-store", signal });
+  const payload = await response.json().catch(() => ({}));
+  const actor = payload?.user?._id ?? payload?.user?.id;
+  if (!response.ok || typeof actor !== "string" || !actor) throw new Error("Your sign-in could not be verified. Your browser draft is kept; sign in again before saving.");
+  return actor;
+}
+
+type EditorScope = { alive: boolean; actorId: string | null; requests: Set<AbortController> };
+
 export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: ReportDataPageProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReportPreviewPayload | null>(null);
+  const [actorId, setActorId] = useState<string | null>(null);
+  const scopeRef = useRef<EditorScope | null>(null);
   const [previewOrigin, setPreviewOrigin] = useState<AssetSheetPreviewOrigin>({ kind: "load" });
   // Read by the save and the 30-second check without waiting for a render.
   const previewRef = useRef<ReportPreviewPayload | null>(null);
@@ -537,150 +550,139 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
 
   useEffect(() => {
     const controller = new AbortController();
-
-    async function loadPreview() {
-      setLoading(true);
-      setError(null);
+    const scope: EditorScope = { alive: true, actorId: null, requests: new Set([controller]) };
+    scopeRef.current = scope;
+    savingRef.current = false;
+    sheetDirtyRef.current = false;
+    setActorId(null);
+    setSavingAssetSheet(false);
+    const current = () => scope.alive && scopeRef.current === scope;
+    const invalidate = () => {
+      // Finish the last focused entry while its old account/report is still mounted.
+      const active = document.activeElement;
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur();
+      scope.alive = false;
+      for (const request of scope.requests) request.abort();
+      if (scopeRef.current !== scope) return;
       showPreview(null, { kind: "load" });
-      setAssetSheetSaveError(null);
-      setAssetSheetSaveSuccess(null);
-      setAssetSheetSaveWarning(null);
-
+      setLoading(false);
+      setError("Your sign-in changed. Reopen this report after signing in; your unsaved browser draft is kept for the original account.");
+    };
+    const onStorage = (event: StorageEvent) => { if (event.key === ADMIN_SESSION_STORAGE) invalidate(); };
+    window.addEventListener(ADMIN_SESSION_EVENT, invalidate);
+    window.addEventListener("storage", onStorage);
+    async function loadPreview() {
+      setLoading(true); setError(null);
+      showPreview(null, { kind: "load" });
+      setAssetSheetSaveError(null); setAssetSheetSaveSuccess(null); setAssetSheetSaveWarning(null);
       try {
-        const nextPreview = await fetchReportPreview(reportId, controller.signal);
-        showPreview(nextPreview, { kind: "load" });
+        const actor = await fetchAdminActor(controller.signal);
+        if (!current()) return;
+        scope.actorId = actor;
+        const next = await fetchReportPreview(reportId, controller.signal);
+        if (!current()) return;
+        if (await fetchAdminActor(controller.signal) !== actor) { invalidate(); return; }
+        if (!current()) return;
+        setActorId(actor);
+        showPreview(next, { kind: "load" });
         setSelectedLot(0);
-        setActiveTab(
-          pvOnly || nextPreview.variant === "assetScheduleSheet" ? "schedule" : "data"
-        );
-      } catch (loadError) {
-        if (controller.signal.aborted) return;
-        setError(loadError instanceof Error ? loadError.message : "Failed to load report data");
+        setActiveTab(pvOnly || next.variant === "assetScheduleSheet" ? "schedule" : "data");
+      } catch (failure) {
+        if (current()) setError(failure instanceof Error ? failure.message : "Failed to load report data");
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        scope.requests.delete(controller);
+        if (current()) setLoading(false);
       }
     }
-
     void loadPreview();
-    return () => controller.abort();
+    return () => {
+      scope.alive = false;
+      for (const request of scope.requests) request.abort();
+      window.removeEventListener(ADMIN_SESSION_EVENT, invalidate);
+      window.removeEventListener("storage", onStorage);
+    };
   }, [pvOnly, reportId, showPreview]);
 
-  const saveAssetScheduleSheet = useCallback(
-    async (assetScheduleSheet: AssetAdminScheduleSheet): Promise<AssetSheetSaveOutcome> => {
-      savingRef.current = true;
-      setSavingAssetSheet(true);
-      setAssetSheetSaveError(null);
-      setAssetSheetSaveSuccess(null);
-      setAssetSheetSaveWarning(null);
-      const baseRevision = previewRef.current?.revision;
-
-      try {
-        const response = await fetch(
-          `/api/admin/reports/${encodeURIComponent(reportId)}/asset-schedule-sheet`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              assetScheduleSheet,
-              ...(typeof baseRevision === "number" ? { baseRevision } : {}),
-            }),
-          }
-        );
-        const payload = await response.json().catch(() => ({}));
-        if (response.status === 409 && (payload as { code?: string }).code === "PV_REVISION_CONFLICT") {
-          // Someone else saved first. The server refused the whole sheet so
-          // their work is not overwritten. Load their copy: the sheet puts
-          // these edits on top of it and saves again. Never reload the page,
-          // which is what lost file 95099's appraisal (2026-11-03).
-          let latest: ReportPreviewPayload;
-          try {
-            latest = await fetchReportPreview(reportId);
-          } catch {
-            throw new Error(
-              "Someone else saved changes to this file, and their version could not be loaded. Your changes are still on this page. Press Save changes again."
-            );
-          }
-          showPreview(latest, { kind: "newer", afterRefusedSave: true });
-          return "conflict";
-        }
-        if (!response.ok) {
-          throw new Error(
-            `${String((payload as { message?: string })?.message || "The changes could not be saved")
-              .trim()
-              .replace(/[.!]?$/, ".")} Your changes are still on this page.`
-          );
-        }
-
-        const nextPreview = payload as ReportPreviewPayload;
-        showPreview(nextPreview, { kind: "own-save", submitted: assetScheduleSheet });
-        if (nextPreview.files_regeneration_warning) {
-          setAssetSheetSaveWarning(nextPreview.files_regeneration_warning);
-        } else {
-          setAssetSheetSaveSuccess(
-            nextPreview.files_regeneration_coalesced
-              ? "Changes saved. The latest edits will regenerate after the current file run."
-              : nextPreview.files_regeneration_queued
-                ? "Changes saved. Files are regenerating for My Reports."
-                : "Changes saved."
-          );
-        }
-        return "saved";
-      } catch (saveError) {
-        setAssetSheetSaveError(
-          saveError instanceof Error
-            ? saveError.message
-            : "The changes could not be saved. Your changes are still on this page."
-        );
-        return "failed";
-      } finally {
-        savingRef.current = false;
-        setSavingAssetSheet(false);
+  const saveAssetScheduleSheet = useCallback(async (assetScheduleSheet: AssetAdminScheduleSheet): Promise<AssetSheetSaveOutcome> => {
+    const scope = scopeRef.current;
+    if (!scope?.alive || !scope.actorId || savingRef.current) return "failed";
+    const controller = new AbortController();
+    scope.requests.add(controller);
+    const current = () => scope.alive && scopeRef.current === scope;
+    savingRef.current = true;
+    setSavingAssetSheet(true); setAssetSheetSaveError(null); setAssetSheetSaveSuccess(null); setAssetSheetSaveWarning(null);
+    const baseRevision = previewRef.current?.revision;
+    try {
+      if (await fetchAdminActor(controller.signal) !== scope.actorId) throw new Error("Your sign-in changed. Your original account's browser draft is kept. Reopen the report before saving.");
+      if (!current()) return "failed";
+      const response = await fetch(`/api/admin/reports/${encodeURIComponent(reportId)}/asset-schedule-sheet`, {
+        method: "PATCH", signal: controller.signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assetScheduleSheet, expectedActorId: scope.actorId,
+          ...(typeof baseRevision === "number" ? { baseRevision } : {}) }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!current()) return "failed";
+      if (await fetchAdminActor(controller.signal) !== scope.actorId) throw new Error("Your sign-in changed. Check the saved report after signing in; this response was not applied to a different account.");
+      if (!current()) return "failed";
+      if (response.status === 409 && payload.code === "PV_REVISION_CONFLICT") {
+        const latest = await fetchReportPreview(reportId, controller.signal);
+        if (!current()) return "failed";
+        if (await fetchAdminActor(controller.signal) !== scope.actorId) throw new Error("Your sign-in changed. Your original account's browser draft is kept.");
+        if (!current()) return "failed";
+        showPreview(latest, { kind: "newer", afterRefusedSave: true });
+        return "conflict";
       }
-    },
-    [reportId, showPreview]
-  );
+      if (!response.ok) throw new Error(`${String(payload.message || "The changes could not be saved").trim().replace(/[.!]?$/, ".")} Your changes are still on this page.`);
+      const next = payload as ReportPreviewPayload;
+      if (!next.assetScheduleSheet || next.reportId !== previewRef.current?.reportId || typeof next.revision !== "number") {
+        throw new Error("The save response could not be verified. Your changes are kept; check the report before trying again.");
+      }
+      showPreview(next, { kind: "own-save", submitted: assetScheduleSheet });
+      if (next.files_regeneration_warning) setAssetSheetSaveWarning(next.files_regeneration_warning);
+      else setAssetSheetSaveSuccess(next.files_regeneration_coalesced ? "Changes saved. The latest edits will regenerate after the current file run."
+        : next.files_regeneration_queued ? "Changes saved. Files are regenerating for My Reports." : "Changes saved.");
+      return "saved";
+    } catch (failure) {
+      if (current()) setAssetSheetSaveError(failure instanceof Error ? failure.message : "The changes could not be saved. Your changes are still on this page.");
+      return "failed";
+    } finally {
+      scope.requests.delete(controller);
+      if (current()) { savingRef.current = false; setSavingAssetSheet(false); }
+    }
+  }, [reportId, showPreview]);
 
-  // The 30-second check for someone else's save. A newer copy goes to the
-  // sheet, which shows their changes and keeps any unsaved edits on top, so a
-  // later Save is not refused. Skipped while hidden or saving; a failed check
-  // is simply tried again next time.
   const hasProposalValuation = Boolean(preview?.assetScheduleSheet);
   useEffect(() => {
-    if (!hasProposalValuation) return;
+    const scope = scopeRef.current;
+    if (!hasProposalValuation || !scope?.alive || !scope.actorId) return;
     let stopped = false;
     let inFlight: AbortController | null = null;
-
+    const current = () => !stopped && scope.alive && scopeRef.current === scope;
     const check = async () => {
-      if (stopped || inFlight || savingRef.current || document.visibilityState === "hidden") return;
+      if (!current() || inFlight || savingRef.current || document.visibilityState === "hidden") return;
       const controller = new AbortController();
-      inFlight = controller;
+      inFlight = controller; scope.requests.add(controller);
       try {
-        const latest = await fetchReportPreview(reportId, controller.signal);
-        // A save that started meanwhile brings its own copy back.
-        if (stopped || savingRef.current) return;
-        const known = previewRef.current?.revision ?? 0;
-        if (typeof latest.revision === "number" && latest.revision > known) {
-          showPreview(latest, { kind: "newer" });
+        if (await fetchAdminActor(controller.signal) !== scope.actorId) {
+          window.dispatchEvent(new Event(ADMIN_SESSION_EVENT)); return;
         }
-      } catch {
-        // Offline or a brief server error: the next check tries again.
-      } finally {
-        if (inFlight === controller) inFlight = null;
-      }
+        if (!current() || savingRef.current) return;
+        const latest = await fetchReportPreview(reportId, controller.signal);
+        if (!current() || savingRef.current) return;
+        if (await fetchAdminActor(controller.signal) !== scope.actorId) {
+          window.dispatchEvent(new Event(ADMIN_SESSION_EVENT)); return;
+        }
+        if (!current() || savingRef.current) return;
+        const known = previewRef.current?.revision ?? 0;
+        if (latest.reportId === previewRef.current?.reportId && typeof latest.revision === "number" && latest.revision > known) showPreview(latest, { kind: "newer" });
+      } catch { /* Network failure never discards or automatically submits the local draft. */ }
+      finally { scope.requests.delete(controller); if (inFlight === controller) inFlight = null; }
     };
-
     const timer = window.setInterval(() => void check(), PV_CHECK_INTERVAL_MS);
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") void check();
-    };
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") void check(); };
     document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      inFlight?.abort();
-    };
-  }, [hasProposalValuation, reportId, showPreview]);
+    return () => { stopped = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibilityChange); inFlight?.abort(); };
+  }, [actorId, hasProposalValuation, reportId, showPreview]);
 
   const reportData = useMemo(
     () => (preview?.data && typeof preview.data === "object" ? preview.data : {}),
@@ -879,6 +881,8 @@ export default function ReportDataPage({ reportId, returnTo, pvOnly = false }: R
                 }}
               >
                 <AssetScheduleSheet
+                  key={`${actorId}:${preview.reportId}`}
+                  actorId={actorId!}
                   preview={preview}
                   previewOrigin={previewOrigin}
                   saving={savingAssetSheet}

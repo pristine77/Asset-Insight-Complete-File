@@ -1,3 +1,5 @@
+import { captureLotIdentity } from './captureLotIdentity';
+import { assertOrdinaryReport } from './arrivalPhotoDraft';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import api from "./api";
 import { createUploadOperation, cancellableUploadRequest, type UploadOperation } from './uploadCancellation';
@@ -31,6 +33,7 @@ export type ReportWorkflowStage =
   | 'error';
 
 export interface MixedLot {
+  lotNumber?: string;
   id: string;
   files: Array<{ uri: string; name: string; type: string; size?: number; captureOrder?: number; originalOrder?: number }>;
   extraFiles: Array<{ uri: string; name: string; type: string; size?: number; captureOrder?: number; originalOrder?: number }>;
@@ -83,6 +86,8 @@ export interface AssetCreateDetails {
 
   // Mixed lots mapping (for server to know image distribution)
   mixed_lots?: Array<{
+    capture_lot_id?: string;
+    capture_lot_number?: string;
     count: number;
     extra_count: number;
     video_count?: number;
@@ -229,6 +234,7 @@ class AssetService {
     onUploadProgress?: DirectUploadProgressCallback,
     options?: { operation?: UploadOperation; handoff?: ReportTransferHandoff }
   ): Promise<{ jobId: string; message: string; reportId?: string; backgroundStaged?: boolean }> {
+    assertOrdinaryReport(details);
     const operation = createUploadOperation(options?.operation);
     // Send an explicit choice even to older APIs whose missing-field default
     // was true. Never mutate the saved draft supplied by the caller.
@@ -239,6 +245,7 @@ class AssetService {
         // Multipart has one ordered video array: explicit zeros prevent a clip
         // from a later lot being attached to the first lot without a video.
         mixed_lots: details.mixed_lots.map((lot, index) => ({
+          ...(!details.auctioneer_work_item_id && lots[index] ? captureLotIdentity(lots[index], index) : {}),
           ...lot,
           video_count: lots[index]?.videoFile ? 1 : 0,
         })),

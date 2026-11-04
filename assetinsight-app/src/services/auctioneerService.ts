@@ -413,7 +413,9 @@ export function parseArrivalPhotoRequest(value: unknown): ArrivalPhotoRequest | 
 class AuctioneerService {
   /** This user's open arrival photo requests, newest first. */
   async getArrivalPhotoRequests(): Promise<ArrivalPhotoRequest[]> {
+    const assertCurrent = captureAuthOperation();
     const response = await api.get('/auctioneer/arrival-photo-requests');
+    assertCurrent();
     const value = response.data?.data;
     const rows = Array.isArray(value) ? value : value?.items;
     if (!Array.isArray(rows)) {
@@ -452,24 +454,24 @@ class AuctioneerService {
       {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 10 * 60_000,
+        skipAuthRefreshReplay: true,
         onUploadProgress: (progressEvent: any) => {
+          try { assertCurrent(); } catch { return; }
           if (onProgress && progressEvent.total) {
-            onProgress(Math.min(100, Math.round((progressEvent.loaded * 100) / progressEvent.total)));
+            onProgress(Math.min(95, Math.round((progressEvent.loaded * 100) / progressEvent.total)));
           }
         },
       }
     );
     assertCurrent();
     const data = response.data?.data;
-    if (response.data?.success !== true || !record(data)) {
-      throw new Error('Auctioneer did not confirm the arrival photos. Check Incoming before sending again.');
+    if (response.data?.success !== true || !record(data) ||
+        !['sent', 'stored', 'skipped', 'photoCount'].every(key => Number.isSafeInteger(data[key]) && (data[key] as number) >= 0) ||
+        data.sent !== photos.length || (data.stored as number) + (data.skipped as number) !== data.sent ||
+        (data.photoCount as number) < (data.stored as number)) {
+      throw new Error('Auctioneer did not confirm all arrival photos. Your local photos are kept. Check Incoming before sending again.');
     }
-    return {
-      sent: Number(data.sent) || 0,
-      stored: Number(data.stored) || 0,
-      skipped: Number(data.skipped) || 0,
-      photoCount: Number(data.photoCount) || 0,
-    };
+    return data as unknown as ArrivalPhotoSendResult;
   }
 
   async getStatus(): Promise<{

@@ -284,3 +284,16 @@ describe('independent drafts of the same contract', () => {
     expect(state('empty')).toBe('local');
   });
 });
+
+
+test('arrival recovery saves its purpose/request without a report contract', async () => {
+  const input = form('arrival', 'online');
+  const result = await AutoSaveService.saveDraft({ ...input, type: 'lotListing', formData: { ...input.formData, capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: 'request-1' } });
+  expect(result.formData).toMatchObject({ capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: 'request-1', contractNo: '' });
+  expect(result.lots).toHaveLength(input.lots.length);
+});
+test.each([true, false])('a saved capture cannot change Arrival purpose (initial=%s)', async arrival => {
+  const input = form('separate-capture');
+  await AutoSaveService.saveDraft({ ...input, formData: { ...input.formData, ...(arrival ? { capturePurpose: 'arrivalPhotos' as const } : {}) } });
+  await expect(AutoSaveService.saveDraft({ ...input, formData: { ...input.formData, ...(!arrival ? { capturePurpose: 'arrivalPhotos' as const } : {}) } })).rejects.toThrow('different purpose');
+});

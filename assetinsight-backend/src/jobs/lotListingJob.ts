@@ -1,3 +1,4 @@
+import { readCaptureLotIdentity, applyCaptureLotIdentities, assertUniqueInitialLotNumbers } from "../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { assertMixedLotPhotoManifest, resolveGroupModelImageIndex } from "../utils/mixedLotPhotoManifest.js";
 import {
@@ -126,6 +127,8 @@ export type LotListingJobInput = {
       cover_index?: number;
       mode: LotListingMode;
       reviewed_lot_number?: string;
+      capture_lot_id?: string;
+      capture_lot_number?: string;
       lot_number?: string;
     }>;
     smart_upload_grouping_method?: "black_divider" | "lot_number";
@@ -1555,6 +1558,8 @@ type NormalizedLotListingGroup = {
    */
   scheduleAParentLotId?: string;
   reviewedLotNumber?: string;
+  captureLotId?: string;
+  captureLotNumber?: string;
 };
 
 function normalizeLotListingGroups(
@@ -1603,6 +1608,7 @@ function normalizeLotListingGroups(
         : null;
       return count > 0
         ? { count, extraCount, videoCount, coverIndex, mode, sourceKey, sourceParentKey,
+          ...readCaptureLotIdentity(lot),
           ...(scheduleAParentLotId ? { scheduleAParentLotId } : {}),
           ...(reviewedLotNumber ? { reviewedLotNumber } : {}) }
         : null;
@@ -1743,7 +1749,7 @@ export async function analyzeLotListingGroupsWithAssetService(
   if (lotNumberPhotoInputs.length > 0) {
     await onReadingLotNumbers?.(lotNumberPhotoInputs.length);
     const detectedNumbers =
-      await detectBundleLotNumbersFromPhotos(lotNumberPhotoInputs.filter((input) => !groups[input.groupIndex]?.reviewedLotNumber));
+      await detectBundleLotNumbersFromPhotos(lotNumberPhotoInputs.filter((input) => !groups[input.groupIndex]?.reviewedLotNumber && !groups[input.groupIndex]?.captureLotNumber));
     const inputByGroup = new Map(
       lotNumberPhotoInputs.map((input) => [input.groupIndex, input]),
     );
@@ -1756,6 +1762,7 @@ export async function analyzeLotListingGroupsWithAssetService(
           sourceImageIndex: inputByGroup.get(groupIndex)?.sourceImageIndex,
           detectedLotNumber: detectedNumbers.get(groupIndex),
           reviewedLotNumber: group.reviewedLotNumber,
+          captureLotNumber: group.captureLotNumber,
           mainImageCount: group.count,
         }),
       );
@@ -1891,14 +1898,14 @@ export async function analyzeLotListingGroupsWithAssetService(
 
       completedGroups += 1;
       await onGroupComplete?.(completedGroups, groups.length);
-      return { group, groupLots, groupVideoUrls, bundleDiagnostic };
+      return { group, groupIndex, groupLots, groupVideoUrls, bundleDiagnostic };
     },
   );
 
   let lotCounter = 0;
   for (const result of groupResults) {
     if (!result) continue;
-    const { group, groupLots, groupVideoUrls, bundleDiagnostic } = result;
+    const { group, groupIndex, groupLots, groupVideoUrls, bundleDiagnostic } = result;
     for (let groupLotIndex = 0; groupLotIndex < groupLots.length; groupLotIndex += 1) {
       const groupLot = markInitialLotNumberFallback(groupLots[groupLotIndex]);
       lotCounter += 1;
@@ -1914,6 +1921,8 @@ export async function analyzeLotListingGroupsWithAssetService(
           : group.sourceKey;
       analyzedLots.push({
         ...groupLot,
+        mixed_group_index: groupIndex + 1,
+        sub_mode: group.mode,
         video_urls: groupLotIndex === 0 ? groupVideoUrls : [],
         lot_id: `lot-${String(lotCounter).padStart(3, "0")}`,
         lot_number: resolvedLotNumber,
@@ -1947,7 +1956,7 @@ export async function analyzeLotListingGroupsWithAssetService(
   }
 
   return {
-    lots: analyzedLots,
+    lots: applyCaptureLotIdentities(analyzedLots, mixedLots),
     analysis: {
       lot_listing_mode: "asset_openai_service_grouped_by_lot_listing_mode",
       lots: analyzedLots,
@@ -2555,7 +2564,7 @@ export async function runLotListingJob({
       defaultLatitude: details.latitude,
       defaultLongitude: details.longitude,
     });
-    analyzedLots = reapplyBundleLotNumberDiagnostics(analyzedLots);
+    analyzedLots = applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(analyzedLots), mixedLots);
     if (listingId) {
       analyzedLots = await allocateInitialAuctioneerLotNumbers({
         reportId: listingId,
@@ -2565,6 +2574,7 @@ export async function runLotListingJob({
         assertOwned: executionContext ? () => executionContext.assertOwned() : undefined,
       });
     }
+    assertUniqueInitialLotNumbers(analyzedLots);
     aiAnalysis = {
       ...(aiAnalysis || {}),
       lot_enrichment: enrichmentResult.analyses,

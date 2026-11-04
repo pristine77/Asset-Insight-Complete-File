@@ -13,6 +13,9 @@ import {
   fileCellKey,
   parseStoredDraft,
   rebaseEdits,
+  rebaseRecovery,
+  draftStoragePrefix,
+  draftPointerKey,
   rowCellKey,
   sheetEdits,
   tableCellKey,
@@ -161,15 +164,15 @@ test("Keep theirs sets the cell back, and labels read like the page", () => {
 
 test("the browser copy is read back only for the same report, recent and well formed", () => {
   const now = Date.parse("2026-11-03T18:00:00Z");
-  const draft = { version: 1, reportId: "r1", revision: 4, savedAt: "2026-11-03T17:00:00Z",
+  const draft = { version: 2, actorId: "admin-a", draftId: "tab-a", lineageId: "tab-a", overlaps: [], dropped: [], reportId: "r1", revision: 4, savedAt: "2026-11-03T17:00:00Z",
     edits: [{ kind: "cell", key: evaluatorCellKey("lot-1", "jay"), from: null, to: 5000 }, { kind: "cell", key: 5 }] };
-  const parsed = parseStoredDraft(JSON.stringify(draft), "r1", now);
+  const parsed = parseStoredDraft(JSON.stringify(draft), "admin-a", "r1", now);
   assert.equal(parsed.edits.length, 1, "malformed edits are left out");
   assert.equal(parsed.revision, 4);
-  assert.equal(parseStoredDraft(JSON.stringify(draft), "r2", now), null);
-  assert.equal(parseStoredDraft(JSON.stringify({ ...draft, savedAt: "2026-09-01T00:00:00Z" }), "r1", now), null);
-  assert.equal(parseStoredDraft("{not json", "r1", now), null);
-  assert.equal(draftStorageKey("r1"), "asset-insight:pv-draft:v1:r1");
+  assert.equal(parseStoredDraft(JSON.stringify(draft), "admin-a", "r2", now), null);
+  assert.equal(parseStoredDraft(JSON.stringify({ ...draft, savedAt: "2026-09-01T00:00:00Z" }), "admin-a", "r1", now), null);
+  assert.equal(parseStoredDraft("{not json", "admin-a", "r1", now), null);
+  assert.equal(draftStorageKey("admin-a", "r1", "tab-a"), "asset-insight:pv-draft:v2:admin-a:r1:tab-a");
 });
 
 test("the page keeps edits on a refused save, warns before leaving, keeps a browser copy and checks every 30 seconds", () => {
@@ -180,7 +183,58 @@ test("the page keeps edits on a refused save, warns before leaving, keeps a brow
   assert.match(page, /afterRefusedSave: true/);
   assert.match(sheetSource, /"beforeunload"/);
   assert.match(sheetSource, /draftStorageKey\(/);
-  assert.match(sheetSource, /rebaseEdits\(/);
+  assert.match(sheetSource, /rebaseRecovery\(/);
   // Enter finishes an entry: the wrapper <div>'s blur() never did.
   assert.doesNotMatch(sheetSource, /currentTarget\.blur\(\)/);
+});
+
+
+test("backups are isolated by account, report and writer; unscoped v1 is not attributed to another user", () => {
+  const key = draftStorageKey("admin-a", "r1", "tab-a");
+  for (const other of [draftStorageKey("admin-b", "r1", "tab-a"), draftStorageKey("admin-a", "r2", "tab-a"), draftStorageKey("admin-a", "r1", "tab-b")]) assert.notEqual(key, other);
+  assert.notEqual(draftPointerKey("admin-a", "r1"), draftPointerKey("admin-b", "r1"));
+  assert.ok(key.startsWith(draftStoragePrefix("admin-a", "r1")));
+  const draft = {version:2,actorId:"admin-a",reportId:"r1",draftId:"tab-a",lineageId:"tab-a",revision:1,savedAt:new Date().toISOString(),
+    edits:[{kind:"cell",key:evaluatorCellKey("lot-1","jay"),from:null,to:5000}],overlaps:[],dropped:[]};
+  assert.equal(parseStoredDraft(JSON.stringify(draft),"admin-b","r1"),null);
+  assert.equal(parseStoredDraft(JSON.stringify({...draft,version:1}),"admin-a","r1"),null);
+});
+
+test("unresolved same-cell conflict survives a newer baseline, backup, reload and another unrelated poll", () => {
+  const base=sheet(), mine=clone(base), remote=clone(base);
+  mine.rows[0].evaluator_values.jay=5000; remote.rows[0].evaluator_values.jay=9000;
+  const first=rebaseRecovery(remote,sheetEdits(base,mine));
+  assert.equal(first.overlaps.length,1);
+  const draft={version:2,actorId:"admin",reportId:"r1",draftId:"page",lineageId:"page",revision:2,savedAt:new Date().toISOString(),
+    edits:sheetEdits(remote,first.sheet),overlaps:first.overlaps,dropped:first.dropped};
+  const stored=parseStoredDraft(JSON.stringify(draft),"admin","r1");
+  const restored=rebaseRecovery(remote,stored.edits,stored.overlaps,stored.dropped);
+  assert.equal(restored.overlaps.length,1); assert.equal(restored.overlaps[0].theirs,9000); assert.equal(restored.overlaps[0].yours,5000);
+  const later=clone(remote); later.rows[1].evaluator_values.riley=7000;
+  const polled=rebaseRecovery(later,sheetEdits(remote,restored.sheet),restored.overlaps,restored.dropped);
+  assert.equal(polled.overlaps.length,1); assert.equal(polled.sheet.rows[1].evaluator_values.riley,7000);
+  assignCellValue(polled.sheet,evaluatorCellKey("lot-1","jay"),9000);
+  assert.equal(rebaseRecovery(later,sheetEdits(later,polled.sheet),polled.overlaps).overlaps.length,0);
+});
+
+test("all removed-lot edits survive in a backup even when no current cell remains dirty", () => {
+  const base=sheet(), mine=clone(base), latest=clone(base); mine.rows[0].evaluator_values.jay=5000; latest.rows.shift();
+  const first=rebaseRecovery(latest,sheetEdits(base,mine));
+  assert.equal(first.pending.length,0);assert.equal(first.dropped.length,1);
+  const draft={version:2,actorId:"admin",reportId:"r1",draftId:"page",lineageId:"page",revision:2,savedAt:new Date().toISOString(),edits:[],overlaps:[],dropped:first.dropped};
+  const stored=parseStoredDraft(JSON.stringify(draft),"admin","r1"); assert.ok(stored);
+  const restored=rebaseRecovery(latest,stored.edits,stored.overlaps,stored.dropped);
+  assert.equal(restored.dropped.length,1); assert.equal(restored.dropped[0].to,5000);
+  assert.equal(restored.sheet.rows[0].lot_id,"lot-2");assert.equal(restored.sheet.rows[0].evaluator_values.jay,null);
+});
+
+test("cell keys reject inherited prototype fields in a browser draft", () => {
+  for(const key of ["row:lot-1:constructor","file:__proto__"]) assert.equal(cellValue(sheet(),key),undefined);
+});
+
+test("empty save/discard checkpoints retain their lineage so an older dirty copy can be retired", () => {
+  const draft={version:2,actorId:"admin",reportId:"r1",draftId:"new-page",lineageId:"original-page",revision:3,savedAt:new Date().toISOString(),edits:[],overlaps:[],dropped:[]};
+  const stored=parseStoredDraft(JSON.stringify(draft),"admin","r1");
+  assert.ok(stored);assert.equal(stored.lineageId,"original-page");assert.deepEqual(stored.edits,[]);
+  assert.equal(parseStoredDraft(JSON.stringify(draft),"another-admin","r1"),null);
 });

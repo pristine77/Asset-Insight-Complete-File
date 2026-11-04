@@ -59,3 +59,42 @@ describe.each(['asset', 'lotListing'] as const)('%s camera video transport', kin
     } finally { warning.mockRestore(); }
   });
 });
+
+
+describe.each(['asset', 'lotListing'] as const)('%s saved capture numbering', kind => {
+  const send = (payload: any, savedLots: typeof lots) => kind === 'asset'
+    ? assetService.createAssetReport(payload, savedLots)
+    : lotListingService.createLotListing(payload, savedLots);
+  it.each([false, true])('preserves saved labels and exact photo group identity (multipart=%s)', async fallback => {
+    const savedLots = lots.map((lot, index) => ({ ...lot, lotNumber: ['157', '999', '40A'][index] }));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      if (fallback) jest.mocked(uploadReportFilesDirectToR2).mockRejectedValue({ response: { status: 404 } });
+      else jest.mocked(uploadReportFilesDirectToR2).mockResolvedValue({ reportId: 'report', jobId: 'job', message: 'Accepted' });
+      await send(details, savedLots);
+      const input = jest.mocked(uploadReportFilesDirectToR2).mock.calls[0][0];
+      const actual = fallback ? JSON.parse((jest.mocked(api.post).mock.calls[0][1] as TestFormData).parts.find(([key]) => key === 'details')![1] as string) : input.details;
+      expect(actual.mixed_lots.map((lot: any) => [lot.capture_lot_id, lot.capture_lot_number])).toEqual([
+        ['stable-lot-0', '157'], ['stable-lot-1', '999'], ['stable-lot-2', '40A'],
+      ]);
+      expect(input.files.filter(file => file.role === 'main').map(file => [file.name, file.lotIndex])).toEqual([
+        ['lot-0.jpg', 0], ['lot-1.jpg', 1], ['lot-2.jpg', 2],
+      ]);
+    } finally { warn.mockRestore(); }
+  });
+  it('preserves a frozen retry label rather than renumbering it', async () => {
+    jest.mocked(uploadReportFilesDirectToR2).mockResolvedValue({ reportId: 'report', jobId: 'job', message: 'Accepted' });
+    await send({ ...details, mixed_lots: details.mixed_lots.map((lot, index) => ({ ...lot, capture_lot_id: `snapshot-${index}`, capture_lot_number: `42.${index}` })) }, lots);
+    expect(jest.mocked(uploadReportFilesDirectToR2).mock.calls[0][0].details.mixed_lots[0]).toMatchObject({ capture_lot_id: 'snapshot-0', capture_lot_number: '42.0' });
+  });
+  it('leaves Auctioneer-assigned numbering authoritative', async () => {
+    jest.mocked(uploadReportFilesDirectToR2).mockResolvedValue({ reportId: 'report', jobId: 'job', message: 'Accepted' });
+    await send({ ...details, auctioneer_work_item_id: 'work' }, lots);
+    expect(jest.mocked(uploadReportFilesDirectToR2).mock.calls[0][0].details.mixed_lots[0]).not.toHaveProperty('capture_lot_id');
+  });
+  it('refuses arrival capture metadata before any ordinary transport', async () => {
+    await expect(send({ ...details, capturePurpose: 'arrivalPhotos' }, lots)).rejects.toThrow('Arrival Photos');
+    expect(uploadReportFilesDirectToR2).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+});
