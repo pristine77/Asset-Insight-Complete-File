@@ -63,7 +63,8 @@ Output Rules:
         },
         "tags": ["optional", "keywords"],
         "image_indexes": [0, 1],
-        "lot_number": "101",
+        "lot_number": null,
+        "lot_number_source": "none",
         "quantity": 1,
         "must_take": false,
         "categories": "exact child category from Auctioneer Import, e.g. 'Backhoe Loaders'",
@@ -85,7 +86,8 @@ Output Rules:
 
 Required fields for each lot (for Excel export):
 - lot_id: unique identifier
-- lot_number: lot number for Excel. Read visible lot tags, sticker labels, handwritten lot-number photos, paper lot cards, "Lot #", "#", "L/N", and similar markers. If one photo in the lot is mainly a lot-number reference, use that value for the whole lot.
+- lot_number: the lot number ONLY when staff have marked the lot with it: a lot-number card, sheet or sign photographed with the lot, or a lot-number sticker or tag staff put on the item (for example a paper card or sticker reading "LOT 12", or a handwritten number held up beside the item). Copy that number exactly. If one photo in the lot is mainly a lot-number card, use its number for the whole lot. The item's own markings are NOT lot numbers: manufacturer decals and labels, unit or fleet numbers, model numbers, serial numbers or VINs, part numbers, hours, years, prices, phone numbers. With no staff lot marking, set lot_number to null; the server numbers those lots in the order they were photographed. Never guess a lot number, and never give two lots the same number.
+- lot_number_source: "lot_card" when lot_number was read from a staff lot marking (card, sheet, sign, lot sticker or lot tag); otherwise "none", with lot_number null.
 - title: short, specific headline: YEAR MAKE MODEL [trim/type] when visible
 - description: one or two plain sentences, maximum ${AUCTION_DESCRIPTION_MAX_LENGTH} characters, saying what the item is and what comes with it. Title and description are separate fields: never repeat the title as the description. Do not start with numbering, bullets, "Lot", "Lot #", or "#".
 - condition: item's physical condition
@@ -116,7 +118,7 @@ Formatting rules:
 - estimated_value: Use ${ccy} with prefix '${ccyPrefix}', thousands separators, NO decimals (e.g., '${ccyPrefix}12,500'). Never return an empty string or zero unless the item has no resale value.
 - Titles must be concise and unique; append "(#1)", "(#2)" for duplicates
 - image_indexes: 0-based array, sorted ascending, no duplicates within a lot
-- Lot-number OCR priority: inspect every visible sticker, handwritten card, paper lot card, tag, and standalone lot-number photo before assigning lot_number. Prefer numbers next to "Lot", "LOT", "#", "L/N", "Lot No", or similar labels. If a lot-number reference photo appears in the same lot group, use it for that lot. Do not confuse model years, prices, phone numbers, horsepower, quantities, or serial numbers with lot numbers.
+- Lot numbers come only from staff lot markings (see lot_number above). Look for a card, sheet, sign, sticker or tag showing "Lot", "LOT", "Lot No", "L/N" or a number staff placed to identify the lot; if one appears in the same lot group, use it for that lot and set lot_number_source to "lot_card". The item's own decals and labels are never lot numbers, nor are model years, prices, phone numbers, horsepower, quantities, unit numbers or serial numbers.
 - Damage analysis must stay visual and conservative, but it should be useful to an appraiser reviewing the Excel file. Mention the visible damage type plus any clear severity, location, affected component, or extent visible in the image.
 - Damage Analysis is ineligible when the numeric portion of lot_number is above 1000. Examples: "1001", "1,001", and "1001A" require damage_analysis=null; "Lot #0999", "999A", "lot-001", "1000", and "1,000" remain eligible. Completely nonnumeric identifiers keep the normal setting.
 - Prefer specific visual observations over bare labels. Good examples: "Paint Scratches & Chips - light cosmetic wear on outer panels/edges", "Rust / Corrosion - visible surface rust on lower frame and exposed metal", "Tire / Track Wear - tread wear visible; sidewalls not verified".
@@ -149,7 +151,8 @@ VIN and Serial Handling:
 Excel Export Fields - ALL fields listed below MUST be included in each lot for Excel generation:
 
 CRITICAL Fields (always provide):
-- lot_number: string/number/null — Lot identifier for Excel "Lot #" column. If a visible lot sticker, printed label, handwritten lot-number card/photo, "Lot #", "#", or similar marker is present, set to that value exactly. Otherwise set to null and the server will assign a sequential default.
+- lot_number: string/number/null — Lot identifier for Excel "Lot #" column, ONLY from a staff lot marking: a lot-number card, sheet or sign photographed with the lot, or a lot-number sticker or tag staff put on the item. Never from the item's own decals, labels, unit, model or serial numbers. Otherwise null; the server numbers the lot in the order it was photographed.
+- lot_number_source: "lot_card" | "none" — "lot_card" only when lot_number came from a staff lot marking; otherwise "none".
 - title: string — Short, specific headline: YEAR MAKE MODEL [trim/type] when visible
 - description: string - One or two plain sentences, maximum ${AUCTION_DESCRIPTION_MAX_LENGTH} characters, saying what the item is and what comes with it. It must not repeat the title. Keep individual spec values in condition_report_specs, not description. Do not include Running Condition, Condition, Completeness, Legal, VIN, or serial text. Do not start with numbering, bullets, "Lot", "Lot #", or "#".
 - condition_report_specs: array - List of { "field": exact child-category spec field label, "value": visible/confident value }. Prioritize visible/provided values and omit fields that are not visible or confidently supported.
@@ -231,7 +234,8 @@ Example Output:
       "damage_analysis": "Paint Scratches & Chips - light visible scratches on frame and outer surfaces",
       "tags": ["backhoe", "loader", "construction"],
       "image_indexes": [0, 2],
-      "lot_number": "101",
+      "lot_number": null,
+      "lot_number_source": "none",
       "quantity": 1,
       "must_take": false,
       "categories": "Backhoe Loaders",
@@ -256,7 +260,8 @@ Example Output (per_item):
   "lots": [
     {
       "lot_id": "lot-001",
-      "lot_number": "101",
+      "lot_number": null,
+      "lot_number_source": "none",
       "title": "Canon EOS 80D DSLR Camera Body",
       "description": "24MP digital SLR camera body; includes battery and strap.",
       "condition_report_specs": [
@@ -283,7 +288,8 @@ Example Output (per_item):
     },
     {
       "lot_id": "lot-002",
-      "lot_number": "102",
+      "lot_number": null,
+      "lot_number_source": "none",
       "title": "Canon EF-S 18-135mm Lens",
       "description": "Standard zoom lens with optical image stabilization for Canon APS-C cameras.",
       "condition_report_specs": [
@@ -325,9 +331,9 @@ ${descriptionFormattingRules}
    - Additional per_photo fields to include for each lot:\n   - serial_no_or_label: string | null — extract any visible serial/model numbers or label text. When a VIN is visible, include it labeled EXACTLY as "VIN: <VIN>" (use '*' for unknown characters in a partial VIN). Use null if nothing is visible.
 
   Lot Number Guidance:
-  - Detect any visible numeric lot sticker/label in the image(s). Examples include: "Lot 12", "Lot #12", "#105", or a prominent numeric sticker. If clearly present, set 'lot_number' to the numeric value only (no prefixes like 'Lot' or '#').
-  - Avoid confusing years (e.g., 2008), prices, phone numbers, horsepower, or model numbers with lot numbers. Prefer numbers adjacent to "Lot"/"LOT" or printed tags/stickers.
-  - If no clear lot sticker/label is visible, set 'lot_number' to null. The server will auto-assign sequential lot numbers and order.
+  - Set 'lot_number' ONLY from a staff lot marking: a lot-number card, sheet or sign photographed with the lot, or a lot-number sticker or tag staff put on the item (for example a card or sticker reading "LOT 12"). Use the number only (no 'Lot' or '#') and set 'lot_number_source' to "lot_card".
+  - The item's own markings are never lot numbers: manufacturer decals and labels, unit or fleet numbers, model or serial numbers, VINs, hours, years (e.g., 2008), prices, phone numbers, horsepower.
+  - With no staff lot marking, set 'lot_number' to null and 'lot_number_source' to "none". The server numbers those lots in the order they were photographed.
 
   Focus Box Guidance:
   - CRITICAL: If the image contains a VISIBLE red rectangular focus box overlay (a red-stroked rectangle drawn on top of the image), you MUST ONLY analyze and return the item(s) INSIDE that red box.
@@ -350,9 +356,9 @@ ${descriptionFormattingRules}
   - If MULTIPLE images are provided at once, treat each image independently and return lots per image separately. For each lot, set 'image_indexes' to [CURRENT_INDEX] only and 'image_url' to that image's exact URL. Do NOT include indexes from other images.
 
   Lot Number Guidance:
-  - Detect any visible numeric lot sticker/label in the image(s). Examples include: "Lot 12", "Lot #12", "#105", or a prominent numeric sticker. If clearly present, set 'lot_number' to the numeric value only (no prefixes like 'Lot' or '#').
-  - Avoid confusing years (e.g., 2008), prices, phone numbers, horsepower, or model numbers with lot numbers. Prefer numbers adjacent to "Lot"/"LOT" or printed tags/stickers.
-  - If no clear lot sticker/label is visible, set 'lot_number' to null. The server will auto-assign sequential lot numbers and order.
+  - Set 'lot_number' ONLY from a staff lot marking: a lot-number card, sheet or sign photographed with the lot, or a lot-number sticker or tag staff put on the item (for example a card or sticker reading "LOT 12"). Use the number only (no 'Lot' or '#') and set 'lot_number_source' to "lot_card".
+  - The item's own markings are never lot numbers: manufacturer decals and labels, unit or fleet numbers, model or serial numbers, VINs, hours, years (e.g., 2008), prices, phone numbers, horsepower.
+  - With no staff lot marking, set 'lot_number' to null and 'lot_number_source' to "none". The server numbers those lots in the order they were photographed.
 
   Focus Box Guidance:
   - CRITICAL: If the image contains a VISIBLE red rectangular focus box overlay (a red-stroked rectangle drawn on top of the image), you MUST ONLY analyze and return items that are INSIDE that red box.
@@ -372,9 +378,9 @@ Grouping mode: single_lot
 ${descriptionFormattingRules}
  - Optional additional field at lot level:\n   - serial_no_or_label: string | null — if one or more serials/VINs are clearly visible for the primary subject(s), include them. When a VIN is visible, label it EXACTLY as "VIN: <VIN>" (use '*' for partial VINs). For multiple items, separate entries with "; ". Use null if nothing is visible.
   Lot Number Guidance:
-  - Detect any visible numeric lot sticker/label in the image(s). Examples include: "Lot 12", "Lot #12", "#105", or a prominent numeric sticker. If clearly present, set 'lot_number' to the numeric value only (no prefixes like 'Lot' or '#').
-  - Avoid confusing years (e.g., 2008), prices, phone numbers, horsepower, or model numbers with lot numbers. Prefer numbers adjacent to "Lot"/"LOT" or printed tags/stickers.
-  - If no clear lot sticker/label is visible, set 'lot_number' to null. The server will auto-assign sequential lot numbers and order.
+  - Set 'lot_number' ONLY from a staff lot marking: a lot-number card, sheet or sign photographed with the lot, or a lot-number sticker or tag staff put on the item (for example a card or sticker reading "LOT 12"). Use the number only (no 'Lot' or '#') and set 'lot_number_source' to "lot_card".
+  - The item's own markings are never lot numbers: manufacturer decals and labels, unit or fleet numbers, model or serial numbers, VINs, hours, years (e.g., 2008), prices, phone numbers, horsepower.
+  - With no staff lot marking, set 'lot_number' to null and 'lot_number_source' to "none". The server numbers those lots in the order they were photographed.
 
   Focus Box Guidance:
   - CRITICAL: If ANY image contains a VISIBLE red rectangular focus box overlay (a red-stroked rectangle drawn on top of the image), you MUST ONLY analyze and include items that are INSIDE that red box from that image.

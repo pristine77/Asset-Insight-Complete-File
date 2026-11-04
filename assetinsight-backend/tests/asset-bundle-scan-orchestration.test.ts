@@ -266,7 +266,9 @@ describe("Asset Bundle scan orchestration", () => {
     const lots = report.preview_data.lots;
     expect(lots).toHaveLength(2);
     expect(lots.map((lot: any) => lot.lot_id)).toEqual(["lot-001", "lot-002"]);
-    expect(lots.map((lot: any) => String(lot.lot_number))).toEqual(number ? ["222", "222"] : ["1", "2"]);
+    // Owner 2026-11-03: never two lots with the same number in one report. The
+    // second Bundle showing card 222 takes the next number in capture order.
+    expect(lots.map((lot: any) => String(lot.lot_number))).toEqual(number ? ["222", "1"] : ["1", "2"]);
     expect(lots.map((lot: any) => lot.image_urls)).toEqual([report.imageUrls.slice(0, 104), report.imageUrls.slice(106, 121)]);
     expect(lots.map((lot: any) => lot.extra_image_urls)).toEqual([report.imageUrls.slice(104, 106), report.imageUrls.slice(121)]);
     expect(lots.map((lot: any) => lot.title)).toEqual([report.imageUrls[0], report.imageUrls[106]]);
