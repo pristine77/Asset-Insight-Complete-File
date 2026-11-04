@@ -147,14 +147,41 @@ export default function MixedSection({
     []
   );
 
-  // Photos only: a lot without a mode gets one, so photos can be added at once.
+  /*
+    Photos only (Arrival Photos). Owner, 2026-11-04: "no need to create more
+    lot. Just A camera option needed", crossing out New lot and Create your
+    first lot, then "Show the three options". The photos belong to the
+    Auctioneer lot chosen in the request picker above this section, so there
+    is nothing to divide into lots here: the form holds ONE lot of its own,
+    made by this effect, and the section shows that lot's three mode options,
+    a Camera button and the photos taken (see arrivalPanel).
+
+    While nothing has been taken, any lots already on the form collapse into
+    that one; once photos exist the switch above is locked, so none are ever
+    thrown away. Turning Arrival Photos off removes the lot made here if it
+    is still empty, so the ordinary form opens on its usual "Create your
+    first lot".
+  */
+  const arrivalLotIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!photosOnly) return;
-    commitLots((current) =>
-      current.some((lot) => !lot.mode)
-        ? current.map((lot) => (lot.mode ? lot : { ...lot, mode: "single_lot" as const }))
-        : current
-    );
+    const isEmpty = (lot: MixedLot) =>
+      !lot.files.length && !(lot.extraFiles || []).length && !(lot.videoFiles || []).length;
+    if (photosOnly) {
+      commitLots((current) => {
+        if (current.length === 1 && current[0].id === arrivalLotIdRef.current) return current;
+        if (!current.every(isEmpty)) return current;
+        const id = `lot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        arrivalLotIdRef.current = id;
+        return [{ id, files: [], extraFiles: [], videoFiles: [], coverIndex: 0 }];
+      });
+      setActiveIdx(0);
+      return;
+    }
+    const madeHere = arrivalLotIdRef.current;
+    if (!madeHere) return;
+    arrivalLotIdRef.current = null;
+    commitLots((current) => current.filter((lot) => !(lot.id === madeHere && isEmpty(lot))));
+    setActiveIdx(lotsRef.current.length - 1);
   }, [photosOnly, commitLots]);
 
   // Camera overlay state
@@ -1782,8 +1809,124 @@ export default function MixedSection({
       Several lots
     </span>
   );
+  /*
+    The three Analysis mode options of the lot being worked on: Bundle, Per
+    item, Per photo. Shared by the lot panel and the Arrival Photos panel
+    (owner, 2026-11-04: "Show the three options").
+  */
+  const modeChoice = activeLot ? (
+      <fieldset>
+        <legend className="text-sm font-semibold text-[var(--app-text)]">
+          Analysis mode <span className="text-[var(--app-accent)]" aria-hidden="true">*</span>
+        </legend>
+        <p className="mt-1 text-xs leading-5 text-[var(--app-text-muted)]">
+          Choose how the main photos in this lot should be interpreted.
+        </p>
+        <div role="radiogroup" className="mt-3 grid gap-2 @min-[560px]:grid-cols-3">
+          {MODE_OPTIONS.map((option) => {
+            const checked = activeLot.mode === option.value;
+            const disabled = Boolean(
+              sourceMappedLots ||
+                // A listed Proposal item is one lot (owner 2026-10-28).
+                activeLot.source?.listed === true ||
+                (activeLot.mode &&
+                  !checked &&
+                  activeLot.files.length > 0)
+            );
+            return (
+              <label
+                key={option.value}
+                className={`relative min-h-16 cursor-pointer rounded-xl border px-3 py-2.5 transition ${
+                  checked
+                    ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)]"
+                    : "border-[var(--app-border)] bg-[var(--app-panel)] hover:bg-[var(--app-panel-alt)]"
+                } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name={`mixed-mode-${activeLot.id}`}
+                  value={option.value}
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => setLotMode(activeIdx, option.value)}
+                  className="sr-only"
+                />
+                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
+                  <span className={`h-3.5 w-3.5 rounded-full border ${checked ? "border-[5px] border-[var(--app-accent)]" : "border-[var(--app-text-muted)]"}`} aria-hidden="true" />
+                  {option.label}
+                </span>
+                <span className="mt-1 block pl-[22px] text-[11px] leading-4 text-[var(--app-text-muted)]">{option.description}</span>
+              </label>
+            );
+          })}
+        </div>
+        {!activeLot.mode ? (
+          <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300" role="status">
+            Select a mode to enable photo and camera actions.
+          </p>
+        ) : null}
+      </fieldset>
+  ) : null;
+
+  /*
+    Arrival Photos' whole section: the three mode options, a Camera button and
+    the photos taken. No lots, no New lot, no file upload, no cover or focus
+    areas. Every photo, whichever capture button took it, is copied to the
+    lot's Office Only section in Auctioneer with the watermark.
+  */
+  const arrivalTaken = [
+    ...(activeLot?.files ?? []).map((file, index) => ({ file, remove: () => removeImage(activeIdx, index) })),
+    ...(activeLot?.extraFiles ?? []).map((file, index) => ({ file, remove: () => removeExtraImage(activeIdx, index) })),
+  ];
+  const arrivalPanel = (
+    <div className="space-y-4" data-testid="arrival-camera-panel">
+      {modeChoice}
+      <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-violet-300 bg-violet-50 px-4 py-3 @min-[560px]:flex-row @min-[560px]:items-center @min-[560px]:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-violet-950">
+            {arrivalTaken.length} {arrivalTaken.length === 1 ? "photo" : "photos"} taken
+          </p>
+          <p className="mt-0.5 text-xs leading-5 text-violet-900">
+            Copied to the lot&apos;s Office Only section in Auctioneer with the watermark. Nothing is analysed.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={openCamera}
+          disabled={!activeLotHasMode}
+          title={activeLotHasMode ? undefined : "Select a mode first"}
+          className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--app-accent)] px-5 py-2.5 text-sm font-semibold text-[var(--app-on-accent)] transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 @min-[560px]:w-auto"
+        >
+          <Camera className="h-4 w-4" aria-hidden="true" /> Camera
+        </button>
+      </div>
+      {arrivalTaken.length ? (
+        <div className="grid grid-cols-2 gap-3 @min-[520px]:grid-cols-3 @min-[900px]:grid-cols-4">
+          {arrivalTaken.map(({ file, remove }) => (
+            <ImageMediaCard key={getMixedFileKey(file)} file={file} kind="main" copyOnly onRemove={remove} />
+          ))}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={openCamera}
+          disabled={!activeLotHasMode}
+          className="flex min-h-40 w-full flex-col items-center justify-center rounded-xl border border-dashed border-violet-300 bg-[var(--app-panel-alt)] px-4 text-center text-[var(--app-text-muted)] transition hover:border-violet-500 disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+            <Camera className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <span className="text-sm font-semibold text-[var(--app-text)]">Open the camera</span>
+          <span className="mt-1 text-xs">Choose a mode above, then take the arrival photos. Each one appears here.</span>
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="@container min-w-0 space-y-4 overflow-x-hidden text-[var(--app-text)]">
+      {photosOnly ? arrivalPanel : (
+      <>
       <div className="flex min-w-0 flex-col gap-3 @min-[560px]:flex-row @min-[560px]:items-center @min-[560px]:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-text-muted)]">
           <span>{lots.length} {lots.length === 1 ? "lot" : "lots"}</span>
@@ -1994,57 +2137,7 @@ export default function MixedSection({
                   </p>
                 ) : null}
 
-                <fieldset className={photosOnly ? "hidden" : "mt-4"}>
-                  <legend className="text-sm font-semibold text-[var(--app-text)]">
-                    Analysis mode <span className="text-[var(--app-accent)]" aria-hidden="true">*</span>
-                  </legend>
-                  <p className="mt-1 text-xs leading-5 text-[var(--app-text-muted)]">
-                    Choose how the main photos in this lot should be interpreted.
-                  </p>
-                  <div role="radiogroup" className="mt-3 grid gap-2 @min-[560px]:grid-cols-3">
-                    {MODE_OPTIONS.map((option) => {
-                      const checked = activeLot.mode === option.value;
-                      const disabled = Boolean(
-                        sourceMappedLots ||
-                          // A listed Proposal item is one lot (owner 2026-10-28).
-                          activeLot.source?.listed === true ||
-                          (activeLot.mode &&
-                            !checked &&
-                            activeLot.files.length > 0)
-                      );
-                      return (
-                        <label
-                          key={option.value}
-                          className={`relative min-h-16 cursor-pointer rounded-xl border px-3 py-2.5 transition ${
-                            checked
-                              ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)]"
-                              : "border-[var(--app-border)] bg-[var(--app-panel)] hover:bg-[var(--app-panel-alt)]"
-                          } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-                        >
-                          <input
-                            type="radio"
-                            name={`mixed-mode-${activeLot.id}`}
-                            value={option.value}
-                            checked={checked}
-                            disabled={disabled}
-                            onChange={() => setLotMode(activeIdx, option.value)}
-                            className="sr-only"
-                          />
-                          <span className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
-                            <span className={`h-3.5 w-3.5 rounded-full border ${checked ? "border-[5px] border-[var(--app-accent)]" : "border-[var(--app-text-muted)]"}`} aria-hidden="true" />
-                            {option.label}
-                          </span>
-                          <span className="mt-1 block pl-[22px] text-[11px] leading-4 text-[var(--app-text-muted)]">{option.description}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {!activeLot.mode ? (
-                    <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300" role="status">
-                      Select a mode to enable photo and camera actions.
-                    </p>
-                  ) : null}
-                </fieldset>
+                <div className="mt-4">{modeChoice}</div>
 
                 {activeLot.mode === "single_lot" && !photosOnly ? (
                   <div
@@ -2152,6 +2245,8 @@ export default function MixedSection({
             ) : null}
           </div>
         </>
+      )}
+      </>
       )}
 
       <Menu

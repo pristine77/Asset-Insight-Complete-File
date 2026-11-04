@@ -28,7 +28,7 @@ import AuctioneerService, {
 } from "@/services/auctioneer";
 import { navigateToReportForm } from "@/services/reportFormNavigation";
 import AuctioneerReopenAction from "@/components/reports/AuctioneerReopenAction";
-import ArrivalPhotoRequests from "./ArrivalPhotoRequests";
+import ArrivalPhotoRequests, { CompletedArrivalPhotos } from "./ArrivalPhotoRequests";
 import { captureAuthSession } from "@/lib/auth-storage";
 import { formatCalendarDate } from "@/lib/calendarDate";
 import styles from "./Incoming.module.css";
@@ -206,6 +206,32 @@ function IncomingContent() {
     { refreshInterval: visibleRefreshInterval, refreshWhenHidden: false, refreshWhenOffline: false, revalidateOnFocus: true }
   );
   const arrivalRequests = arrivalRequestsData ?? [];
+  /*
+    Waiting / Completed inside the Arrival Photo Requests tab (owner,
+    2026-11-04, chosen over adding them to the contracts' Completed tab).
+    ?view=completed opens it on Completed, which is where Lot Listing lands
+    after sending. The finished list is read only while this tab is open.
+  */
+  const requestedArrivalView = searchParams.get("view");
+  const [arrivalView, setArrivalView] = useState<"waiting" | "completed">("waiting");
+  useEffect(() => {
+    setArrivalView(requestedArrivalView === "completed" ? "completed" : "waiting");
+  }, [requestedArrivalView]);
+  const selectArrivalView = (view: "waiting" | "completed") => {
+    setArrivalView(view);
+    router.replace(`/incoming?tab=arrival${view === "completed" ? "&view=completed" : ""}`, { scroll: false });
+  };
+  const {
+    data: completedArrivalData,
+    error: completedArrivalError,
+    isValidating: completedArrivalLoading,
+    mutate: refreshCompletedArrival,
+  } = useSWR(
+    requestOwner && queueTab === "arrival" ? ["auctioneer/arrival-photo-requests/completed", requestOwner] : null,
+    () => AuctioneerService.getCompletedArrivalPhotoRequests(),
+    { refreshInterval: visibleRefreshInterval, refreshWhenHidden: false, refreshWhenOffline: false, revalidateOnFocus: true }
+  );
+  const completedArrival = completedArrivalData ?? [];
 
   const isMine = useCallback(
     (item: AuctioneerIncomingItem) => {
@@ -508,7 +534,9 @@ function IncomingContent() {
             <div>
               <h2 className={styles.tableTitle}>Assigned contract queue</h2>
               <p className={styles.tableSubtitle}>
-                {queueTab === "arrival"
+                {queueTab === "arrival" && arrivalView === "completed"
+                  ? "Arrival photos you have sent to Auctioneer, most recent first. They are in each lot's Office Only section."
+                  : queueTab === "arrival"
                   ? "Lots the office asked you to photograph on arrival. The photos are watermarked, not processed, and kept in the lot's Office Only section."
                   : queueTab === "completed"
                   ? "Reports already sent back to Auctioneer. Select a contract to check whether more lots can be added."
@@ -558,12 +586,45 @@ function IncomingContent() {
           </div>
 
           {queueTab === "arrival" ? (
-            <ArrivalPhotoRequests
-              requests={arrivalRequests}
-              loading={arrivalRequestsLoading}
-              error={arrivalRequestsError ? "Arrival photo requests could not be loaded. Check the connection and try again." : null}
-              onRefresh={() => void refreshArrivalRequests()}
-            />
+            <>
+              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] px-4 py-2.5">
+                <div className={styles.tabs} role="tablist" aria-label="Arrival photo requests">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={arrivalView === "waiting"}
+                    onClick={() => selectArrivalView("waiting")}
+                    className={`${styles.tab} ${arrivalView === "waiting" ? styles.tabActive : ""}`}
+                  >
+                    Waiting <span className={styles.tabCount}>{arrivalRequests.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={arrivalView === "completed"}
+                    onClick={() => selectArrivalView("completed")}
+                    className={`${styles.tab} ${arrivalView === "completed" ? styles.tabActive : ""}`}
+                  >
+                    Completed <span className={styles.tabCount}>{completedArrivalData ? completedArrival.length : "…"}</span>
+                  </button>
+                </div>
+              </div>
+              {arrivalView === "completed" ? (
+                <CompletedArrivalPhotos
+                  requests={completedArrival}
+                  loading={completedArrivalLoading}
+                  error={completedArrivalError ? "Completed arrival photos could not be loaded. Check the connection and try again." : null}
+                  onRefresh={() => void refreshCompletedArrival()}
+                />
+              ) : (
+                <ArrivalPhotoRequests
+                  requests={arrivalRequests}
+                  loading={arrivalRequestsLoading}
+                  error={arrivalRequestsError ? "Arrival photo requests could not be loaded. Check the connection and try again." : null}
+                  onRefresh={() => void refreshArrivalRequests()}
+                />
+              )}
+            </>
           ) : !visibleItems.length ? (
             <div className={styles.emptyTable}>
               <div>

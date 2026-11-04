@@ -22,12 +22,14 @@ function Harness({
   maxTotalImages,
   analysisImageLimit,
   sourceMappedLots,
+  photosOnly,
 }: {
   initial?: MixedLot[];
   allowVideo?: boolean;
   maxTotalImages?: number;
   analysisImageLimit?: number;
   sourceMappedLots?: boolean;
+  photosOnly?: boolean;
 }) {
   const [lots, setLots] = useState(initial);
   return (
@@ -47,6 +49,7 @@ function Harness({
         maxTotalImages={maxTotalImages}
         analysisImageLimit={analysisImageLimit}
         sourceMappedLots={sourceMappedLots}
+        photosOnly={photosOnly}
       />
     </>
   );
@@ -300,5 +303,79 @@ describe("MixedSection workflow", () => {
       expect(screen.getByTestId("lot-count")).toHaveTextContent("1")
     );
     expect(screen.queryByText("second.jpg")).not.toBeInTheDocument();
+  });
+});
+
+/*
+  Arrival Photos (owner, 2026-11-04): "no need to create more lot. Just A
+  camera option needed", then "Show the three options". The section holds one
+  lot of its own: the three mode options, a Camera button and the photos.
+*/
+describe("Arrival Photos (photos only)", () => {
+  beforeEach(() => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn((file: File) => "blob:test/" + file.name),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  it("offers no lots to create: one lot of its own, the three options, and a Camera button", async () => {
+    render(<Harness photosOnly allowVideo={false} />);
+
+    await waitFor(() => expect(screen.getByTestId("lot-count")).toHaveTextContent("1"));
+    expect(screen.queryByRole("button", { name: /New lot/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Create your first lot")).not.toBeInTheDocument();
+    for (const option of ["Bundle", "Per item", "Per photo"]) {
+      expect(screen.getByRole("radio", { name: new RegExp(option) })).toBeInTheDocument();
+    }
+    expect(screen.getByText("Select a mode to enable photo and camera actions.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add photos/ })).not.toBeInTheDocument();
+    const camera = screen.getByRole("button", { name: "Camera" });
+    expect(camera).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("radio", { name: /Bundle/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Camera" })).toBeEnabled());
+    expect(JSON.parse(screen.getByTestId("lot-metadata").textContent || "[]")[0].mode).toBe("single_lot");
+  });
+
+  it("shows every photo taken, main and extra, with Remove only", async () => {
+    render(
+      <Harness
+        photosOnly
+        allowVideo={false}
+        initial={[
+          {
+            id: "taken",
+            files: [photo("one.jpg", 1), photo("two.jpg", 2)],
+            extraFiles: [photo("three.jpg", 3)],
+            coverIndex: 0,
+            mode: "per_item",
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText("3 photos taken")).toBeInTheDocument();
+    expect(screen.getAllByText("Photo")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /as cover image/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit focus areas/ })).not.toBeInTheDocument();
+    // Photos already on the form are kept: no lot is replaced.
+    expect(screen.getByTestId("lot-count")).toHaveTextContent("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove three.jpg" }));
+    await waitFor(() => expect(screen.getByText("2 photos taken")).toBeInTheDocument());
+  });
+
+  it("takes away the lot it made when Arrival Photos is turned off while it is empty", async () => {
+    const view = render(<Harness photosOnly allowVideo={false} />);
+    await waitFor(() => expect(screen.getByTestId("lot-count")).toHaveTextContent("1"));
+
+    view.rerender(<Harness photosOnly={false} allowVideo={false} />);
+    await waitFor(() => expect(screen.getByTestId("lot-count")).toHaveTextContent("0"));
+    expect(screen.getByText("Create your first lot")).toBeInTheDocument();
   });
 });

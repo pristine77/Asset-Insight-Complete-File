@@ -1878,21 +1878,21 @@ describe("arrival photos stay separate from report generation", () => {
   it("retains photos and refuses a false success response", async () => {
     mocks.apiPost.mockResolvedValue({ data: { success: false } });
     render(<LotListingForm />);
-    await waitFor(() => expect(screen.getByLabelText(/Arrival Photos/)).toBeChecked());
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /^Arrival Photos/ })).toBeChecked());
     fireEvent.click(screen.getByText("Add test media"));
     fireEvent.click(screen.getByRole("button", { name: "Send Arrival Photos" }));
     await screen.findByText(/Auctioneer did not confirm all the photos/);
     expect(screen.getByTestId("selected-listing-media")).toHaveTextContent("lot-photo.jpg");
     expect(mocks.push).not.toHaveBeenCalled();
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
-    expect(screen.getByLabelText(/Arrival Photos/)).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /^Arrival Photos/ })).toBeDisabled();
     expect(mocks.apiPost.mock.calls[0][0]).toContain("/arrival-photo-requests/request-one/photos");
   });
   it("does not route a late successful response into a changed account", async () => {
     let resolve!: (value: unknown) => void;
     mocks.apiPost.mockReturnValue(new Promise((done) => { resolve = done; }));
     const view = render(<LotListingForm />);
-    await waitFor(() => expect(screen.getByLabelText(/Arrival Photos/)).toBeChecked());
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /^Arrival Photos/ })).toBeChecked());
     fireEvent.click(screen.getByText("Add test media"));
     fireEvent.click(screen.getByRole("button", { name: "Send Arrival Photos" }));
     await waitFor(() => expect(mocks.apiPost).toHaveBeenCalled());

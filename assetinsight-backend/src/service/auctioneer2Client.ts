@@ -1289,6 +1289,35 @@ export async function listArrivalPhotoRequests(userId: string): Promise<ArrivalP
   return items as unknown as ArrivalPhotoRequestRecord[];
 }
 
+/*
+ * The user's FINISHED requests (owner, 2026-11-04): Incoming → Arrival Photo
+ * Requests → Completed. Auctioneer answers `status: "completed"` for this
+ * list (its server/externalApi.ts). A server too old to know the parameter
+ * ignores it and answers the OPEN list, with no status; that answer is never
+ * shown as completed work, the list is just empty until Auctioneer is updated.
+ */
+export type CompletedArrivalPhotoRequestRecord = Omit<ArrivalPhotoRequestRecord, "officeOnlyPhotoCount"> & {
+  receivedAt: string | null;
+  photoCount: number;
+};
+
+export async function listCompletedArrivalPhotoRequests(userId: string): Promise<CompletedArrivalPhotoRequestRecord[]> {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) {
+    throw new Auctioneer2ClientError("An Asset Insight user is required to load arrival photo requests.", {
+      statusCode: 500,
+      code: "auctioneer2_user_required",
+    });
+  }
+  const query = new URLSearchParams({ userId: normalizedUserId, status: "completed" });
+  const response = await auctioneer2Request<Auctioneer2Record>(`/arrival-photo-requests?${query.toString()}`, {}, { deadlineIncludesBody: true });
+  if (response?.success !== true) throw new Auctioneer2ClientError("Auctioneer did not confirm the completed arrival request list. Try again.", { statusCode: 502, code: "auctioneer2_invalid_response" });
+  if (response.status !== "completed") return [];
+  const items = requireArray(response, ["items"]);
+  if (items.some(item => typeof item.requestId !== "string" || !item.requestId.trim())) throw new Auctioneer2ClientError("Auctioneer returned an invalid arrival request list.", { statusCode: 502, code: "auctioneer2_invalid_response" });
+  return items as unknown as CompletedArrivalPhotoRequestRecord[];
+}
+
 /** One batch (1 to 5) of a request's photos, already watermarked. */
 export async function uploadArrivalPhotos(
   requestId: string,

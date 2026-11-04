@@ -6,8 +6,10 @@ import {
   AUCTIONEER2_PHOTO_MAX_BATCH_BYTES,
   Auctioneer2ClientError,
   listArrivalPhotoRequests,
+  listCompletedArrivalPhotoRequests,
   uploadArrivalPhotos,
   type ArrivalPhotoRequestRecord,
+  type CompletedArrivalPhotoRequestRecord,
   type Auctioneer2Photo,
 } from "./auctioneer2Client.js";
 import { processImageWithLogo } from "../utils/imageProcessing.js";
@@ -29,6 +31,11 @@ const pendingError = () => new ArrivalPhotoError(
 
 export async function listMyArrivalPhotoRequests(userId: string): Promise<ArrivalPhotoRequestRecord[]> {
   return listArrivalPhotoRequests(userId);
+}
+
+/** The user's finished requests, most recently received first (owner, 2026-11-04). */
+export async function listMyCompletedArrivalPhotoRequests(userId: string): Promise<CompletedArrivalPhotoRequestRecord[]> {
+  return listCompletedArrivalPhotoRequests(userId);
 }
 
 /** Direct, watermarked file transfer. Receipts only; no analysis, report or background job. */

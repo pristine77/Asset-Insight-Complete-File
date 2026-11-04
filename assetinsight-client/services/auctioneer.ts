@@ -56,6 +56,17 @@ export type ArrivalPhotoRequest = {
   officeOnlyPhotoCount: number;
 };
 
+/**
+ * A finished arrival photo request: its photos reached Auctioneer. Owner,
+ * 2026-11-04: Incoming → Arrival Photo Requests → Completed.
+ */
+export type CompletedArrivalPhotoRequest = Omit<ArrivalPhotoRequest, "officeOnlyPhotoCount"> & {
+  /** When Auctioneer received the first photos. */
+  receivedAt: string | null;
+  /** Photos Auctioneer stored on the lot from this request. */
+  photoCount: number;
+};
+
 export type AuctioneerIncomingItem = AuctioneerContractReopenMetadata & {
   cycleKey: string;
   workItemId?: string;
@@ -804,6 +815,16 @@ export const AuctioneerService = {
       throw new Error("Arrival photo requests could not be confirmed. Please try again.");
     }
     return payload as ArrivalPhotoRequest[];
+  },
+
+  /** The newest hundred finished requests, most recently sent first. */
+  async getCompletedArrivalPhotoRequests(): Promise<CompletedArrivalPhotoRequest[]> {
+    const response = await API.get("/auctioneer/arrival-photo-requests", { params: { status: "completed" } });
+    const payload = unwrap(response.data);
+    if (asRecord(response.data).success !== true || !Array.isArray(payload)) {
+      throw new Error("Completed arrival photo requests could not be confirmed. Please try again.");
+    }
+    return payload as CompletedArrivalPhotoRequest[];
   },
 
   async sendArrivalPhotos(

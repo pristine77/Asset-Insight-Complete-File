@@ -18,6 +18,7 @@ import { advanceAuthSession } from "@/lib/auth-storage";
 const mocks = vi.hoisted(() => ({
   getIncoming: vi.fn(),
   getArrivalPhotoRequests: vi.fn().mockResolvedValue([]),
+  getCompletedArrivalPhotoRequests: vi.fn().mockResolvedValue([]),
   search: "",
   getStatus: vi.fn(),
   getIncomingSummary: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock("@/services/auctioneer", async (importOriginal) => {
   const service = {
     getIncoming: mocks.getIncoming,
     getArrivalPhotoRequests: mocks.getArrivalPhotoRequests,
+    getCompletedArrivalPhotoRequests: mocks.getCompletedArrivalPhotoRequests,
     getStatus: mocks.getStatus,
     getIncomingSummary: mocks.getIncomingSummary,
     claim: mocks.claim,
@@ -882,6 +884,41 @@ describe("arrival request states", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /Arrival Photo Requests/ }));
     await screen.findByText(/Arrival photo requests could not be loaded/);
     expect(screen.queryByText("No arrival photo requests")).not.toBeInTheDocument();
+  });
+  // Owner, 2026-11-04: Waiting / Completed inside the tab; sent ones go to Completed.
+  it("lists the requests already sent on its Completed tab", async () => {
+    mocks.search = "tab=arrival";
+    mocks.getIncoming.mockResolvedValue([]);
+    mocks.getStatus.mockResolvedValue({ enabled: true, configured: true });
+    mocks.getArrivalPhotoRequests.mockResolvedValue([]);
+    mocks.getCompletedArrivalPhotoRequests.mockResolvedValue([{
+      requestId: "done-1", requestedAt: "2026-11-04T19:03:00Z", requestedBy: "Femi John", receivedAt: "2026-11-04T19:20:00Z",
+      photoCount: 12, lotId: "lot-1", lotNumber: "0563", description: "2017 Ford Ranger Truck", serialNumber: null,
+      make: null, model: null, year: null, location: null, contractId: "c-1", contractNumber: "825589",
+      consignorName: "Mike Yurkiw", eventNumber: null,
+    }]);
+    render(<SWRConfig value={{ provider: () => new Map() }}><IncomingPage /></SWRConfig>);
+    const arrivalTabs = await screen.findByRole("tablist", { name: "Arrival photo requests" });
+    const completed = await within(arrivalTabs).findByRole("tab", { name: /Completed 1/ });
+    expect(within(arrivalTabs).getByRole("tab", { name: /Waiting 0/ })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(completed);
+    const row = await screen.findByTestId("completed-arrival-photo-request");
+    expect(row).toHaveTextContent("0563");
+    expect(row).toHaveTextContent("825589");
+    expect(row).toHaveTextContent("12");
+    // The heading the owner asked to keep.
+    expect(screen.getByText("Assigned contract queue")).toBeInTheDocument();
+    mocks.search = "";
+  });
+  it("opens on Completed from the link Lot Listing follows after sending", async () => {
+    mocks.search = "tab=arrival&view=completed";
+    mocks.getArrivalPhotoRequests.mockResolvedValue([]);
+    mocks.getCompletedArrivalPhotoRequests.mockResolvedValue([]);
+    render(<SWRConfig value={{ provider: () => new Map() }}><IncomingPage /></SWRConfig>);
+    const arrivalTabs = await screen.findByRole("tablist", { name: "Arrival photo requests" });
+    await waitFor(() => expect(within(arrivalTabs).getByRole("tab", { name: /Completed/ })).toHaveAttribute("aria-selected", "true"));
+    await screen.findByText("No arrival photos sent yet");
+    mocks.search = "";
   });
   it("reacts to a cached route changing to the arrival query", async () => {
     mocks.search = "";

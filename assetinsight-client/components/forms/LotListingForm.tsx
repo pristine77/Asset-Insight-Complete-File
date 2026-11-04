@@ -1668,7 +1668,8 @@ export default function LotListingForm({
       toast.success(
         `${result.sent} arrival photo${result.sent === 1 ? "" : "s"} confirmed in Auctioneer's Office Only section${result.skipped ? ` (${result.skipped} already there)` : ""}.`
       );
-      router.push("/incoming?tab=arrival");
+      // Straight to Completed, where the request now is (2026-11-04).
+      router.push("/incoming?tab=arrival&view=completed");
     } catch (sendError) {
       if (!current()) return;
       // The server's own words (e.g. "This request was cancelled…") first.
@@ -2083,8 +2084,11 @@ export default function LotListingForm({
     (sum, lot) => sum + lot.extraFiles.length,
     0
   );
-  const mediaSummary =
-    mixedLots.length === 0
+  const mediaSummary = arrivalPhotos
+    ? totalMainPhotos + totalExtraPhotos === 0
+      ? "No photos taken"
+      : `${totalMainPhotos + totalExtraPhotos} ${totalMainPhotos + totalExtraPhotos === 1 ? "photo" : "photos"}`
+    : mixedLots.length === 0
       ? "No lots added"
       : mixedLots.length +
         " " +
@@ -2300,17 +2304,23 @@ export default function LotListingForm({
             onOpenChange={(open) =>
               setOpenSections((current) => ({ ...current, details: open }))
             }
+            // Arrival Photos uses only the request chosen below (the photos go
+            // to that lot), so that is what makes this section complete.
             status={
               fieldErrorCount > 0
                 ? "error"
-                : detailsComplete
+                : (arrivalPhotos ? Boolean(arrivalRequestId) : detailsComplete)
                   ? "complete"
                   : "incomplete"
             }
             summary={
-              detailsComplete
-                ? contractNo.trim() + " · " + currency.trim().toUpperCase()
-                : "Contract, language, and currency"
+              arrivalPhotos
+                ? arrivalRequestId
+                  ? "Arrival photo request chosen"
+                  : "Choose the arrival photo request"
+                : detailsComplete
+                  ? contractNo.trim() + " · " + currency.trim().toUpperCase()
+                  : "Contract, language, and currency"
             }
             errorSummary={
               fieldErrorCount > 0
@@ -2345,6 +2355,15 @@ export default function LotListingForm({
                 />
               </FormField>
 
+              {/*
+                Hidden for Arrival Photos (owner, 2026-11-04: "Hide this in
+                Arrival Photo UI. Its not usefull"): the photos are copied to
+                Auctioneer as they are, so there is no report to write in a
+                language or price in a currency. Their values are kept, not
+                cleared, so turning the switch off shows them as they were.
+              */}
+              {!arrivalPhotos ? (
+              <>
               <FormField id="lot-language" label="Language">
                 <select
                   value={language}
@@ -2383,6 +2402,8 @@ export default function LotListingForm({
                   className={formSelectClass}
                 />
               </FormField>
+              </>
+              ) : null}
 
               <FormField
                 id="lot-location"
@@ -2525,10 +2546,12 @@ export default function LotListingForm({
           <FormSection
             id="lot-listing-media"
             sectionNumber={2}
-            title="Lots & Media"
+            // Arrival Photos has no lots to create (owner, 2026-11-04): the
+            // section is the camera for the request chosen above.
+            title={arrivalPhotos ? "Arrival Photos" : "Lots & Media"}
             description={
               arrivalPhotos
-                ? "Add a lot, then add the arrival photos. They are copied to Auctioneer, not analysed."
+                ? "Choose a mode, then take the arrival photos with the camera. They are copied to Auctioneer, not analysed."
                 : "Create each lot, choose how its photos should be interpreted, and then add main or report-only images."
             }
             open={openSections.media}

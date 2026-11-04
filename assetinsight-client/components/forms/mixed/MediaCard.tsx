@@ -29,6 +29,11 @@ type ImageMediaCardProps = {
   onSetCover?: () => void;
   onEditFocus?: () => void;
   onRemove: () => void;
+  /**
+   * A photo that is copied, never analysed (Arrival Photos): it has no cover
+   * and no focus areas, so the card offers only Remove and is labelled Photo.
+   */
+  copyOnly?: boolean;
 };
 
 export const ImageMediaCard = memo(function ImageMediaCard({
@@ -39,6 +44,7 @@ export const ImageMediaCard = memo(function ImageMediaCard({
   onSetCover,
   onEditFocus,
   onRemove,
+  copyOnly = false,
 }: ImageMediaCardProps) {
   const url = useObjectUrl(file);
   const isMain = kind === "main";
@@ -56,7 +62,7 @@ export const ImageMediaCard = memo(function ImageMediaCard({
         )}
         <div className="absolute inset-x-2 top-2 flex items-start justify-between gap-2">
           <span className="rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-            {isMain ? (isCover ? "Cover" : "Main") : "Report only"}
+            {copyOnly ? "Photo" : isMain ? (isCover ? "Cover" : "Main") : "Report only"}
           </span>
           {annotationCount > 0 ? (
             <span className="rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">
@@ -70,7 +76,7 @@ export const ImageMediaCard = memo(function ImageMediaCard({
         <span className="min-w-0 flex-1 truncate px-1 text-[11px] text-[var(--app-text-muted)]" title={file.name}>
           {formatFileSize(file.size)}
         </span>
-        {isMain ? (
+        {isMain && !copyOnly ? (
           <>
             <button
               type="button"

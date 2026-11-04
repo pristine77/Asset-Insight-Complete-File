@@ -2,11 +2,13 @@ import { cleanupArrivalPhotoUpload } from "../middleware/arrivalPhotoUpload.js";
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware.js";
 import { Auctioneer2ClientError } from "../service/auctioneer2Client.js";
-import { ArrivalPhotoError, listMyArrivalPhotoRequests, sendArrivalPhotos } from "../service/arrivalPhotoService.js";
+import { ArrivalPhotoError, listMyArrivalPhotoRequests, listMyCompletedArrivalPhotoRequests, sendArrivalPhotos } from "../service/arrivalPhotoService.js";
 
 /*
  * Arrival photo requests (owner, 2026-11-03; service/arrivalPhotoService.ts):
  * the signed-in user's open requests, and sending one request's photos.
+ * ?status=completed lists their finished requests instead (owner, 2026-11-04:
+ * the Completed list in Incoming → Arrival Photo Requests).
  */
 
 function sendArrivalError(res: Response, error: unknown) {
@@ -19,7 +21,10 @@ function sendArrivalError(res: Response, error: unknown) {
 export async function listArrivalPhotoRequestsController(req: AuthRequest, res: Response) {
   try {
     if (!req.userId) return res.status(401).json({ success: false, message: "Not authorized." });
-    return res.json({ success: true, data: await listMyArrivalPhotoRequests(req.userId) });
+    const data = req.query.status === "completed"
+      ? await listMyCompletedArrivalPhotoRequests(req.userId)
+      : await listMyArrivalPhotoRequests(req.userId);
+    return res.json({ success: true, data });
   } catch (error) {
     return sendArrivalError(res, error);
   }
