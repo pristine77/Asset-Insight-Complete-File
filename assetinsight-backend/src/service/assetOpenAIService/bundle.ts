@@ -48,9 +48,7 @@ export async function analyzeBundle(
       text: [
         "Bundle photo order is intentional: the first supplied image is the original first main photo and the lot-number reference.",
         "The final supplied image is the original last main photo and the serial-number/VIN reference. Always inspect both, even when intermediate photos were sampled out.",
-        // Owner 2026-11-03: lot numbers come only from a staff lot marking
-        // (a lot-number card, or a lot sticker or tag staff put on the item).
-        "Read the lot identifier only from a clearly readable staff lot marking in the first photo (a lot-number card, sheet or sign, or a lot-number sticker or tag staff put on the item), and then set lot_number_source to \"lot_card\". Never substitute a serial number, VIN, price, year, unit number, or the item's own decals and labels. With no staff lot marking, lot_number is null and lot_number_source is \"none\".",
+        "Read the lot identifier only from a clearly readable lot card or sticker in the first photo; never substitute a serial number, VIN, price, year, or other equipment-label number.",
         "Populate serial number or VIN fields only from readable evidence. Do not invent or infer unreadable characters; leave unavailable fields empty as required by the schema.",
         "Return image indexes relative to the supplied image list above (zero-based), not the unsupplied original capture sequence.",
       ].join(" "),

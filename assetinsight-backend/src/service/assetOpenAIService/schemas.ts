@@ -20,11 +20,6 @@ export const lotItemSchema = {
   properties: {
     lot_id: { type: "string" },
     lot_number: { type: ["string", "number", "null"] },
-    // Where lot_number came from: a staff lot marking ("lot_card": a card,
-    // sheet, sign, or a lot sticker or tag on the item), or nothing (owner
-    // 2026-11-03; only "lot_card" numbers are kept, see
-    // jobs/assetReportJob/lotOrdering.ts keepLotCardNumbersOnly).
-    lot_number_source: { type: "string", enum: ["lot_card", "none"] },
     title: { type: "string" },
     description: { type: "string" },
     condition_report_specs: {
@@ -56,7 +51,6 @@ export const lotItemSchema = {
   required: [
     "lot_id",
     "lot_number",
-    "lot_number_source",
     "title",
     "description",
     "condition_report_specs",
