@@ -21,6 +21,10 @@ class LotRepository private constructor(private val context: Context) {
     }
     private var journalFailure: Exception? = null
     private var fixedStructure: FixedLotStructure? = null
+    var allowVideo: Boolean = true
+        private set
+    private var arrivalPhotosOnly = false
+    private var arrivalLabels: org.json.JSONArray? = null
     val isStructureLocked: Boolean get() = fixedStructure != null
     fun canNavigateTo(number: Int): Boolean = fixedStructure?.contains(number) ?: (number >= 1)
     fun lotLabel(number: Int): String = fixedStructure?.label(number) ?: "Lot $number"
@@ -47,12 +51,22 @@ class LotRepository private constructor(private val context: Context) {
         captureGeneration++
         val root = payload?.trim()?.takeIf { it.startsWith("{") }?.let { org.json.JSONObject(it) }
         val requested = root?.optJSONObject("captureContext")
-        val requestedStructure = FixedLotStructure.fromPayload(root)
+        // Assigned rows always win if a malformed caller sets both flags.
+        arrivalPhotosOnly = root?.optBoolean("arrivalPhotosOnly", false) == true && !root.optBoolean("lockedStructure", false)
+        arrivalLabels = root?.optJSONArray("sourceLabels")
+        allowVideo = root?.optBoolean("allowVideo", true) != false && !arrivalPhotosOnly
+        var requestedStructure = FixedLotStructure.fromPayload(root)
         val requestedIdentity = requested?.let {
             require(it.optString("ownerId").isNotBlank() && it.optString("draftId").isNotBlank() && it.optString("sessionId").isNotBlank())
             val pending = CaptureJournal.read(context, it.getString("ownerId"), it.getString("draftId"))
             if (pending != null) {
                 val session = pending.getJSONObject("session")
+                // Arrival owns its saved capture, rather than assigned Schedule A rows.
+                // Recover the original journal first; never compare it to an older form.
+                if (arrivalPhotosOnly && session.optBoolean("lockedStructure", false)) {
+                    requestedStructure = FixedLotStructure.fromPayload(org.json.JSONObject()
+                        .put("lockedStructure", true).put("lots", session.getJSONArray("fixedLots")))
+                }
                 require(!session.optBoolean("lockedStructure", false) || requestedStructure != null) { "The saved camera session has fixed imported lots" }
                 requestedStructure?.validateSession(session)
             }
@@ -64,6 +78,29 @@ class LotRepository private constructor(private val context: Context) {
         journalFailure = null
         fixedStructure = requestedStructure
         captureIdentity = requestedIdentity
+    }
+
+    /** Freeze recovered Arrival containers after legacy restoration, before any new capture. */
+    fun lockArrivalCapture() {
+        if (!arrivalPhotosOnly) return
+        val restored = completedLots.toMutableList()
+        activeBuilder?.build()?.copy(lotNumber = activeLotNumberForSession)?.let { active ->
+            val index = restored.indexOfFirst { it.id == active.id }
+            if (index >= 0) restored[index] = active else restored.add(active)
+        }
+        val structure = FixedLotStructure.fromPayload(org.json.JSONObject()
+            .put("lockedStructure", true)
+            .put("lots", org.json.JSONArray().also { rows -> restored.forEach { lot ->
+                rows.put(org.json.JSONObject().put("id", lot.id).put("mode", lot.mode?.apiKey).put("lotNumber", lot.lotNumber))
+            } })
+            .also { target -> arrivalLabels?.takeIf { it.length() == restored.size }?.let { target.put("sourceLabels", it) } })
+        requireNotNull(structure).validate(restored)
+        completedLots.clear()
+        completedLots.addAll(restored)
+        fixedStructure = structure
+        // Persist the fixed boundary with the same owner/session/revision lineage.
+        saveSessionWithActiveSync(activeLotNumberForSession)
+        journalFailure?.let { throw it }
     }
 
     fun hasPendingJournal(): Boolean = captureIdentity?.let {

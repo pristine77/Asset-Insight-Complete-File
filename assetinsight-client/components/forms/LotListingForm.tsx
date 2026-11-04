@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
+import { useSWRConfig } from "swr";
 import {
   ListItemIcon,
   ListItemText,
@@ -40,6 +41,7 @@ import { currencyForReportLocation, normalizeReportCurrency } from "@/lib/report
 import { useAuthContext } from "@/context/AuthContext";
 import { createLotListing } from "@/services/lotListing";
 import AuctioneerService, { type ArrivalPhotoRequest } from "@/services/auctioneer";
+import { invalidateArrivalPhotoLists } from "@/services/arrivalPhotoCache";
 import { backgroundUploads } from "@/services/backgroundUploadManager";
 import { describeOrderedFiles, orderedSubmissionFiles } from "@/services/uploadJobFiles";
 import { captureAuthSession, assertAuthSessionCurrent, isAuthSessionCurrent } from "@/lib/auth-storage";
@@ -346,6 +348,7 @@ export default function LotListingForm({
   resumeLocalDraftScopeId,
 }: Props) {
   const router = useRouter();
+  const { mutate: mutateCache } = useSWRConfig();
   const { user } = useAuthContext();
   const userId = user?._id || null;
   const draftClientIdRef = useRef(
@@ -1665,6 +1668,8 @@ export default function LotListingForm({
       const result = await AuctioneerService.sendArrivalPhotos(arrivalRequestId, files, (percent) => { if (current()) setUploadPercent(percent); });
       if (!current()) return;
       arrivalSentRef.current = true;
+      await invalidateArrivalPhotoLists(mutateCache, userId, session);
+      if (!current()) return;
       toast.success(
         `${result.sent} arrival photo${result.sent === 1 ? "" : "s"} confirmed in Auctioneer's Office Only section${result.skipped ? ` (${result.skipped} already there)` : ""}.`
       );
@@ -1684,7 +1689,7 @@ export default function LotListingForm({
       submitLockRef.current = false;
       if (current()) setSubmitting(false);
     }
-  }, [arrivalRequestId, mixedLots, router, userId, arrivalRequestLoading, arrivalRequestError]);
+  }, [arrivalRequestId, mixedLots, router, userId, arrivalRequestLoading, arrivalRequestError, mutateCache]);
   const arrivalSubmitRef = useRef<null | (() => Promise<void>)>(null);
   arrivalSubmitRef.current = arrivalPhotos ? submitArrivalPhotos : null;
 

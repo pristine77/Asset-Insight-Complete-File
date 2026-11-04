@@ -264,8 +264,8 @@ const LotListingFormSheet = ({
     website: "no need to create more lot. Just A camera option needed", then
     "Show the three options"). While nothing has been taken, the form's lots
     collapse into that one, with no mode yet, so the three options decide it;
-    the camera then opens on that lot alone (lockedStructure on CameraScreen
-    below). Turning Arrival Photos off removes it while it is still empty, so
+    the camera then opens on that lot alone. Older interrupted captures recover
+    their existing containers before the camera prevents additional lots. Turning Arrival Photos off removes it while it is still empty, so
     the ordinary form starts as it always does.
   */
   const arrivalLotIdRef = useRef<string | null>(null);
@@ -1033,6 +1033,10 @@ const LotListingFormSheet = ({
      section in Auctioneer. Videos are not sent. Needs a connection.
   */
   const submitArrivalPhotos = async () => {
+    if (lots.some(lot => lot.videoFile)) {
+      Alert.alert('Arrival photos only', 'This capture contains a saved video. It will not be sent. Keep this draft, or remove the video attachment before sending the photos; the original video stays on this device.');
+      return;
+    }
     if (!arrivalRequestId) {
       setDetailsExpanded(true);
       Alert.alert('Choose the lot', 'Under Listing Details → Arrival Photos, choose the lot these photos are for.');
@@ -1072,7 +1076,9 @@ const LotListingFormSheet = ({
       await AutoSaveService.removeDraftRecordOnly(localDraft.id);
       if (!isCurrent()) return;
       await resetForm();
-      onClose();
+      if (!isCurrent()) return;
+      if (onSuccess) onSuccess();
+      else onClose();
       Alert.alert(
         'Arrival photos sent',
         `${result.sent} photo${result.sent === 1 ? '' : 's'} confirmed in Auctioneer, watermarked, in the lot's Office Only section.`
@@ -2108,7 +2114,9 @@ const LotListingFormSheet = ({
             captureContext={visible && OfflineCaptureStore.getOwnerId() ? { ownerId: OfflineCaptureStore.getOwnerId()!, draftId: currentDraftId || draftIdentityRef.current, sessionId: currentDraftId || draftIdentityRef.current } : undefined}
             manualSubmissionRequired={captureMode === 'offline' || manualSubmissionRequired}
             visible={cameraOpen}
-            lockedStructure={auctioneer?.kind === 'scheduleA' || (arrivalPhotos && lots.length === 1)}
+            lockedStructure={auctioneer?.kind === 'scheduleA'}
+            arrivalPhotosOnly={arrivalPhotos}
+            allowVideo={!arrivalPhotos}
             sourceLabels={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot, index) => lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`) : arrivalPhotos ? [arrivalCameraLabel] : proposalLots?.labels}
             onClose={handleCameraClose}
             lots={lots}

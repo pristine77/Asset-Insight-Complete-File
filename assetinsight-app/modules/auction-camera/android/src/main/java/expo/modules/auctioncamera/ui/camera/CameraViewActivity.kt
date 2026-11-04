@@ -324,6 +324,7 @@ class CameraViewActivity : BaseActivity() {
                 if (viewModel.captureMode.value == null) viewModel.setCaptureMode(CaptureMode.BUNDLE)
                 viewModel.setInitialLotNumber(viewModel.currentLotNumber.value ?: 1)
             }
+            viewModel.repository.lockArrivalCapture()
             restored
         } catch (error: Exception) {
             Log.e("AuctionCameraTiming", "The saved camera structure does not match this draft", error)
@@ -1956,8 +1957,11 @@ class CameraViewActivity : BaseActivity() {
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun setupCameraModeButtons() {
+        binding.imageViewRecordVideo.visibility = if (viewModel.repository.allowVideo) View.VISIBLE else View.INVISIBLE
+        binding.imageViewRecordVideo.isEnabled = viewModel.repository.allowVideo
 
         binding.imageViewRecordVideo.setOnClickListener {
+            if (!viewModel.repository.allowVideo) return@setOnClickListener
             binding.cameraHeader.collapseExposure()
             if (!::engine.isInitialized) return@setOnClickListener
             if (captureInFlight.get() || processingCount > 0) {

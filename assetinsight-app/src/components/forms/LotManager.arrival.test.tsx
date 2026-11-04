@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text } from 'react-native';
+import { Alert, Text } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import LotManager from './LotManager';
 import type { MixedLot } from '../camera/types';
@@ -110,4 +110,19 @@ it('keeps the ordinary list while an older capture holds more than one lot', asy
   );
   expect(screen.queryByTestId('arrival-camera-panel')).toBeNull();
   expect(screen.getByText('Image Lots')).toBeTruthy();
+});
+
+
+it('shows a legacy video as excluded and removes only the attachment after confirmation', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  await render(<Harness initial={[{id:'arrival',mode:'single_lot',files:[photo('a.jpg')],extraFiles:[],coverIndex:0,
+    videoFile:{uri:'file:///saved.mp4',name:'saved.mp4',type:'video/mp4'} as any}]} />);
+  expect(screen.getByText('saved.mp4')).toBeTruthy();
+  expect(screen.getByText(/Video is kept on this device/)).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Remove video from Arrival capture'));
+  await fireEvent.press(screen.getByText('Bundle'));
+  await require('@testing-library/react-native').act(async () => { alert.mock.calls[0][2]?.find(button => button.text === 'Remove')?.onPress?.(); });
+  expect(screen.queryByText('saved.mp4')).toBeNull();
+  expect(saved()).toEqual([['single_lot',1]]);
+  alert.mockRestore();
 });

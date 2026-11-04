@@ -93,7 +93,7 @@ class AuctionCameraModule : Module() {
 
     override fun definition() = ModuleDefinition {
         Name("AuctionCameraModule")
-        AsyncFunction("getCameraCapabilities") { mapOf("lockedStructure" to true, "launchRecovery" to true) }
+        AsyncFunction("getCameraCapabilities") { mapOf("lockedStructure" to true, "launchRecovery" to true, "arrivalPhotosOnly" to true) }
         AsyncFunction("cancelCameraLaunch") { id: String ->
             if (CameraActivityRegistry.contains(id)) false
             else {

@@ -4,7 +4,7 @@ import { requireNativeModule } from 'expo-modules-core';
 const AuctionCamera = requireNativeModule('AuctionCameraModule');
 
 // Older installed binaries must not silently ignore the imported-lot lock.
-export async function getCameraCapabilities(): Promise<{ lockedStructure: boolean; launchRecovery?: boolean }> {
+export async function getCameraCapabilities(): Promise<{ lockedStructure: boolean; launchRecovery?: boolean; arrivalPhotosOnly?: boolean }> {
   if (typeof AuctionCamera.getCameraCapabilities !== 'function') return { lockedStructure: false };
   return AuctionCamera.getCameraCapabilities();
 }

@@ -32,6 +32,9 @@ interface CameraScreenProps {
   enhanceImages?: boolean;
   onEnhanceChange?: (enabled: boolean) => void;
   lockedStructure?: boolean;
+  /** Arrival captures may recover older journal lots, then keep that set fixed. */
+  arrivalPhotosOnly?: boolean;
+  allowVideo?: boolean;
   sourceLabels?: string[];
 }
 
@@ -42,6 +45,8 @@ class FixedLotStructureError extends Error {}
 
 const structureIdentity = (props: CameraScreenProps) => JSON.stringify([
   Boolean(props.lockedStructure),
+  Boolean(props.arrivalPhotosOnly),
+  props.allowVideo !== false,
   ...(props.lockedStructure ? props.lots.map((lot, index) => [
     lot.id, lot.mode ?? 'single_lot', lot.lotNumber, lot.title, props.sourceLabels?.[index],
   ]) : []),
@@ -266,7 +271,7 @@ const serializeNativePhoto = (
 };
 
 const buildNativePayload = (lots: MixedLot[], activeLotIdx: number, captureContext?: CaptureContext,
-  lockedStructure = false, sourceLabels?: string[]) => {
+  lockedStructure = false, sourceLabels?: string[], allowVideo = true, arrivalPhotosOnly = false) => {
   if (lockedStructure) assertFixedLotStructure(lots, lots);
   const safeActiveIdx = lots.length > 0 ? Math.max(0, Math.min(activeLotIdx, lots.length - 1)) : 0;
   const safeLots = lots.map((lot, index) => {
@@ -309,6 +314,8 @@ const buildNativePayload = (lots: MixedLot[], activeLotIdx: number, captureConte
   return JSON.stringify({
     ...(captureContext ? { captureContext } : {}),
     lockedStructure,
+    allowVideo,
+    arrivalPhotosOnly,
     sourceLabels: lots.map((lot, index) => sourceLabels?.[index] || (lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`)),
     lots: safeLots,
     activeLotIdx: safeActiveIdx,
@@ -460,11 +467,15 @@ const NativeAuctionCameraScreen: React.FC<CameraScreenProps> = (props) => {
       let receivedResult = false;
 
       try {
-        const payload = buildNativePayload(current.lots, current.activeLotIdx, current.captureContext, current.lockedStructure, current.sourceLabels);
+        const payload = buildNativePayload(current.lots, current.activeLotIdx, current.captureContext, current.lockedStructure, current.sourceLabels, current.allowVideo, current.arrivalPhotosOnly);
         const { openAuctionCamera, acknowledgeCapture, getCameraCapabilities, cancelCameraLaunch } = await cameraDeadline(loadNativeAuctionCamera(), 10_000);
         if (!stillCurrent()) return stale();
         const capabilities = await cameraDeadline(Promise.resolve(getCameraCapabilities?.()), 10_000);
         if (!stillCurrent()) return stale();
+        if ((current.allowVideo === false || current.arrivalPhotosOnly) && capabilities?.arrivalPhotosOnly !== true) {
+          setLaunchError({ title: 'Camera update required', message: 'Install the latest Asset Insight app update to take Arrival photos. Keep this app and its saved drafts; do not uninstall or clear its data.', canRetry: false });
+          return;
+        }
         if (current.lockedStructure) {
           if (!stillCurrent()) return stale();
           if (capabilities?.lockedStructure !== true) {
@@ -599,7 +610,7 @@ const NativeAuctionCameraScreen: React.FC<CameraScreenProps> = (props) => {
   if (!visible) return null;
 
   if (Platform.OS !== 'android') {
-    return <LegacyCameraScreen {...props} />;
+    return <LegacyCameraScreen {...props} lockedStructure={props.lockedStructure || props.arrivalPhotosOnly} />;
   }
 
   return (

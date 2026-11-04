@@ -327,6 +327,9 @@ describe("Arrival Photos (photos only)", () => {
     render(<Harness photosOnly allowVideo={false} />);
 
     await waitFor(() => expect(screen.getByTestId("lot-count")).toHaveTextContent("1"));
+    expect(screen.getByText("Capture mode")).toBeInTheDocument();
+    expect(screen.queryByText("Analysis mode")).not.toBeInTheDocument();
+    expect(screen.queryByText("Value the photos together as one lot.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /New lot/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Create your first lot")).not.toBeInTheDocument();
     for (const option of ["Bundle", "Per item", "Per photo"]) {

@@ -668,3 +668,34 @@ it('does not save or acknowledge old captured work after the draft changes while
   expect(input.onClose).not.toHaveBeenCalled();
   expect(nextClose).not.toHaveBeenCalled();
 });
+
+it('recovers additional lots from an interrupted legacy Arrival journal before fixing its capture boundary', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const context = { ownerId:'arrival-owner', draftId:'arrival-draft', sessionId:'original' };
+  const journal = { ...context, revision:3, lots:[{...lot,files:[photo]}, {...lot,id:'legacy-second',files:[{...photo,name:'second.jpg'}]}] };
+  jest.mocked(OfflineCaptureStore.getPendingCapture).mockResolvedValue(journal as any);
+  const input = {...props(false),visible:false,captureContext:context,arrivalPhotosOnly:true,allowVideo:false};
+  await render(<NativeAuctionCameraScreen {...input} />);
+  await waitFor(() => expect(alert).toHaveBeenCalledWith('Recover camera photos?', expect.stringContaining('2 lots'), expect.any(Array)));
+  await act(async () => { alert.mock.calls[0][2]?.find(button => button.text === 'Recover photos')?.onPress?.(); });
+  await waitFor(() => expect(input.onAutoSave).toHaveBeenCalled());
+  expect(input.onAutoSave.mock.calls[0][0].map((row: MixedLot) => row.id)).toEqual([lot.id,'legacy-second']);
+  expect(OfflineCaptureStore.acknowledgePendingCapture).toHaveBeenCalledWith(journal,3);
+  jest.mocked(OfflineCaptureStore.getPendingCapture).mockResolvedValue(null);
+});
+
+it('requests photo-only Arrival capture without weakening assigned-lot mode', async () => {
+  jest.mocked(loadNativeAuctionCamera).mockResolvedValue({openAuctionCamera,getCameraCapabilities:async () => ({lockedStructure:true,arrivalPhotosOnly:true})});
+  const input = {...props(false),arrivalPhotosOnly:true,allowVideo:false};
+  await render(<NativeAuctionCameraScreen {...input} />);
+  await waitFor(() => expect(input.onClose).toHaveBeenCalled());
+  expect(JSON.parse(openAuctionCamera.mock.calls[0][0]!)).toMatchObject({lockedStructure:false,arrivalPhotosOnly:true,allowVideo:false});
+});
+
+it('does not let an older native binary silently ignore photo-only Arrival capture', async () => {
+  const input = {...props(false),arrivalPhotosOnly:true,allowVideo:false};
+  const view = await render(<NativeAuctionCameraScreen {...input} />);
+  await waitFor(() => expect(view.getByText('Camera update required')).toBeTruthy());
+  expect(openAuctionCamera).not.toHaveBeenCalled();
+  expect(input.setLots).not.toHaveBeenCalled();
+});

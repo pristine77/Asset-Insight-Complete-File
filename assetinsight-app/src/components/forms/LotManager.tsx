@@ -531,7 +531,7 @@ const LotManager = ({
             </View>
           </View>
           <View style={styles.lotHeaderRight}>
-            {!lockedStructure ? <TouchableOpacity onPress={() => removeLot(idx)} style={styles.deleteBtn}>
+            {!lockedStructure && !photosOnly ? <TouchableOpacity onPress={() => removeLot(idx)} style={styles.deleteBtn}>
               <Feather name="trash-2" size={18} color="#EF4444" />
             </TouchableOpacity> : null}
             <Feather name={isExpanded ? 'chevron-up' : 'chevron-down'} size={24} color="#6B7280" />
@@ -563,12 +563,12 @@ const LotManager = ({
                 <Feather name="camera" size={20} color="#fff" />
                 <Text style={styles.actionBtnText}>Camera</Text>
               </TouchableOpacity>
-              <TouchableOpacity
+              {!photosOnly ? <TouchableOpacity
                 style={[styles.actionBtn, styles.galleryBtn]}
                 onPress={() => pickImages(idx)}>
                 <Feather name="image" size={20} color="#7C3AED" />
                 <Text style={[styles.actionBtnText, styles.galleryBtnText]}>Gallery</Text>
-              </TouchableOpacity>
+              </TouchableOpacity> : null}
             </View>
 
             {lot.videoFile ? (
@@ -577,7 +577,7 @@ const LotManager = ({
                 <View style={styles.videoDetails}>
                   <Text style={styles.videoName} numberOfLines={2}>{lot.videoFile.name}</Text>
                   <Text style={styles.videoNote}>
-                    {lot.videoFile.size ? `${formatFileSize(lot.videoFile.size)} · ` : ''}Included in media ZIP
+                    {photosOnly ? 'Video is kept on this device and will not be sent. Remove this attachment before sending photos.' : `${lot.videoFile.size ? `${formatFileSize(lot.videoFile.size)} · ` : ''}Included in media ZIP`}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -685,6 +685,19 @@ const LotManager = ({
             <Feather name="camera" size={20} color="#fff" />
             <Text style={styles.actionBtnText}>Camera</Text>
           </TouchableOpacity>
+          {arrivalLot.videoFile ? (
+            <View style={styles.videoAttachment} accessibilityRole="summary" accessibilityLabel={`Arrival capture, video not sent: ${arrivalLot.videoFile.name}`}>
+              <Feather name="video" size={20} color="#374151" />
+              <View style={styles.videoDetails}>
+                <Text style={styles.videoName}>{arrivalLot.videoFile.name}</Text>
+                <Text style={styles.videoNote}>Video is kept on this device and will not be sent. Remove this attachment before sending photos.</Text>
+              </View>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Remove video from Arrival capture"
+                style={styles.videoRemove} onPress={() => removeVideo(arrivalLot, 'Arrival capture')}>
+                <Feather name="trash-2" size={20} color="#DC2626" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
           {arrivalLot.files.length > 0 ? (
             <View style={styles.imageGrid}>
               {arrivalLot.files.map((file, imgIdx) => (
@@ -741,7 +754,7 @@ const LotManager = ({
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Image Lots</Text>
-        {!lockedStructure ? <TouchableOpacity
+        {!lockedStructure && !photosOnly ? <TouchableOpacity
           style={styles.addLotBtn}
           onPress={() => {
             const newIdx = onCreateLot();

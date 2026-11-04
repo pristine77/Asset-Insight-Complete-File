@@ -597,3 +597,21 @@ describe('arrival delivery confirmation safety', () => {
     expect(await settled).toMatchObject({ code: 'ERR_CANCELED' });
   });
 });
+
+
+describe('Completed arrival history boundary', () => {
+  const completed = {requestId:'completed-one',lotId:'lot-one',receivedAt:'2026-11-04T20:00:00Z',photoCount:4,description:'Tractor'};
+  it('accepts a confirmed empty list and correctly typed completed rows', async () => {
+    jest.mocked(api.get).mockResolvedValueOnce({data:{success:true,data:[]}}).mockResolvedValueOnce({data:{success:true,data:[completed]}});
+    await expect(auctioneerService.getCompletedArrivalPhotoRequests()).resolves.toEqual([]);
+    await expect(auctioneerService.getCompletedArrivalPhotoRequests()).resolves.toEqual([expect.objectContaining(completed)]);
+  });
+  it.each([null,7,{}, {...completed,photoCount:-1}, {...completed,photoCount:1.5}, {...completed,photoCount:'4'}, {...completed,photoCount:Infinity}, {...completed,description:{unexpected:true}}])('rejects a malformed row without filtering it into empty history: %j', async (row) => {
+    jest.mocked(api.get).mockResolvedValue({data:{success:true,data:[row]}});
+    await expect(auctioneerService.getCompletedArrivalPhotoRequests()).rejects.toThrow('could not be read');
+  });
+  it('rejects an explicit unsuccessful response even with an empty data array', async () => {
+    jest.mocked(api.get).mockResolvedValue({data:{success:false,data:[]}});
+    await expect(auctioneerService.getCompletedArrivalPhotoRequests()).rejects.toThrow('could not be read');
+  });
+});

@@ -11,9 +11,24 @@ import type { AuctioneerWorkItemSetup } from "@/services/auctioneer";
 import type { ReportDraftRecord } from "@/services/reportDrafts";
 import LotListingForm from "./LotListingForm";
 import { StrictMode } from "react";
+import { SWRConfig, unstable_serialize } from "swr";
 import type { MixedLot } from "./mixed/types";
 import type { BackgroundUploadRequest } from "@/services/backgroundUploadManager";
-import { advanceAuthSession } from "@/lib/auth-storage";
+import { advanceAuthSession, captureAuthSession } from "@/lib/auth-storage";
+import { arrivalPhotoListKey } from "@/services/arrivalPhotoCache";
+
+// jsdom does not implement this browser API used by native form validation.
+// Keep the validation/focus path active instead of leaving a deferred exception.
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+beforeAll(() => {
+  if (!HTMLElement.prototype.scrollIntoView) {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  }
+});
+afterAll(() => {
+  if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+});
 
 const mocks = vi.hoisted(() => ({
   userId: "user-1" as string | null,
@@ -1875,6 +1890,32 @@ describe("arrival photos stay separate from report generation", () => {
     mocks.push.mockClear(); mocks.apiPost.mockReset(); mocks.toastSuccess.mockClear();
   });
   afterEach(() => { window.history.replaceState({}, "", "/"); });
+  it.each([true, false])("invalidates only this session's Arrival lists after a confirmed receipt (%s)", async (confirmed) => {
+    const session = captureAuthSession();
+    const cache = new Map();
+    const keys = (["waiting", "completed"] as const).map((view) =>
+      unstable_serialize(arrivalPhotoListKey("user-1", session.revision, view)));
+    const otherOwnerKey = unstable_serialize(arrivalPhotoListKey("user-2", session.revision, "completed"));
+    for (const key of [...keys, otherOwnerKey]) cache.set(key, { data: ["cached-before-send"] });
+    mocks.apiPost.mockResolvedValue({ data: confirmed
+      ? { success: true, data: { sent: 1, stored: 1, skipped: 0, photoCount: 1 } }
+      : { success: false } });
+    render(<SWRConfig value={{ provider: () => cache }}><LotListingForm /></SWRConfig>);
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /^Arrival Photos/ })).toBeChecked());
+    fireEvent.click(screen.getByText("Add test media"));
+    fireEvent.click(screen.getByRole("button", { name: "Send Arrival Photos" }));
+    if (confirmed) {
+      await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/incoming?tab=arrival&view=completed"));
+      for (const key of keys) expect(cache.get(key).data).toBeUndefined();
+    } else {
+      await screen.findByText(/Auctioneer did not confirm all the photos/);
+      for (const key of keys) expect(cache.get(key).data).toEqual(["cached-before-send"]);
+      expect(mocks.push).not.toHaveBeenCalled();
+    }
+    expect(cache.get(otherOwnerKey).data).toEqual(["cached-before-send"]);
+    expect(mocks.apiPost).toHaveBeenCalledTimes(1);
+    expect(mocks.apiPost.mock.calls[0][0]).toContain("/arrival-photo-requests/request-one/photos");
+  });
   it("retains photos and refuses a false success response", async () => {
     mocks.apiPost.mockResolvedValue({ data: { success: false } });
     render(<LotListingForm />);

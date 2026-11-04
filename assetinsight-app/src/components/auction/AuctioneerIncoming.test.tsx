@@ -69,11 +69,13 @@ jest.mock('../forms/AssetFormSheet', () => {
   };
 });
 jest.mock('../forms/LotListingFormSheet', () => {
-  const { Text, View } = jest.requireActual('react-native');
+  const { Text, View, TouchableOpacity } = jest.requireActual('react-native');
   return (props: any) =>
     props.visible ? (
       <View>
         <Text>Lot form {props.auctioneer?.workItemId || (props.arrivalRequest ? `arrival ${props.arrivalRequest.requestId}` : 'legacy')}</Text>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Confirm arrival send" onPress={props.onSuccess}><Text>Confirm send</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel arrival capture" onPress={props.onClose}><Text>Cancel capture</Text></TouchableOpacity>
       </View>
     ) : null;
 });
@@ -593,4 +595,29 @@ describe('Arrival Photos tab', () => {
     expect(screen.getByText(/^Sent /)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Take arrival photos/ })).toBeNull();
   });
+  it('shows failed Completed history as unavailable and retries without false empty history', async () => {
+    jest.mocked(auctioneerService.getCompletedArrivalPhotoRequests).mockRejectedValueOnce(new Error('offline'));
+    await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
+    await fireEvent.press(await screen.findByRole('tab', { name: 'Arrival photo requests' }));
+    await fireEvent.press(screen.getByRole('tab', { name: 'Completed arrival photo requests, 0' }));
+    expect(screen.queryByText(/No arrival photos sent yet/)).toBeNull();
+    const retry = screen.getByRole('button', { name: 'Retry completed arrival photos' });
+    jest.mocked(auctioneerService.getCompletedArrivalPhotoRequests).mockResolvedValue([{ ...request, requestId:'completed-one', receivedAt:null, photoCount:4 }]);
+    await fireEvent.press(retry);
+    expect(await screen.findByLabelText('4 photos')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry completed arrival photos' })).toBeNull();
+  });
+
+  it('moves to Completed only after successful Arrival Send, not cancellation', async () => {
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
+    await fireEvent.press(await screen.findByRole('tab', { name:'Arrival photo requests' }));
+    await fireEvent.press(screen.getByRole('button', { name:'Take arrival photos for lot 3012' }));
+    await fireEvent.press(screen.getByRole('button', { name:'Cancel arrival capture' }));
+    expect(screen.getByRole('tab', { name:'Waiting arrival photo requests, 1' }).props.accessibilityState.selected).toBe(true);
+    await fireEvent.press(await screen.findByRole('button', { name:'Take arrival photos for lot 3012' }));
+    await fireEvent.press(screen.getByRole('button', { name:'Confirm arrival send' }));
+    expect(screen.getByRole('tab', { name:'Completed arrival photo requests, 0' }).props.accessibilityState.selected).toBe(true);
+  });
+
 });

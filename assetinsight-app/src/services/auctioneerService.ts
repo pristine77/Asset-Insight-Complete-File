@@ -424,20 +424,22 @@ export interface CompletedArrivalPhotoRequest extends Omit<ArrivalPhotoRequest, 
 
 export function parseCompletedArrivalPhotoRequest(value: unknown): CompletedArrivalPhotoRequest | null {
   const base = parseArrivalPhotoRequest(value);
-  if (!base || !record(value)) return null;
+  if (!base || !record(value) || !Number.isSafeInteger(value.photoCount) || (value.photoCount as number) < 0) return null;
+  const textFields = ['requestedAt', 'requestedBy', 'lotNumber', 'description', 'serialNumber', 'make', 'model', 'year', 'location', 'contractId', 'contractNumber', 'consignorName', 'eventNumber', 'receivedAt'];
+  if (textFields.some(key => value[key] != null && typeof value[key] !== 'string')) return null;
   const { officeOnlyPhotoCount: _notOnACompletedRequest, ...rest } = base;
   return {
     ...rest,
     receivedAt: nullableText(value.receivedAt),
-    photoCount: Math.max(0, Number(value.photoCount) || 0),
+    photoCount: value.photoCount as number,
   };
 }
 
 class AuctioneerService {
   /**
    * This user's finished arrival photo requests, most recently sent first
-   * (the newest hundred). An Auctioneer too old to know the list answers an
-   * empty one through the Asset Insight server, never the open requests.
+   * (the newest hundred). Unsupported or malformed history is an error, never
+   * a confirmed empty list.
    */
   async getCompletedArrivalPhotoRequests(): Promise<CompletedArrivalPhotoRequest[]> {
     const assertCurrent = captureAuthOperation();
@@ -445,12 +447,12 @@ class AuctioneerService {
     assertCurrent();
     const value = response.data?.data;
     const rows = Array.isArray(value) ? value : value?.items;
-    if (!Array.isArray(rows)) {
+    if (response.data?.success !== true || !Array.isArray(rows)) {
       throw new Error('The completed arrival photos could not be read. Try refreshing.');
     }
-    return rows
-      .map(parseCompletedArrivalPhotoRequest)
-      .filter((row): row is CompletedArrivalPhotoRequest => row !== null);
+    const parsed = rows.map(parseCompletedArrivalPhotoRequest);
+    if (parsed.some(row => row === null)) throw new Error('The completed arrival photos could not be read. Try refreshing.');
+    return parsed as CompletedArrivalPhotoRequest[];
   }
 
   /** This user's open arrival photo requests, newest first. */

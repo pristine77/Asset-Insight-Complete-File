@@ -30,7 +30,8 @@ import AuctioneerService, {
 import { navigateToReportForm } from "@/services/reportFormNavigation";
 import AuctioneerReopenAction from "@/components/reports/AuctioneerReopenAction";
 import ArrivalPhotoRequests, { CompletedArrivalPhotos } from "./ArrivalPhotoRequests";
-import { captureAuthSession } from "@/lib/auth-storage";
+import { assertAuthSessionCurrent, captureAuthSession } from "@/lib/auth-storage";
+import { arrivalPhotoListKey } from "@/services/arrivalPhotoCache";
 import { formatCalendarDate } from "@/lib/calendarDate";
 import styles from "./Incoming.module.css";
 
@@ -202,9 +203,15 @@ function IncomingContent() {
     isValidating: arrivalRequestsLoading,
     mutate: refreshArrivalRequests,
   } = useSWR(
-    requestOwner ? ["auctioneer/arrival-photo-requests", requestOwner] : null,
-    () => AuctioneerService.getArrivalPhotoRequests(),
-    { refreshInterval: visibleRefreshInterval, refreshWhenHidden: false, refreshWhenOffline: false, revalidateOnFocus: true }
+    requestOwner ? arrivalPhotoListKey(requestOwner, sessionRevision, "waiting") : null,
+    async () => {
+      const session = { revision: sessionRevision };
+      assertAuthSessionCurrent(session);
+      const requests = await AuctioneerService.getArrivalPhotoRequests();
+      assertAuthSessionCurrent(session);
+      return requests;
+    },
+    { keepPreviousData: false, refreshInterval: visibleRefreshInterval, refreshWhenHidden: false, refreshWhenOffline: false, revalidateOnFocus: true }
   );
   const arrivalRequests = arrivalRequestsData ?? [];
   /*
@@ -228,11 +235,20 @@ function IncomingContent() {
     isValidating: completedArrivalLoading,
     mutate: refreshCompletedArrival,
   } = useSWR(
-    requestOwner && queueTab === "arrival" ? ["auctioneer/arrival-photo-requests/completed", requestOwner] : null,
-    () => AuctioneerService.getCompletedArrivalPhotoRequests(),
-    { refreshInterval: visibleRefreshInterval, refreshWhenHidden: false, refreshWhenOffline: false, revalidateOnFocus: true }
+    requestOwner && queueTab === "arrival" ? arrivalPhotoListKey(requestOwner, sessionRevision, "completed") : null,
+    async () => {
+      const session = { revision: sessionRevision };
+      assertAuthSessionCurrent(session);
+      const requests = await AuctioneerService.getCompletedArrivalPhotoRequests();
+      assertAuthSessionCurrent(session);
+      return requests;
+    },
+    { keepPreviousData: false, refreshInterval: visibleRefreshInterval, refreshWhenHidden: false, refreshWhenOffline: false, revalidateOnFocus: true }
   );
   const completedArrival = completedArrivalData ?? [];
+  const currentListRefreshing = queueTab === "arrival"
+    ? arrivalView === "completed" ? completedArrivalLoading : arrivalRequestsLoading
+    : isValidating;
 
   const isMine = useCallback(
     (item: AuctioneerIncomingItem) => {
@@ -500,15 +516,21 @@ function IncomingContent() {
           </span>
           <button
             className="app-button app-button--secondary"
-            disabled={isValidating}
-            onClick={() => void refresh(true)}
+            disabled={currentListRefreshing}
+            onClick={() => {
+              if (queueTab === "arrival") {
+                void (arrivalView === "completed" ? refreshCompletedArrival() : refreshArrivalRequests());
+              } else {
+                void refresh(true);
+              }
+            }}
           >
             <RefreshCw
               size={16}
-              className={isValidating ? "animate-spin" : undefined}
+              className={currentListRefreshing ? "animate-spin" : undefined}
               aria-hidden
             />
-            {isValidating ? "Refreshing…" : "Refresh"}
+            {currentListRefreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
       </header>

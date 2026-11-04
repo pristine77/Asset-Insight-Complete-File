@@ -1273,6 +1273,36 @@ export type ArrivalPhotoRequestRecord = {
   officeOnlyPhotoCount: number;
 };
 
+const ARRIVAL_REQUEST_TEXT_FIELDS = [
+  "requestedAt", "requestedBy", "lotId", "lotNumber", "description", "serialNumber",
+  "make", "model", "year", "location", "contractId", "contractNumber",
+  "consignorName", "eventNumber", "receivedAt",
+] as const;
+
+/** Unlike the shared legacy reader, never drop malformed members of a history list. */
+function requireArrivalPhotoList(payload: unknown, completed: boolean): Auctioneer2Record[] {
+  const invalid = () => new Auctioneer2ClientError(
+    "Auctioneer returned an invalid arrival photo request list. Try again.",
+    { statusCode: 502, code: "auctioneer2_invalid_response" },
+  );
+  let source = payload;
+  while (isRecord(source)) {
+    if (Object.prototype.hasOwnProperty.call(source, "success") && source.success !== true) throw invalid();
+    if (Object.prototype.hasOwnProperty.call(source, "items")) { source = source.items; break; }
+    source = source.data;
+  }
+  if (!Array.isArray(source)) throw invalid();
+  const ids = new Set<string>();
+  for (const item of source) {
+    if (!isRecord(item) || typeof item.requestId !== "string" || !item.requestId.trim() || ids.has(item.requestId)) throw invalid();
+    if (ARRIVAL_REQUEST_TEXT_FIELDS.some(field => item[field] != null && typeof item[field] !== "string")) throw invalid();
+    const count = completed ? item.photoCount : item.officeOnlyPhotoCount;
+    if ((completed || count != null) && (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)) throw invalid();
+    ids.add(item.requestId);
+  }
+  return source as Auctioneer2Record[];
+}
+
 export async function listArrivalPhotoRequests(userId: string): Promise<ArrivalPhotoRequestRecord[]> {
   const normalizedUserId = String(userId || "").trim();
   if (!normalizedUserId) {
@@ -1284,9 +1314,7 @@ export async function listArrivalPhotoRequests(userId: string): Promise<ArrivalP
   const query = new URLSearchParams({ userId: normalizedUserId });
   const response = await auctioneer2Request<Auctioneer2Record>(`/arrival-photo-requests?${query.toString()}`, {}, { deadlineIncludesBody: true });
   if (response?.success !== true) throw new Auctioneer2ClientError("Auctioneer did not confirm the arrival request list. Try again.", { statusCode: 502, code: "auctioneer2_invalid_response" });
-  const items = requireArray(response, ["items"]);
-  if (items.some(item => typeof item.requestId !== "string" || !item.requestId.trim())) throw new Auctioneer2ClientError("Auctioneer returned an invalid arrival request list.", { statusCode: 502, code: "auctioneer2_invalid_response" });
-  return items as unknown as ArrivalPhotoRequestRecord[];
+  return requireArrivalPhotoList(response, false) as unknown as ArrivalPhotoRequestRecord[];
 }
 
 /*
@@ -1294,7 +1322,8 @@ export async function listArrivalPhotoRequests(userId: string): Promise<ArrivalP
  * Requests → Completed. Auctioneer answers `status: "completed"` for this
  * list (its server/externalApi.ts). A server too old to know the parameter
  * ignores it and answers the OPEN list, with no status; that answer is never
- * shown as completed work, the list is just empty until Auctioneer is updated.
+ * shown as completed work. Report unavailable history explicitly until the
+ * provider supports it; an unconfirmed response is not an empty history.
  */
 export type CompletedArrivalPhotoRequestRecord = Omit<ArrivalPhotoRequestRecord, "officeOnlyPhotoCount"> & {
   receivedAt: string | null;
@@ -1312,10 +1341,11 @@ export async function listCompletedArrivalPhotoRequests(userId: string): Promise
   const query = new URLSearchParams({ userId: normalizedUserId, status: "completed" });
   const response = await auctioneer2Request<Auctioneer2Record>(`/arrival-photo-requests?${query.toString()}`, {}, { deadlineIncludesBody: true });
   if (response?.success !== true) throw new Auctioneer2ClientError("Auctioneer did not confirm the completed arrival request list. Try again.", { statusCode: 502, code: "auctioneer2_invalid_response" });
-  if (response.status !== "completed") return [];
-  const items = requireArray(response, ["items"]);
-  if (items.some(item => typeof item.requestId !== "string" || !item.requestId.trim())) throw new Auctioneer2ClientError("Auctioneer returned an invalid arrival request list.", { statusCode: 502, code: "auctioneer2_invalid_response" });
-  return items as unknown as CompletedArrivalPhotoRequestRecord[];
+  if (response.status !== "completed") throw new Auctioneer2ClientError(
+    "Completed arrival photo history is unavailable from Auctioneer. Ask the auction team to check the integration, then try again.",
+    { statusCode: 503, code: "auctioneer2_completed_history_unavailable" },
+  );
+  return requireArrivalPhotoList(response, true) as unknown as CompletedArrivalPhotoRequestRecord[];
 }
 
 /** One batch (1 to 5) of a request's photos, already watermarked. */

@@ -1817,10 +1817,10 @@ export default function MixedSection({
   const modeChoice = activeLot ? (
       <fieldset>
         <legend className="text-sm font-semibold text-[var(--app-text)]">
-          Analysis mode <span className="text-[var(--app-accent)]" aria-hidden="true">*</span>
+          {photosOnly ? "Capture mode" : "Analysis mode"} <span className="text-[var(--app-accent)]" aria-hidden="true">*</span>
         </legend>
         <p className="mt-1 text-xs leading-5 text-[var(--app-text-muted)]">
-          Choose how the main photos in this lot should be interpreted.
+          {photosOnly ? "Choose a capture mode, then open the camera." : "Choose how the main photos in this lot should be interpreted."}
         </p>
         <div role="radiogroup" className="mt-3 grid gap-2 @min-[560px]:grid-cols-3">
           {MODE_OPTIONS.map((option) => {
@@ -1855,7 +1855,12 @@ export default function MixedSection({
                   <span className={`h-3.5 w-3.5 rounded-full border ${checked ? "border-[5px] border-[var(--app-accent)]" : "border-[var(--app-text-muted)]"}`} aria-hidden="true" />
                   {option.label}
                 </span>
-                <span className="mt-1 block pl-[22px] text-[11px] leading-4 text-[var(--app-text-muted)]">{option.description}</span>
+                <span className="mt-1 block pl-[22px] text-[11px] leading-4 text-[var(--app-text-muted)]">
+                  {photosOnly
+                    ? option.value === "single_lot" ? "Capture photos of a group."
+                      : option.value === "per_item" ? "Capture photos of each item." : "Capture individual photos."
+                    : option.description}
+                </span>
               </label>
             );
           })}

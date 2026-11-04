@@ -70,6 +70,7 @@ interface CameraScreenProps {
   enhanceImages?: boolean;
   onEnhanceChange?: (enabled: boolean) => void;
   lockedStructure?: boolean;
+  allowVideo?: boolean;
   sourceLabels?: string[];
 }
 
@@ -118,6 +119,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   enhanceImages = false,
   onEnhanceChange,
   lockedStructure = false,
+  allowVideo = true,
   sourceLabels,
 }) => {
   const insets = useSafeAreaInsets();
@@ -771,6 +773,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   }, [captureContext?.draftId, captureContext?.ownerId, clearRecordingState, sameCaptureOwner, visible]);
 
   const startRecording = useCallback(async () => {
+    if (!allowVideo) return;
     if (!cameraConfigured || !cameraStarted) return;
     if (!currentLot?.mode) {
       Alert.alert('Select Mode', 'Capture at least one photo first to set the lot mode.');
@@ -916,6 +919,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
     requestMicPermission,
     saveToGallery,
     setLots,
+    allowVideo,
     videoOutput,
     videoSessionConfig,
   ]);
@@ -1348,7 +1352,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
 
                 <View style={styles.performanceRowPortrait}>
                   <View style={styles.performanceButtonsPortrait}>{performanceButtonsPortrait}</View>
-                  <RecordButtonView
+                  {allowVideo && <RecordButtonView
                     isRecording={isRecording}
                     onStartRecording={() => {
                       void startRecording();
@@ -1358,7 +1362,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
                     }}
                     disabled={!currentLot?.mode}
                     compact
-                  />
+                  />}
                 </View>
 
                 <View style={styles.bottomBarRow}>
@@ -1474,7 +1478,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
                   <View style={styles.performanceRowLandscape}>{performanceButtons}</View>
                   <View style={styles.cameraModeBtnLandscapeRow}>{modeToggleButtons}</View>
 
-                  <RecordButtonView
+                  {allowVideo && <RecordButtonView
                     isRecording={isRecording}
                     onStartRecording={() => {
                       void startRecording();
@@ -1485,7 +1489,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
                     disabled={!currentLot?.mode}
                     compact
                     isLandscape
-                  />
+                  />}
 
                   <CaptureButtonsView
                     onCapture={handleCapture}

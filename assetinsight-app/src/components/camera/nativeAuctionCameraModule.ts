@@ -1,6 +1,6 @@
 type NativeAuctionCameraModule = {
   openAuctionCamera: (initialPayload?: string, requestId?: string) => Promise<string>;
-  getCameraCapabilities?: () => Promise<{ lockedStructure: boolean; launchRecovery?: boolean }>;
+  getCameraCapabilities?: () => Promise<{ lockedStructure: boolean; launchRecovery?: boolean; arrivalPhotosOnly?: boolean }>;
   cancelCameraLaunch?: (requestId: string) => Promise<boolean>;
   getContentUriInfo?: (uri: string) => Promise<{ exists: boolean; size?: number; type?: string }>;
   getPendingCapture?: (ownerId: string, draftId: string) => Promise<string | null>;

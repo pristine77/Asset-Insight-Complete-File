@@ -56,6 +56,7 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
   // the website): the requests still to photograph, and the ones already sent.
   const [arrivalView, setArrivalView] = useState<'waiting' | 'completed'>('waiting');
   const [completedArrival, setCompletedArrival] = useState<CompletedArrivalPhotoRequest[]>([]);
+  const [arrivalErrors, setArrivalErrors] = useState({ waiting: '', completed: '' });
   const [unavailableMessage, setUnavailableMessage] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -83,6 +84,7 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
       setItems([]);
       setArrivalRequests([]);
       setCompletedArrival([]);
+      setArrivalErrors({ waiting: '', completed: '' });
       setArrivalRequest(null);
       setNotice('');
     }
@@ -111,18 +113,20 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
         setItems([]);
         setArrivalRequests([]);
         setCompletedArrival([]);
+        setArrivalErrors({ waiting: '', completed: '' });
         setArrivalRequest(null);
         return false;
       }
       const [next, arrival, sent] = await Promise.all([
         auctioneerService.getIncoming(refresh),
         // An unreadable arrival list keeps the last one; contracts still load.
-        auctioneerService.getArrivalPhotoRequests().catch(() => null),
-        auctioneerService.getCompletedArrivalPhotoRequests().catch(() => null),
+        auctioneerService.getArrivalPhotoRequests().then(rows => ({ rows, error: '' }), cause => ({ rows: null, error: auctioneerErrorMessage(cause, 'Could not load waiting arrival photos. Retry to check for updates.') })),
+        auctioneerService.getCompletedArrivalPhotoRequests().then(rows => ({ rows, error: '' }), cause => ({ rows: null, error: auctioneerErrorMessage(cause, 'Could not load completed arrival photos. Retry to check for updates.') })),
       ]);
       if (!isCurrent()) return false;
-      if (arrival) setArrivalRequests(arrival);
-      if (sent) setCompletedArrival(sent);
+      if (arrival.rows) setArrivalRequests(arrival.rows);
+      if (sent.rows) setCompletedArrival(sent.rows);
+      setArrivalErrors({ waiting: arrival.error, completed: sent.error });
       setItems(next.map((item) => retainAuctioneerAccessRevision(
         item,
         receivedRevisions.current.get(item.contractId)
@@ -511,6 +515,19 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
                 })}
               </View>
             ) : null}
+            {showingArrival && !!arrivalErrors[arrivalView] && (
+              <View accessibilityLiveRegion="polite" style={styles.error}>
+                <Text style={styles.errorText}>{arrivalErrors[arrivalView]}</Text>
+                {(showingSent ? completedArrival : arrivalRequests).length > 0 && (
+                  <Text style={styles.meta}>Showing the last loaded arrival photos. Retry to check for updates.</Text>
+                )}
+                <TouchableOpacity accessibilityRole="button"
+                  accessibilityLabel={`Retry ${arrivalView} arrival photos`} style={styles.retry}
+                  disabled={refreshing} onPress={() => void load(true)}>
+                  <Text style={styles.buttonText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
             {!!notice && <Text accessibilityLiveRegion="polite" style={styles.meta}>{notice}</Text>}
             {!!error && (
               <View accessibilityLiveRegion="polite" style={styles.error}>
@@ -543,7 +560,7 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
               accessibilityLabel="Loading assigned contracts"
               color={colors.accent}
             />
-          ) : !error ? (
+          ) : !error && !(showingArrival && arrivalErrors[arrivalView]) ? (
             <Text style={styles.meta}>
               {enabled
                 ? showingSent

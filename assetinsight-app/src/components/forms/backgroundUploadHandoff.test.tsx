@@ -553,12 +553,13 @@ describe('Arrival Photos Submit', () => {
     contractId: null, contractNumber: '825712', consignorName: null, eventNumber: null, officeOnlyPhotoCount: 0,
   };
 
-  async function mountArrival() {
+  async function mountArrival(onSuccess?: () => void, withVideo = false) {
     const draft = ordinaryDraft('lotListing');
+    if (withVideo) (draft.lots[0].videoFiles as any[]).push({uri:'file:///saved-arrival.mp4',name:'saved-arrival.mp4',type:'video/mp4'});
     jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft, formData: { ...draft.formData, capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId, arrivalPhotoRequest: request } } as any);
     jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
     const closed = jest.fn();
-    await render(<LotListingFormSheet visible backgroundUploads draftIdToLoad="local-parent" arrivalRequest={request} onClose={closed} />);
+    await render(<LotListingFormSheet visible backgroundUploads draftIdToLoad="local-parent" arrivalRequest={request} onClose={closed} onSuccess={onSuccess} />);
     await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
     return closed;
   }
@@ -575,6 +576,27 @@ describe('Arrival Photos Submit', () => {
     expect(lotListingService.createLotListing).not.toHaveBeenCalled();
     expect(backgroundUploadManager.getSnapshot().active).toBeNull();
     expect(Alert.alert).toHaveBeenCalledWith('Arrival photos sent', expect.stringContaining('Office Only'));
+  });
+
+  it('notifies Incoming of confirmed Send through success only after receipt and cleanup', async () => {
+    const success = jest.fn();
+    jest.mocked(auctioneerService.sendArrivalPhotos).mockResolvedValue({sent:3,stored:3,skipped:0,photoCount:3});
+    const closed = await mountArrival(success);
+    await fireEvent.press(screen.getByRole('button', {name:'Send arrival photos'}));
+    await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
+    expect(closed).not.toHaveBeenCalled();
+    expect(AutoSaveService.removeDraftRecordOnly).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(AutoSaveService.removeDraftRecordOnly).mock.invocationCallOrder[0]).toBeLessThan(success.mock.invocationCallOrder[0]);
+  });
+
+  it('keeps legacy video drafts intact and refuses a photo-only send until removal', async () => {
+    const closed = await mountArrival(undefined, true);
+    await fireEvent.press(screen.getByRole('button', {name:'Send arrival photos'}));
+    expect(Alert.alert).toHaveBeenCalledWith('Arrival photos only', expect.stringContaining('saved video'));
+    expect(auctioneerService.sendArrivalPhotos).not.toHaveBeenCalled();
+    expect(AutoSaveService.removeDraftRecordOnly).not.toHaveBeenCalled();
+    expect(closed).not.toHaveBeenCalled();
+    expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
   });
 
   it('keeps the form and its photos open when the send is refused', async () => {
