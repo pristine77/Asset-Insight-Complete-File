@@ -1,4 +1,4 @@
-import { readCaptureLotIdentity, applyCaptureLotIdentities, assertUniqueInitialLotNumbers } from "../../service/captureLotIdentity.js";
+import { readCaptureLotIdentity, applyCaptureLotIdentities, renumberRepeatedLotNumbers } from "../../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../../utils/photoWatermarkPolicy.js";
 import { normalizeAssetReportValuationMethods } from "../../utils/assetValuationSelection.js";
 import type { ValuationMethod } from "../../service/assetValuationService.js";
@@ -27,7 +27,7 @@ import {
 import { enrichLotsWithVin } from "../../service/vehicleApiService.js";
 import { enrichAuctioneerImportSpecs } from "../../service/lotListingSpecEnrichmentService.js";
 import { startProgress, endProgress, updateProgress } from "../../utils/progressStore.js";
-import { normalizeLotsForReportOrdering } from "./lotOrdering.js";
+import { CAPTURE_ORDER_NUMBERED_MODES, keepLotCardNumbersOnly, normalizeLotsForReportOrdering } from "./lotOrdering.js";
 import type { AssetGroupingMode, AssetJobInput } from "./types.js";
 import { buildPolicySafeReportDamageAnalysis } from "../../utils/assetDamageAnalysis.js";
 import { normalizeAuctioneerLotSpecs } from "../../utils/auctioneerSpecRows.js";
@@ -1232,7 +1232,10 @@ export async function runAssetPreviewJob(
 
     clearFocusBoxes();
 
-    lots = normalizeLotsForReportOrdering(lots.map(markInitialLotNumberFallback), groupingMode);
+    // Lot numbers come only from lot-number cards, never twice; every other
+    // lot is numbered in capture order (owner 2026-11-03, lotOrdering.ts).
+    const fromLotCards = CAPTURE_ORDER_NUMBERED_MODES.has(groupingMode) ? keepLotCardNumbersOnly(lots) : lots;
+    lots = normalizeLotsForReportOrdering(fromLotCards.map(markInitialLotNumberFallback), groupingMode, { includeMixed: true });
     if (reportId) {
       lots = await mergeCanonicalAuctioneerSourceLots({
         reportId,
@@ -1265,6 +1268,15 @@ export async function runAssetPreviewJob(
         currentLot: lots.length,
         totalLots: lots.length,
       });
+    }
+
+    // The capture-order numbers given to lots whose photos showed no lot card,
+    // or a card already used (owner 2026-11-03). Like a lot-photo number, no
+    // later step may replace them; they are put back after enrichment below.
+    const captureOrderNumbers = new Map<string, unknown>();
+    for (const lot of Array.isArray(lots) ? lots : []) {
+      const lotId = String(lot?.lot_id ?? "").trim();
+      if (lotId && lot?.analysis_metadata?.lot_number_dropped) captureOrderNumbers.set(lotId, lot.lot_number);
     }
 
     if (Array.isArray(lots) && lots.length) {
@@ -1304,6 +1316,9 @@ export async function runAssetPreviewJob(
         const groupIndex = Number(lot?.mixed_group_index) - 1;
         const diagnostic = bundleDiagnosticsByGroup.get(groupIndex);
         if (!diagnostic) return lot;
+        // A lot card already used by an earlier lot stays cleared: never two
+        // lots with one number (owner 2026-11-03, lotOrdering.ts).
+        if (lot?.analysis_metadata?.lot_number_dropped?.reason === "repeated") return lot;
         return applyAuthoritativeBundleLotNumber(
           {
             ...lot,
@@ -1316,8 +1331,18 @@ export async function runAssetPreviewJob(
         );
       });
     }
+    if (captureOrderNumbers.size > 0) {
+      lots = lots.map((lot) => {
+        const lotId = String(lot?.lot_id ?? "").trim();
+        if (!lot?.analysis_metadata?.lot_number_dropped || !captureOrderNumbers.has(lotId)) return lot;
+        const number = captureOrderNumbers.get(lotId);
+        return lot.lot_number === number ? lot : { ...lot, lot_number: number };
+      });
+    }
 
-    lots = applyCaptureLotIdentities(lots, details?.mixed_lots);
+    // A repeat is renumbered here, before Auctioneer numbers are allocated, so
+    // a work item gives it a free number in the sale (owner, 2026-11-04).
+    lots = renumberRepeatedLotNumbers(applyCaptureLotIdentities(lots, details?.mixed_lots));
 
     // Assign event-scoped numbers only during initial analysis, after enrichment
     // has finished. Saves, file retries and delivery retain reviewed identities.
@@ -1332,7 +1357,8 @@ export async function runAssetPreviewJob(
       });
     }
 
-    assertUniqueInitialLotNumbers(lots);
+    // And once more after allocation, so no report ever leaves with a repeat.
+    lots = renumberRepeatedLotNumbers(lots);
 
     let valuationData = null;
     const selectedValuationMethods = normalizeAssetReportValuationMethods(details) as ValuationMethod[];

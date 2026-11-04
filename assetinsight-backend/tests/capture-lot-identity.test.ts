@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCaptureLotIdentities, assertUniqueInitialLotNumbers, readCaptureLotIdentity } from "../src/service/captureLotIdentity.js";
+import { applyCaptureLotIdentities, readCaptureLotIdentity, renumberRepeatedLotNumbers } from "../src/service/captureLotIdentity.js";
 import { initialLotNumberFallbackIndexes } from "../src/service/initialLotNumberProvenance.js";
 
 describe("capture group identity", () => {
@@ -12,7 +12,7 @@ describe("capture group identity", () => {
     expect(input).toEqual(before);
     expect(result[0].analysis_metadata.capture_lot_identity).toEqual({ id:"captured-a", number:"27.1", applied:true });
     expect(initialLotNumberFallbackIndexes(result)).toEqual([]);
-    expect(() => assertUniqueInitialLotNumbers(result)).not.toThrow();
+    expect(renumberRepeatedLotNumbers(result)).toEqual(result);
   });
   it("does not guess labels for groups expanded into multiple items", () => {
     const result = applyCaptureLotIdentities([{ lot_number:"9", mixed_group_index:1 },{ lot_number:"10", mixed_group_index:1 }], [{count:2,capture_lot_id:"a",capture_lot_number:"27"}]);
@@ -27,9 +27,21 @@ describe("capture group identity", () => {
     const result=applyCaptureLotIdentities([{lot_number:"2500",mixed_group_index:1,analysis_metadata:{bundle_lot_number_detection:{numberSource:"reviewed_upload",resolvedLotNumber:"2500"}}}], [{count:1,capture_lot_id:"a",capture_lot_number:"1"}]);
     expect(result[0].lot_number).toBe("2500");
   });
-  it("rejects duplicate initial labels without silently changing the caller's rows", () => {
-    const lots = [{lot_number:"Lot #27"},{lot_number:"27"}]; const before=structuredClone(lots);
-    expect(() => assertUniqueInitialLotNumbers(lots)).toThrow(/Duplicate lot number 27/);
+  // Owner, 2026-11-04 ("1 and 2"): a repeat is renumbered, never a stopped report.
+  it("keeps the first use of a number and gives a repeat the lowest free number, without changing the caller's rows", () => {
+    const lots = [{lot_number:"Lot #27"},{lot_number:"27"},{lot_number:"1"}]; const before=structuredClone(lots);
+    const result = renumberRepeatedLotNumbers(lots);
+    expect(result.map(lot => lot.lot_number)).toEqual(["Lot #27", "2", "1"]);
+    expect(result[1].analysis_metadata.lot_number_dropped).toEqual({ version: 1, value: "27", reason: "repeated" });
     expect(lots).toEqual(before);
+  });
+  it("renumbers the phone's case: a lot-card number beside the same position number", () => {
+    // Lot 3 carries "7" from its lot card; the 7th lot is sent as "7".
+    const phone = ["1","2","7","4","5","6","7","8"].map(lot_number => ({ lot_number }));
+    const result = renumberRepeatedLotNumbers(phone);
+    expect(result.map(lot => lot.lot_number)).toEqual(["1","2","7","4","5","6","3","8"]);
+    expect(new Set(result.map(lot => lot.lot_number)).size).toBe(8);
+    // A renumbered lot takes a free number in the sale on an Auctioneer work item.
+    expect(initialLotNumberFallbackIndexes(result)).toContain(6);
   });
 });

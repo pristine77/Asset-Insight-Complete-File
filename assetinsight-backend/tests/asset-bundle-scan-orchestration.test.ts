@@ -274,20 +274,16 @@ describe("Asset Bundle scan orchestration", () => {
       title: photos[0], description: "Independent submitted unit", estimated_value: "CAD 100",
       image_indexes: [0], lot_number: "222",
     }] }));
-    if (number) {
-      const before = structuredClone(jobInput.details);
-      await expect(runAssetPreviewJob(jobInput)).rejects.toThrow("Duplicate lot number 222");
-      expect(jobInput.details).toEqual(before);
-      expect(jobInput.images).toHaveLength(122);
-      expect(await AssetReport.countDocuments({user:jobInput.user.id})).toBe(0);
-      return;
-    }
+    // Owner, 2026-11-04 ("1 and 2"): two Bundles showing the same card make a
+    // report, the second renumbered; it is never stopped.
     await runAssetPreviewJob(jobInput);
     const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
     const lots = report.preview_data.lots;
     expect(lots).toHaveLength(2);
     expect(lots.map((lot: any) => lot.lot_id)).toEqual(["lot-001", "lot-002"]);
-    expect(lots.map((lot: any) => String(lot.lot_number))).toEqual(number ? ["222", "222"] : ["1", "2"]);
+    // Owner 2026-11-03: never two lots with the same number in one report. The
+    // second Bundle showing card 222 takes the next number in capture order.
+    expect(lots.map((lot: any) => String(lot.lot_number))).toEqual(number ? ["222", "1"] : ["1", "2"]);
     expect(lots.map((lot: any) => lot.image_urls)).toEqual([report.imageUrls.slice(0, 104), report.imageUrls.slice(106, 121)]);
     expect(lots.map((lot: any) => lot.extra_image_urls)).toEqual([report.imageUrls.slice(104, 106), report.imageUrls.slice(121)]);
     expect(lots.map((lot: any) => lot.title)).toEqual([report.imageUrls[0], report.imageUrls[106]]);

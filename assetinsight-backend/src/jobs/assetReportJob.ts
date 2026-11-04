@@ -1,4 +1,4 @@
-import { readCaptureLotIdentity, applyCaptureLotIdentities, assertUniqueInitialLotNumbers } from "../service/captureLotIdentity.js";
+import { readCaptureLotIdentity, applyCaptureLotIdentities, renumberRepeatedLotNumbers } from "../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import {
   getR2PublicUrl,
@@ -1161,8 +1161,8 @@ export async function runAssetReportJob({
       }
     }
 
-    lots = applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(lots), details?.mixed_lots);
-    assertUniqueInitialLotNumbers(lots);
+    // A repeated number is renumbered, never a stopped report (owner, 2026-11-04).
+    lots = renumberRepeatedLotNumbers(applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(lots), details?.mixed_lots));
 
     // Rename images based on lot titles (e.g., "2014 Dodge Ram (1).jpg")
     if (Array.isArray(lots) && lots.length > 0 && imageUrls.length > 0) {

@@ -1,4 +1,4 @@
-import { readCaptureLotIdentity, applyCaptureLotIdentities, assertUniqueInitialLotNumbers } from "../service/captureLotIdentity.js";
+import { readCaptureLotIdentity, applyCaptureLotIdentities, renumberRepeatedLotNumbers } from "../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { assertMixedLotPhotoManifest, resolveGroupModelImageIndex } from "../utils/mixedLotPhotoManifest.js";
 import {
@@ -2564,7 +2564,10 @@ export async function runLotListingJob({
       defaultLatitude: details.latitude,
       defaultLongitude: details.longitude,
     });
-    analyzedLots = applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(analyzedLots), mixedLots);
+    // A repeated number is renumbered, never a stopped listing (owner,
+    // 2026-11-04): before allocation, so a work item gives it a free number in
+    // the sale, and once more after it.
+    analyzedLots = renumberRepeatedLotNumbers(applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(analyzedLots), mixedLots));
     if (listingId) {
       analyzedLots = await allocateInitialAuctioneerLotNumbers({
         reportId: listingId,
@@ -2574,7 +2577,7 @@ export async function runLotListingJob({
         assertOwned: executionContext ? () => executionContext.assertOwned() : undefined,
       });
     }
-    assertUniqueInitialLotNumbers(analyzedLots);
+    analyzedLots = renumberRepeatedLotNumbers(analyzedLots);
     aiAnalysis = {
       ...(aiAnalysis || {}),
       lot_enrichment: enrichmentResult.analyses,
