@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Building2,
   CalendarDays,
+  Camera,
   FileCheck2,
   FileText,
   Inbox,
@@ -587,7 +588,11 @@ function IncomingContent() {
 
           {queueTab === "arrival" ? (
             <>
-              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] px-4 py-2.5">
+              <div className={styles.arrivalBar}>
+                <span className={styles.arrivalBarLabel}>
+                  <Camera size={14} aria-hidden />
+                  Arrival photos
+                </span>
                 <div className={styles.tabs} role="tablist" aria-label="Arrival photo requests">
                   <button
                     type="button"
@@ -596,7 +601,7 @@ function IncomingContent() {
                     onClick={() => selectArrivalView("waiting")}
                     className={`${styles.tab} ${arrivalView === "waiting" ? styles.tabActive : ""}`}
                   >
-                    Waiting <span className={styles.tabCount}>{arrivalRequests.length}</span>
+                    Waiting <span className={styles.countWaiting}>{arrivalRequests.length}</span>
                   </button>
                   <button
                     type="button"
@@ -605,7 +610,7 @@ function IncomingContent() {
                     onClick={() => selectArrivalView("completed")}
                     className={`${styles.tab} ${arrivalView === "completed" ? styles.tabActive : ""}`}
                   >
-                    Completed <span className={styles.tabCount}>{completedArrivalData ? completedArrival.length : "…"}</span>
+                    Completed <span className={styles.countDone}>{completedArrivalData ? completedArrival.length : "…"}</span>
                   </button>
                 </div>
               </div>

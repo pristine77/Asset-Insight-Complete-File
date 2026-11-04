@@ -667,3 +667,102 @@
     flex: 1;
   }
 }
+
+/*
+  Arrival photo requests, a little colour (owner, 2026-11-04: "Add a little
+  color to the UI"). Violet marks arrival photos, as on Lot Listing's Arrival
+  Photos switch; amber is waiting, green is sent. Amber and green are the
+  app's own warning and success tokens, so both themes are covered; violet
+  has a dark-theme value of its own below.
+*/
+.arrivalBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, #7c3aed 6%, var(--app-panel));
+}
+
+.arrivalBarLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #6d28d9;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.countWaiting,
+.countDone {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.countWaiting {
+  border-color: var(--app-warning-border);
+  background: var(--app-warning-soft);
+  color: var(--app-warning);
+}
+
+.countDone {
+  border-color: var(--app-success-border);
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
+.lotChip {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #ede9fe;
+  color: #5b21b6;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.waitingSince {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--app-warning);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.sentAt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--app-success);
+  font-weight: 600;
+}
+
+.photoPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--app-success-border);
+  border-radius: 999px;
+  background: var(--app-success-soft);
+  color: var(--app-success);
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+:global([data-theme="dark"]) .arrivalBarLabel {
+  color: #c4b5fd;
+}
+
+:global([data-theme="dark"]) .lotChip {
+  background: rgba(139, 92, 246, 0.18);
+  color: #ddd6fe;
+}
+

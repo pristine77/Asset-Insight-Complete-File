@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Camera, CheckCircle2, Inbox, RefreshCw } from "lucide-react";
+import { Camera, CheckCircle2, Clock3, Inbox, RefreshCw } from "lucide-react";
 import type { ArrivalPhotoRequest, CompletedArrivalPhotoRequest } from "@/services/auctioneer";
+import styles from "./Incoming.module.css";
 
 /**
  * Incoming → Arrival Photo Requests (owner, 2026-11-03). Auctioneer's Awaiting
@@ -65,7 +66,7 @@ export default function ArrivalPhotoRequests({
           {requests.map((request) => (
             <tr key={request.requestId} data-testid="arrival-photo-request">
               <td data-label="Lot">
-                <strong>{request.lotNumber || "—"}</strong>
+                <span className={styles.lotChip}>{request.lotNumber || "—"}</span>
                 {request.officeOnlyPhotoCount > 0 ? (
                   <div className="text-xs text-[var(--app-text-muted)]">
                     {request.officeOnlyPhotoCount} Office Only photo{request.officeOnlyPhotoCount === 1 ? "" : "s"} already
@@ -84,7 +85,8 @@ export default function ArrivalPhotoRequests({
               <td data-label="Requested">
                 {request.requestedBy || "Office"}
                 {request.requestedAt ? (
-                  <div className="text-xs text-[var(--app-text-muted)]">
+                  <div className={styles.waitingSince}>
+                    <Clock3 size={12} aria-hidden />
                     {new Date(request.requestedAt).toLocaleString()}
                   </div>
                 ) : null}
@@ -160,7 +162,7 @@ export function CompletedArrivalPhotos({
         <tbody>
           {requests.map((request) => (
             <tr key={request.requestId} data-testid="completed-arrival-photo-request">
-              <td data-label="Lot"><strong>{request.lotNumber || "—"}</strong></td>
+              <td data-label="Lot"><span className={styles.lotChip}>{request.lotNumber || "—"}</span></td>
               <td data-label="Description" title={request.description || undefined}>
                 {request.description || [request.year, request.make, request.model].filter(Boolean).join(" ") || "—"}
                 {request.serialNumber ? (
@@ -177,8 +179,20 @@ export function CompletedArrivalPhotos({
                   </div>
                 ) : null}
               </td>
-              <td data-label="Sent">{request.receivedAt ? new Date(request.receivedAt).toLocaleString() : "—"}</td>
-              <td data-label="Photos" className="tabular-nums">{request.photoCount}</td>
+              <td data-label="Sent">
+                {request.receivedAt ? (
+                  <span className={styles.sentAt}>
+                    <CheckCircle2 size={14} aria-hidden />
+                    {new Date(request.receivedAt).toLocaleString()}
+                  </span>
+                ) : "—"}
+              </td>
+              <td data-label="Photos">
+                <span className={styles.photoPill} aria-label={`${request.photoCount} photo${request.photoCount === 1 ? "" : "s"}`}>
+                  <Camera size={12} aria-hidden />
+                  {request.photoCount}
+                </span>
+              </td>
             </tr>
           ))}
         </tbody>
