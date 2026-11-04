@@ -259,6 +259,37 @@ const LotListingFormSheet = ({
     setDetailsExpanded(true);
   }, [visible, arrivalRequest, draftIdToLoad]);
 
+  /*
+    Arrival Photos holds one lot of its own (owner, 2026-11-04, as on the
+    website: "no need to create more lot. Just A camera option needed", then
+    "Show the three options"). While nothing has been taken, the form's lots
+    collapse into that one, with no mode yet, so the three options decide it;
+    the camera then opens on that lot alone (lockedStructure on CameraScreen
+    below). Turning Arrival Photos off removes it while it is still empty, so
+    the ordinary form starts as it always does.
+  */
+  const arrivalLotIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const isEmpty = (lot: MixedLot) => !lot.files.length && !lot.extraFiles.length && !lot.videoFile;
+    if (arrivalPhotos) {
+      setLots((current) => {
+        if (current.length === 1 && current[0].id === arrivalLotIdRef.current) return current;
+        if (!current.every(isEmpty)) return current;
+        const lot = createNewLot();
+        arrivalLotIdRef.current = lot.id;
+        return [lot];
+      });
+      setActiveLotIdx(0);
+      return;
+    }
+    const madeHere = arrivalLotIdRef.current;
+    if (!madeHere) return;
+    arrivalLotIdRef.current = null;
+    setLots((current) => current.filter((lot) => !(lot.id === madeHere && isEmpty(lot))));
+    setActiveLotIdx(0);
+  }, [visible, arrivalPhotos, setLots]);
+
   // The user's open requests, read while the switch is on.
   useEffect(() => {
     if (!visible || !arrivalPhotos) return;
@@ -1556,6 +1587,9 @@ const LotListingFormSheet = ({
   // greyed-out button left people unable to submit (2026-10-26).
   const canTapSubmit = totalImages > 0;
   const canSaveDraftPreview = Boolean(contractNo.trim()) && totalImages > 0;
+  // The camera's name for the one arrival lot: the Auctioneer lot chosen above.
+  const arrivalChosen = arrivalRequests.find((request) => request.requestId === arrivalRequestId);
+  const arrivalCameraLabel = arrivalChosen?.lotNumber ? `Lot ${arrivalChosen.lotNumber} · Arrival photos` : 'Arrival photos';
   const uploadTitle = arrivalPhotos
     ? 'Sending arrival photos'
     : uploadStatus?.stage === 'preparing'
@@ -1811,12 +1845,17 @@ const LotListingFormSheet = ({
             
             {detailsExpanded && (
               <View style={styles.detailsContent}>
+                {/* Hidden for Arrival Photos (owner, 2026-11-04: "Its not usefull"):
+                    the photos are copied as they are, nothing is priced. The
+                    value is kept for when the switch is turned off. */}
+                {!arrivalPhotos ? (
                 <View style={styles.fieldContainerSmall}>
                   <Text style={styles.fieldLabelSmall}>Currency</Text>
                   <CurrencySelect value={currency} onChange={setCurrency} disabled={submitting || savingDraftPreview} />
                   <Text style={styles.fieldLabelSmall}>{currencyLoading ? 'Detecting currency… Choose it yourself if needed.' : 'Detected from inspection location; choose a currency if it is unknown.'}</Text>
                   {errors.currency ? <Text style={styles.errorText}>{errors.currency}</Text> : null}
                 </View>
+                ) : null}
                 <View style={styles.fieldContainerSmall}>
                   <Text style={styles.fieldLabelSmall}>Contract # *</Text>
                   <TextInput
@@ -2004,6 +2043,7 @@ const LotListingFormSheet = ({
               onCreateLot={handleCreateLot}
               hideSummary={true}
               embedded
+              photosOnly={arrivalPhotos}
             />
           </View>
         </ScrollView>
@@ -2068,8 +2108,8 @@ const LotListingFormSheet = ({
             captureContext={visible && OfflineCaptureStore.getOwnerId() ? { ownerId: OfflineCaptureStore.getOwnerId()!, draftId: currentDraftId || draftIdentityRef.current, sessionId: currentDraftId || draftIdentityRef.current } : undefined}
             manualSubmissionRequired={captureMode === 'offline' || manualSubmissionRequired}
             visible={cameraOpen}
-            lockedStructure={auctioneer?.kind === 'scheduleA'}
-            sourceLabels={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot, index) => lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`) : proposalLots?.labels}
+            lockedStructure={auctioneer?.kind === 'scheduleA' || (arrivalPhotos && lots.length === 1)}
+            sourceLabels={auctioneer?.kind === 'scheduleA' ? auctioneer.lots.map((lot, index) => lot.lotNumber ? `Lot ${lot.lotNumber}` : `Lot ${index + 1}`) : arrivalPhotos ? [arrivalCameraLabel] : proposalLots?.labels}
             onClose={handleCameraClose}
             lots={lots}
             setLots={setLots}

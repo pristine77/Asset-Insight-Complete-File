@@ -52,6 +52,13 @@ interface LotManagerProps {
   // Bundle lot (the mode is locked), and removing one from the form leaves the
   // item to capture in Auctioneer.
   listedItemLots?: boolean[];
+  /**
+   * Arrival Photos (owner, 2026-11-04, as on the website: "no need to create
+   * more lot. Just A camera option needed", then "Show the three options").
+   * The form holds one lot of its own; this shows its three mode options, a
+   * Camera button and the photos taken. No Add Lot, no Gallery, no cover.
+   */
+  photosOnly?: boolean;
 }
 
 const MAX_ASSET_LOT_PHOTOS = 200;
@@ -91,6 +98,7 @@ const LotManager = ({
   sourceTags,
   sourceDetails,
   listedItemLots,
+  photosOnly = false,
 }: LotManagerProps) => {
   const [expandedLot, setExpandedLot] = useState<number | null>(
     activeLotIdx >= 0 ? activeLotIdx : null
@@ -454,6 +462,37 @@ const LotManager = ({
     onOpenCamera(activeLotIdx >= 0 ? activeLotIdx : 0);
   };
 
+  const renderModeButtons = (lot: MixedLot, idx: number, modeLocked: boolean) => (
+    <View style={styles.modeGrid}>
+      {(Object.keys(MODE_INFO) as LotMode[]).map((mode) => {
+        const info = MODE_INFO[mode];
+        const isSelected = lot.mode === mode;
+        return (
+          <TouchableOpacity
+            key={mode}
+            disabled={modeLocked}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: isSelected, disabled: modeLocked }}
+            style={[
+              styles.modeBtn,
+              isSelected && { backgroundColor: info.color + '20', borderColor: info.color },
+            ]}
+            onPress={() => setLotMode(idx, mode)}>
+            <Feather
+              name={info.icon as any}
+              size={20}
+              color={isSelected ? info.color : '#6B7280'}
+            />
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.modeBtnLabel, isSelected && { color: info.color }]}>
+              {info.label}
+            </Text>
+            <Text style={styles.modeBtnDesc}>{info.desc}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
   const renderLotCard = (lot: MixedLot, idx: number) => {
     const isExpanded = expandedLot === idx;
     const isActive = activeLotIdx === idx;
@@ -504,32 +543,7 @@ const LotManager = ({
           <View style={styles.lotContent}>
             {/* Mode Selection */}
             <Text style={styles.modeLabel}>{lockedStructure ? 'Schedule A · Bundle grouping is locked' : modeLocked ? 'Listed item · one lot, Bundle grouping is locked' : 'Select Mode:'}</Text>
-            <View style={styles.modeGrid}>
-              {(Object.keys(MODE_INFO) as LotMode[]).map((mode) => {
-                const info = MODE_INFO[mode];
-                const isSelected = lot.mode === mode;
-                return (
-                  <TouchableOpacity
-                    key={mode}
-                    disabled={modeLocked}
-                    style={[
-                      styles.modeBtn,
-                      isSelected && { backgroundColor: info.color + '20', borderColor: info.color },
-                    ]}
-                    onPress={() => setLotMode(idx, mode)}>
-                    <Feather
-                      name={info.icon as any}
-                      size={20}
-                      color={isSelected ? info.color : '#6B7280'}
-                    />
-                    <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.modeBtnLabel, isSelected && { color: info.color }]}>
-                      {info.label}
-                    </Text>
-                    <Text style={styles.modeBtnDesc}>{info.desc}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            {renderModeButtons(lot, idx, modeLocked)}
 
             {lot.mode === 'single_lot' && (
               <View style={styles.bundleGuidance} accessibilityRole="text">
@@ -633,8 +647,90 @@ const LotManager = ({
     );
   };
 
+  /*
+    Arrival Photos: the form's one lot, shown as the section itself. While a
+    restored older capture holds more than one lot, the ordinary list is kept,
+    so no photo is ever out of sight.
+  */
+  const showArrivalPanel = photosOnly && lots.length <= 1;
+  const arrivalLot = showArrivalPanel ? lots[0] : undefined;
+  const arrivalTaken = (arrivalLot?.files.length ?? 0) + (arrivalLot?.extraFiles.length ?? 0);
+  const arrivalPanel = (
+    <View style={styles.arrivalPanel} testID="arrival-camera-panel">
+      <View style={styles.arrivalHeader}>
+        <Feather name="camera" size={16} color="#6D28D9" />
+        <Text style={styles.arrivalTitle}>Arrival Photos</Text>
+        <Text style={styles.arrivalCount}>
+          {arrivalTaken} {arrivalTaken === 1 ? 'photo' : 'photos'} taken
+        </Text>
+      </View>
+      <Text style={styles.arrivalHelp}>
+        {"Copied to the lot's Office Only section in Auctioneer with the watermark. Nothing is analysed."}
+      </Text>
+      {arrivalLot ? (
+        <>
+          <Text style={styles.modeLabel}>Select Mode:</Text>
+          {renderModeButtons(arrivalLot, 0, false)}
+          {!arrivalLot.mode ? (
+            <Text style={styles.arrivalModeHint}>Select a mode to enable the camera.</Text>
+          ) : null}
+          <TouchableOpacity
+            testID="arrival-camera-button"
+            accessibilityRole="button"
+            accessibilityLabel="Open the camera for the arrival photos"
+            accessibilityState={{ disabled: !arrivalLot.mode }}
+            disabled={!arrivalLot.mode}
+            style={[styles.actionBtn, styles.cameraBtn, styles.arrivalCameraBtn, !arrivalLot.mode && styles.arrivalCameraBtnDisabled]}
+            onPress={() => handleOpenCamera(0)}>
+            <Feather name="camera" size={20} color="#fff" />
+            <Text style={styles.actionBtnText}>Camera</Text>
+          </TouchableOpacity>
+          {arrivalLot.files.length > 0 ? (
+            <View style={styles.imageGrid}>
+              {arrivalLot.files.map((file, imgIdx) => (
+                <TouchableOpacity
+                  key={`${arrivalLot.id}-${imgIdx}`}
+                  style={styles.imageItem}
+                  onPress={() => openImageViewer(0, imgIdx)}
+                  activeOpacity={0.8}>
+                  <Image source={{ uri: getPhotoDisplayUri(file) }} style={styles.imageThumb} />
+                  <View style={styles.imageOverlay}>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove arrival photo ${imgIdx + 1}`}
+                      style={[styles.imageBtn, styles.imageBtnDelete]}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        void removeImage(0, imgIdx);
+                      }}>
+                      <Feather name="x" size={14} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+          {arrivalLot.extraFiles.length > 0 ? (
+            <Text style={styles.arrivalHelp}>
+              + {arrivalLot.extraFiles.length} extra {arrivalLot.extraFiles.length === 1 ? 'photo' : 'photos'} from the camera, sent with these.
+            </Text>
+          ) : null}
+          {arrivalTaken === 0 && arrivalLot.mode ? (
+            <View style={styles.emptyState}>
+              <Feather name="camera" size={40} color="#C4B5FD" />
+              <Text style={styles.emptyText}>No photos yet</Text>
+              <Text style={styles.emptySubtext}>Tap Camera to take the arrival photos.</Text>
+            </View>
+          ) : null}
+        </>
+      ) : null}
+    </View>
+  );
+
   return (
     <View style={[styles.container, embedded && styles.embeddedContainer]}>
+      {showArrivalPanel ? arrivalPanel : (
+      <>
       {/* Open Camera Button - Main Action */}
       <TouchableOpacity style={styles.openCameraBtn} onPress={openCameraDirectly}>
         <Feather name="camera" size={24} color="#fff" />
@@ -704,6 +800,8 @@ const LotManager = ({
             <Text style={styles.summaryLabel}>Images</Text>
           </View>
         </View>
+      )}
+      </>
       )}
 
       {/* Full-Screen Image Viewer Modal */}
@@ -853,6 +951,24 @@ const LotManager = ({
 };
 
 const styles = StyleSheet.create({
+  // Arrival Photos panel (2026-11-04): violet marks arrival photos, as on the
+  // Lot Listing switch and the website.
+  arrivalPanel: {
+    margin: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#C4B5FD',
+    backgroundColor: '#F5F3FF',
+    gap: 8,
+  },
+  arrivalHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  arrivalTitle: { fontSize: 16, fontWeight: '800', color: '#4C1D95' },
+  arrivalCount: { marginLeft: 'auto', fontSize: 13, fontWeight: '700', color: '#6D28D9' },
+  arrivalHelp: { fontSize: 12, lineHeight: 18, color: '#5B21B6' },
+  arrivalModeHint: { fontSize: 12, fontWeight: '700', color: '#B45309' },
+  arrivalCameraBtn: { flex: 0, marginTop: 6 },
+  arrivalCameraBtnDisabled: { opacity: 0.45, elevation: 0, shadowOpacity: 0 },
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',

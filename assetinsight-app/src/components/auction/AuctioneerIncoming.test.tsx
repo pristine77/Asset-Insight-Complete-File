@@ -29,7 +29,7 @@ jest.mock('../../services/auctioneerService', () => ({
   __esModule: true,
   isEditableAuctioneerSetup: jest.requireActual('../../services/auctioneerService')
     .isEditableAuctioneerSetup,
-  default: { getStatus: jest.fn(), getIncoming: jest.fn(), getArrivalPhotoRequests: jest.fn(), getSetup: jest.fn(), claim: jest.fn(), getCapturePermission: jest.fn(), reopenContract: jest.fn() },
+  default: { getStatus: jest.fn(), getIncoming: jest.fn(), getArrivalPhotoRequests: jest.fn(), getCompletedArrivalPhotoRequests: jest.fn(), getSetup: jest.fn(), claim: jest.fn(), getCapturePermission: jest.fn(), reopenContract: jest.fn() },
 }));
 jest.mock('../../services/auctionManagementService', () => ({
   __esModule: true,
@@ -115,6 +115,7 @@ beforeEach(() => {
   jest.mocked(auctioneerService.getStatus).mockResolvedValue({ configured: true, enabled: true });
   jest.mocked(auctioneerService.getIncoming).mockResolvedValue([available]);
   jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([]);
+  jest.mocked(auctioneerService.getCompletedArrivalPhotoRequests).mockResolvedValue([]);
   jest.mocked(auctioneerService.claim).mockResolvedValue(setup);
   jest.mocked(auctioneerService.getSetup).mockResolvedValue(setup);
   jest.mocked(auctioneerService.getCapturePermission).mockResolvedValue({ reopen: { allowed: false, reason: null, reopenUntil: null } });
@@ -570,8 +571,26 @@ describe('Arrival Photos tab', () => {
 
   it('still loads the contracts when the arrival list cannot be read', async () => {
     jest.mocked(auctioneerService.getArrivalPhotoRequests).mockRejectedValue(new Error('offline'));
+    jest.mocked(auctioneerService.getCompletedArrivalPhotoRequests).mockRejectedValue(new Error('offline'));
     await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
     expect(await screen.findByText('Contract 93530')).toBeTruthy();
     expect(screen.queryByText(/Retry/)).toBeNull();
+  });
+
+  // Owner, 2026-11-04: Waiting / Completed inside the tab, as on the website.
+  it('lists the sent requests under Completed, with when and how many photos', async () => {
+    const { officeOnlyPhotoCount: _notOnACompletedRequest, ...rest } = request;
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    jest.mocked(auctioneerService.getCompletedArrivalPhotoRequests).mockResolvedValue([
+      { ...rest, requestId: 'done-1', lotNumber: '0563', receivedAt: '2026-11-04T19:20:00Z', photoCount: 12 },
+    ]);
+    await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
+    await fireEvent.press(await screen.findByRole('tab', { name: 'Arrival photo requests' }));
+    expect(await screen.findByRole('tab', { name: 'Waiting arrival photo requests, 1' })).toBeTruthy();
+    await fireEvent.press(screen.getByRole('tab', { name: 'Completed arrival photo requests, 1' }));
+    expect(await screen.findByText('Lot 0563')).toBeTruthy();
+    expect(screen.getByLabelText('12 photos')).toBeTruthy();
+    expect(screen.getByText(/^Sent /)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Take arrival photos/ })).toBeNull();
   });
 });

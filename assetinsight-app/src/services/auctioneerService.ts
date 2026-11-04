@@ -410,7 +410,49 @@ export function parseArrivalPhotoRequest(value: unknown): ArrivalPhotoRequest | 
   };
 }
 
+/**
+ * A finished arrival photo request: its photos reached Auctioneer. Owner,
+ * 2026-11-04: Incoming → Arrival Photos → Completed. Same shape as the
+ * website's CompletedArrivalPhotoRequest.
+ */
+export interface CompletedArrivalPhotoRequest extends Omit<ArrivalPhotoRequest, 'officeOnlyPhotoCount'> {
+  /** When Auctioneer received the first photos. */
+  receivedAt: string | null;
+  /** Photos Auctioneer stored on the lot from this request. */
+  photoCount: number;
+}
+
+export function parseCompletedArrivalPhotoRequest(value: unknown): CompletedArrivalPhotoRequest | null {
+  const base = parseArrivalPhotoRequest(value);
+  if (!base || !record(value)) return null;
+  const { officeOnlyPhotoCount: _notOnACompletedRequest, ...rest } = base;
+  return {
+    ...rest,
+    receivedAt: nullableText(value.receivedAt),
+    photoCount: Math.max(0, Number(value.photoCount) || 0),
+  };
+}
+
 class AuctioneerService {
+  /**
+   * This user's finished arrival photo requests, most recently sent first
+   * (the newest hundred). An Auctioneer too old to know the list answers an
+   * empty one through the Asset Insight server, never the open requests.
+   */
+  async getCompletedArrivalPhotoRequests(): Promise<CompletedArrivalPhotoRequest[]> {
+    const assertCurrent = captureAuthOperation();
+    const response = await api.get('/auctioneer/arrival-photo-requests', { params: { status: 'completed' } });
+    assertCurrent();
+    const value = response.data?.data;
+    const rows = Array.isArray(value) ? value : value?.items;
+    if (!Array.isArray(rows)) {
+      throw new Error('The completed arrival photos could not be read. Try refreshing.');
+    }
+    return rows
+      .map(parseCompletedArrivalPhotoRequest)
+      .filter((row): row is CompletedArrivalPhotoRequest => row !== null);
+  }
+
   /** This user's open arrival photo requests, newest first. */
   async getArrivalPhotoRequests(): Promise<ArrivalPhotoRequest[]> {
     const assertCurrent = captureAuthOperation();
