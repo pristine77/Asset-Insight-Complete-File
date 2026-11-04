@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useAppTheme, type AppThemeColors } from '../../context/ThemeContext';
 import auctioneerService, {
+  type ArrivalPhotoRequest,
   type AuctioneerIncomingItem,
   type AuctioneerReportType,
   type AuctioneerWorkItemSetup,
@@ -44,7 +45,11 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [enabled, setEnabled] = useState(false);
-  const [queueTab, setQueueTab] = useState<'outstanding' | 'completed'>('outstanding');
+  // Arrival Photos is the third tab (owner, 2026-11-03): lots the office asked
+  // this user to photograph on arrival. Read with the contracts, never fatal.
+  const [queueTab, setQueueTab] = useState<'outstanding' | 'completed' | 'arrival'>('outstanding');
+  const [arrivalRequests, setArrivalRequests] = useState<ArrivalPhotoRequest[]>([]);
+  const [arrivalRequest, setArrivalRequest] = useState<ArrivalPhotoRequest | null>(null);
   const [unavailableMessage, setUnavailableMessage] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -68,6 +73,7 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
       receivedRevisions.current.clear();
       uncertainReopens.current.clear();
       setItems([]);
+      setArrivalRequests([]);
       setNotice('');
     }
     const isCurrent = () =>
@@ -93,10 +99,16 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
       );
       if (!available) {
         setItems([]);
+        setArrivalRequests([]);
         return false;
       }
-      const next = await auctioneerService.getIncoming(refresh);
+      const [next, arrival] = await Promise.all([
+        auctioneerService.getIncoming(refresh),
+        // An unreadable arrival list keeps the last one; contracts still load.
+        auctioneerService.getArrivalPhotoRequests().catch(() => null),
+      ]);
       if (!isCurrent()) return false;
+      if (arrival) setArrivalRequests(arrival);
       setItems(next.map((item) => retainAuctioneerAccessRevision(
         item,
         receivedRevisions.current.get(item.contractId)
@@ -230,6 +242,40 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
     setDraftId(undefined);
     void load(true);
   }, [load]);
+  const closeArrival = useCallback(() => {
+    setArrivalRequest(null);
+    void load(true);
+  }, [load]);
+
+  const renderArrivalRequest = useCallback(
+    ({ item }: { item: ArrivalPhotoRequest }) => {
+      const what = item.description || [item.year, item.make, item.model].filter(Boolean).join(' ');
+      return (
+        <View style={styles.card} testID="arrival-photo-request">
+          <Text style={styles.title}>Lot {item.lotNumber || '—'}</Text>
+          {!!what && <Text style={styles.meta}>{what}</Text>}
+          {!!item.serialNumber && <Text style={styles.meta}>S/N {item.serialNumber}</Text>}
+          {!!item.contractNumber && <Text style={styles.meta}>Contract {item.contractNumber}</Text>}
+          {!!item.consignorName && <Text style={styles.meta}>Consignor: {item.consignorName}</Text>}
+          {!!item.location && <Text style={styles.meta}>{item.location}</Text>}
+          <Text style={styles.status}>
+            Requested by {item.requestedBy || 'the office'}
+            {item.officeOnlyPhotoCount > 0 ? ` · ${item.officeOnlyPhotoCount} Office Only photos already` : ''}
+          </Text>
+          <View style={styles.actions}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={`Take arrival photos for lot ${item.lotNumber || ''}`}
+              style={styles.button}
+              onPress={() => setArrivalRequest(item)}>
+              <Text style={styles.buttonText}>Take photos</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    },
+    [styles]
+  );
   const nextForm = useCallback(
     (next: AuctioneerWorkItemSetup) => {
       setSetup(next);
@@ -329,13 +375,18 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
   const completedItems = items.filter((item) => item.status === 'sent');
   const outstandingItems = items.filter((item) => item.status !== 'sent');
   const visibleItems = queueTab === 'completed' ? completedItems : outstandingItems;
+  const showingArrival = queueTab === 'arrival';
 
   return (
     <View style={styles.container}>
-      <FlatList
-        data={enabled ? visibleItems : []}
-        keyExtractor={(item) => item.workItemId || item.cycleKey}
-        renderItem={renderItem}
+      <FlatList<AuctioneerIncomingItem | ArrivalPhotoRequest>
+        data={enabled ? (showingArrival ? arrivalRequests : visibleItems) : []}
+        keyExtractor={(item) =>
+          'requestId' in item ? `arrival-${item.requestId}` : item.workItemId || item.cycleKey
+        }
+        renderItem={({ item }) =>
+          'requestId' in item ? renderArrivalRequest({ item }) : renderItem({ item })
+        }
         contentContainerStyle={styles.content}
         initialNumToRender={8}
         refreshControl={
@@ -353,17 +404,26 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
               report.
             </Text>
             <View style={styles.tabs} accessibilityRole="tablist">
-              {(['outstanding', 'completed'] as const).map((tab) => (
+              {(['outstanding', 'completed', 'arrival'] as const).map((tab) => (
                 <TouchableOpacity
                   key={tab}
                   accessibilityRole="tab"
-                  accessibilityLabel={`${tab === 'outstanding' ? 'Outstanding' : 'Completed'} contracts`}
+                  accessibilityLabel={
+                    tab === 'arrival'
+                      ? 'Arrival photo requests'
+                      : `${tab === 'outstanding' ? 'Outstanding' : 'Completed'} contracts`
+                  }
                   accessibilityState={{ selected: queueTab === tab }}
                   onPress={() => setQueueTab(tab)}
                   style={[styles.tab, queueTab === tab && styles.selectedTab]}>
                   <Text style={[styles.tabText, queueTab === tab && styles.selectedTabText]}>
-                    {tab === 'outstanding' ? 'Outstanding' : 'Completed'} (
-                    {tab === 'outstanding' ? outstandingItems.length : completedItems.length})
+                    {tab === 'outstanding' ? 'Outstanding' : tab === 'completed' ? 'Completed' : 'Arrival Photos'} (
+                    {tab === 'outstanding'
+                      ? outstandingItems.length
+                      : tab === 'completed'
+                        ? completedItems.length
+                        : arrivalRequests.length}
+                    )
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -403,7 +463,9 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
           ) : !error ? (
             <Text style={styles.meta}>
               {enabled
-                ? queueTab === 'completed'
+                ? showingArrival
+                  ? 'No arrival photo requests. When the office asks you to photograph a lot that has arrived, it is listed here.'
+                  : queueTab === 'completed'
                   ? 'No reports have been sent to Auctioneer yet. Completed shows sent work, not contract closure.'
                   : 'No outstanding contracts are waiting. Pull down to refresh.'
                 : unavailableMessage}
@@ -431,6 +493,9 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
           onAuctioneerSetupChange={nextForm}
         />
       )}
+      {arrivalRequest && !setup ? (
+        <LotListingFormSheet visible arrivalRequest={arrivalRequest} onClose={closeArrival} onSuccess={closeArrival} />
+      ) : null}
     </View>
   );
 }

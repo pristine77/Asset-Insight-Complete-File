@@ -62,7 +62,8 @@ import type {
 } from '../../services/auctionManagementService';
 import AuctioneerFormBoundary, { type AuctioneerFormControl } from './AuctioneerFormBoundary';
 import AuctioneerFormHeader from './AuctioneerFormHeader';
-import type { AuctioneerWorkItemSetup } from '../../services/auctioneerService';
+import auctioneerService, { type ArrivalPhotoRequest, type AuctioneerWorkItemSetup } from '../../services/auctioneerService';
+import { auctioneerErrorMessage } from '../../services/auctioneerErrors';
 import { acceptAuctioneerLots, auctioneerSeedLots, auctioneerLotSource, hasValidAuctioneerLotStructure, scheduleAItemLotField } from './auctioneerFormPolicy';
 import ScheduleAItemPicker, { useScheduleAItemChoice } from './ScheduleAItemPicker';
 import ProposalListPanel, { useProposalList } from './ProposalListPanel';
@@ -84,6 +85,11 @@ interface LotListingFormSheetProps {
    * turns it on, so every other caller keeps the foreground upload.
    */
   backgroundUploads?: boolean;
+  /**
+   * Opens the form with Arrival Photos on for this request (Incoming → Arrival
+   * Photos → Take photos). Owner, 2026-11-03.
+   */
+  arrivalRequest?: ArrivalPhotoRequest | null;
 }
 
 const isoDate = (d: Date) =>
@@ -103,6 +109,7 @@ const LotListingFormSheet = ({
   auctionManagementTask: suppliedAuctionManagementTask,
   auctioneerControl,
   backgroundUploads = false,
+  arrivalRequest = null,
 }: LotListingFormSheetProps) => {
   const auctioneer = auctioneerControl?.setup;
   const continuation = auctioneerControl?.continuationDetails;
@@ -124,6 +131,20 @@ const LotListingFormSheet = ({
   const { currency, setCurrency, resetCurrency, detecting: currencyLoading, currencyForSubmission } = useReportCurrency({ initialCurrency: continuation?.currency ?? auctioneer?.contract.currency, location, latitude, longitude, visible, paused: Boolean(draftIdToLoad) });
   const [bankPhotosEnabled, setBankPhotosEnabled] = useState(continuation?.bankPhotosEnabled ?? false);
   const [watermarkImages, setWatermarkImages] = useState(continuation?.watermarkImages ?? DEFAULT_IMAGE_WATERMARK);
+  /*
+     ARRIVAL PHOTOS (owner, 2026-11-03): "Once selected, the images taken are
+     watermarked and not processed by Asset Insight. They are just images that
+     are sent to Auctioneer and saved in the 'Office Only' section." and "Its
+     just file copy only". Submit then sends the photos to one arrival photo
+     request and nothing else: no report, no AI, no draft (a draft could later
+     be sent as an ordinary report). Offered on a plain Lot Listing only.
+  */
+  const [arrivalPhotos, setArrivalPhotos] = useState(Boolean(arrivalRequest));
+  const arrivalPhotosRef = useRef(arrivalPhotos);
+  arrivalPhotosRef.current = arrivalPhotos;
+  const [arrivalRequestId, setArrivalRequestId] = useState(arrivalRequest?.requestId ?? '');
+  const [arrivalRequests, setArrivalRequests] = useState<ArrivalPhotoRequest[]>(arrivalRequest ? [arrivalRequest] : []);
+  const [arrivalRequestsLoading, setArrivalRequestsLoading] = useState(false);
   const [auctionCloseContract, setAuctionCloseContract] = useState(false);
   const [auctionServiceSelections, setAuctionServiceSelections] = useState<Record<number, string[]>>({});
 
@@ -195,6 +216,8 @@ const LotListingFormSheet = ({
   // The operation of the upload this form is running, so Pause stops only it.
   const activeOperationRef = useRef<UploadOperation | null>(null);
   const handlePauseUpload = () => {
+    // Arrival photos are one short request with nothing to pause.
+    if (arrivalPhotosRef.current) return;
     // Finalizing is when the server accepts the listing; pausing then only loses
     // the answer. See beginUploadFinalization in uploadCancellation.ts.
     if (!submissionLockRef.current || pauseRequestedRef.current || uploadAcceptedRef.current || uploadStatus?.stage === 'complete'
@@ -218,6 +241,39 @@ const LotListingFormSheet = ({
   const awaitingDraft = Boolean(draftIdToLoad && loadedDraftIdRef.current !== draftIdToLoad);
   const draftSavePromiseRef = useRef<Promise<unknown> | null>(null);
   const isAuctionManagementMode = Boolean(auctionManagementTask);
+  // Arrival Photos belong to a lot already in Auctioneer, never to the
+  // contract or task this form may be capturing.
+  const arrivalPhotosOffered = !auctioneer && !isAuctionManagementMode;
+
+  // Opened from Incoming → Arrival Photos: the switch is on for that request.
+  useEffect(() => {
+    if (!visible || !arrivalRequest) return;
+    setArrivalPhotos(true);
+    setArrivalRequestId(arrivalRequest.requestId);
+    setArrivalRequests((current) =>
+      current.some((request) => request.requestId === arrivalRequest.requestId) ? current : [arrivalRequest, ...current]
+    );
+    setDetailsExpanded(true);
+  }, [visible, arrivalRequest]);
+
+  // The user's open requests, read while the switch is on.
+  useEffect(() => {
+    if (!visible || !arrivalPhotos) return;
+    let cancelled = false;
+    setArrivalRequestsLoading(true);
+    auctioneerService
+      .getArrivalPhotoRequests()
+      .then((rows) => {
+        if (!cancelled) setArrivalRequests(rows);
+      })
+      .catch(() => undefined) // The list keeps what it had; Send reports any real problem.
+      .finally(() => {
+        if (!cancelled) setArrivalRequestsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, arrivalPhotos]);
   const auctionServices = useMemo(() => {
     return (auctionManagementTask?.serviceCatalog || []).flatMap((catalog) =>
       (catalog.services || []).map((service) => ({
@@ -756,6 +812,8 @@ const LotListingFormSheet = ({
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
     }
+    // Arrival photos are sent, never kept as a Lot Listing draft.
+    if (arrivalPhotosRef.current) return;
 
     if (lotsSnapshot) {
       try {
@@ -784,11 +842,11 @@ const LotListingFormSheet = ({
 
   // Trigger auto-save when form fields or lots change after a contract number exists.
   useEffect(() => {
-    if (visible && !submitting && !savingLocal && !awaitingDraft && (captureMode === 'offline' || (contractNo.trim() && hasDraftableWork()))) {
+    if (visible && !submitting && !savingLocal && !awaitingDraft && !arrivalPhotos && (captureMode === 'offline' || (contractNo.trim() && hasDraftableWork()))) {
       triggerAutoSave();
     }
     return () => { if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current); };
-  }, [contractNo, hasDraftableWork, triggerAutoSave, visible, captureMode, submitting, savingLocal, awaitingDraft]);
+  }, [contractNo, hasDraftableWork, triggerAutoSave, visible, captureMode, submitting, savingLocal, awaitingDraft, arrivalPhotos]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -919,11 +977,58 @@ const LotListingFormSheet = ({
     clearError('images');
   }, []);
 
+  /*
+     Arrival Photos' Submit: every photo on the form, main and report-only, to
+     the chosen request. The server watermarks them (a camera photo that
+     already has the logo keeps it) and copies them to the lot's Office Only
+     section in Auctioneer. Videos are not sent. Needs a connection.
+  */
+  const submitArrivalPhotos = async () => {
+    if (!arrivalRequestId) {
+      setDetailsExpanded(true);
+      Alert.alert('Choose the lot', 'Under Listing Details → Arrival Photos, choose the lot these photos are for.');
+      return;
+    }
+    const photos = lots
+      .flatMap((lot) => [...lot.files, ...(lot.extraFiles || [])])
+      .map((file) => ({ uri: getPhotoUploadUri(file), name: file.name, type: file.type }));
+    if (!photos.length) {
+      Alert.alert('No photos yet', 'Take or add the arrival photos, then tap Send.');
+      return;
+    }
+    submissionLockRef.current = true;
+    setSubmitting(true);
+    setUploadStatus(null);
+    setUploadProgress(1);
+    try {
+      const result = await auctioneerService.sendArrivalPhotos(arrivalRequestId, photos, (percent) =>
+        setUploadProgress(Math.max(1, percent))
+      );
+      setSubmitting(false);
+      await resetForm();
+      onClose();
+      Alert.alert(
+        'Arrival photos sent',
+        `${result.stored} photo${result.stored === 1 ? '' : 's'} sent to Auctioneer, watermarked, in the lot's Office Only section.`
+      );
+    } catch (error) {
+      Alert.alert(
+        'Not sent',
+        auctioneerErrorMessage(error, 'The arrival photos could not be sent. Check the connection and try again.')
+      );
+    } finally {
+      submissionLockRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (
     destination: AuctionManagementDestination = 'LottingBoard',
     options: { forceNew?: boolean; nextLot?: boolean; replaceSubmissionId?: string; replacementSourceId?: string; newSubmissionFromId?: string; automaticResume?: boolean } = {}
   ) => {
     if (submissionLockRef.current || saveLock.current || awaitingDraft || submitting || uploadAcceptedRef.current || auctioneerControl?.accepted) return;
+    // Arrival Photos: send the photos to the request, and nothing else.
+    if (arrivalPhotosRef.current) { await submitArrivalPhotos(); return; }
     if (options.nextLot && captureMode === 'offline') return;
     if (saveOnly) { await handleSaveOfflineAndClose(); return; }
     const submissionCurrency = currencyForSubmission();
@@ -1350,6 +1455,9 @@ const LotListingFormSheet = ({
     setLongitude(undefined);
     setBankPhotosEnabled(false);
     setWatermarkImages(DEFAULT_IMAGE_WATERMARK);
+    setArrivalPhotos(false);
+    arrivalPhotosRef.current = false;
+    setArrivalRequestId('');
     setLots([]);
     setActiveLotIdx(0);
     setAuctionCloseContract(false);
@@ -1367,6 +1475,16 @@ const LotListingFormSheet = ({
   const handleClose = async () => {
     if (submitting || saveLock.current) return;
     if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+    // Arrival photos are never saved as a draft: closing discards them.
+    if (arrivalPhotosRef.current) {
+      const closeNow = () => { void resetForm(); onClose(); };
+      if (!totalImages) { closeNow(); return; }
+      Alert.alert('Discard arrival photos?', 'These photos have not been sent. Closing discards them.', [
+        { text: 'Keep', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: closeNow },
+      ]);
+      return;
+    }
     if (hasDraftableWork() && !requireContractNumberForDraft()) return;
     try {
       if (draftSavePromiseRef.current) {
@@ -1405,7 +1523,9 @@ const LotListingFormSheet = ({
   // greyed-out button left people unable to submit (2026-10-26).
   const canTapSubmit = totalImages > 0;
   const canSaveDraftPreview = Boolean(contractNo.trim()) && totalImages > 0;
-  const uploadTitle = uploadStatus?.stage === 'preparing'
+  const uploadTitle = arrivalPhotos
+    ? 'Sending arrival photos'
+    : uploadStatus?.stage === 'preparing'
     ? 'Preparing images'
     : uploadStatus?.stage === 'creating_session'
       ? 'Starting secure upload'
@@ -1436,7 +1556,7 @@ const LotListingFormSheet = ({
               <View style={styles.headerSpacer} />
             ) : (
               <>
-                {!auctioneer ? <TouchableOpacity
+                {!auctioneer && !arrivalPhotos ? <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel="Save lot listing draft"
                   style={[
@@ -1455,18 +1575,19 @@ const LotListingFormSheet = ({
                 </TouchableOpacity> : null}
                 <TouchableOpacity
                   accessibilityRole="button"
-                  accessibilityLabel={saveOnly ? 'Save offline lot listing' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit lot listing'}
-                  style={[styles.submitBtn, auctioneer && styles.importedSubmitBtn, ((!saveOnly && (!canTapSubmit || currencyLoading)) || savingDraftPreview) && styles.submitBtnDisabled]}
+                  accessibilityLabel={arrivalPhotos ? 'Send arrival photos' : saveOnly ? 'Save offline lot listing' : uploadPaused ? 'Resume upload' : auctioneer ? 'Create Lot & Close' : 'Submit lot listing'}
+                  style={[styles.submitBtn, auctioneer && styles.importedSubmitBtn, (arrivalPhotos ? !canTapSubmit : (!saveOnly && (!canTapSubmit || currencyLoading)) || savingDraftPreview) && styles.submitBtnDisabled]}
                   onPress={() => void handleSubmit()}
                   hitSlop={HEADER_HIT_SLOP}
-                  disabled={(!saveOnly && (!canTapSubmit || currencyLoading)) || submitting || savingDraftPreview}>
+                  // Arrival photos need only photos: no currency, contract or draft.
+                  disabled={(arrivalPhotos ? !canTapSubmit : (!saveOnly && (!canTapSubmit || currencyLoading)) || savingDraftPreview) || submitting}>
                   {submitting ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
                     // "Resume upload" on two lines keeps this button as narrow as
                     // "Submit": one line squeezed the title to one letter per line
                     // (2026-10-11 phone test). Incoming's full-width button keeps one line.
-                    <Text style={styles.submitBtnText}>{saveOnly ? 'Save' : uploadPaused ? (auctioneer ? 'Resume upload' : 'Resume\nupload') : auctioneer ? 'Create Lot & Close' : 'Submit'}</Text>
+                    <Text style={styles.submitBtnText}>{arrivalPhotos ? 'Send' : saveOnly ? 'Save' : uploadPaused ? (auctioneer ? 'Resume upload' : 'Resume\nupload') : auctioneer ? 'Create Lot & Close' : 'Submit'}</Text>
                   )}
                 </TouchableOpacity>
               </>
@@ -1689,8 +1810,9 @@ const LotListingFormSheet = ({
                   style={styles.bankToggleRow}
                   accessibilityRole="switch"
                   accessibilityLabel="Include all lot photos in the condition report"
-                  accessibilityState={{ checked: bankPhotosEnabled }}
+                  accessibilityState={{ checked: bankPhotosEnabled, disabled: arrivalPhotos }}
                   activeOpacity={0.8}
+                  disabled={arrivalPhotos}
                   onPress={() => setBankPhotosEnabled((prev) => !prev)}>
                   <View style={{ flex: 1, paddingRight: 12 }}>
                     <Text style={styles.fieldLabelSmall}>Bank</Text>
@@ -1700,12 +1822,77 @@ const LotListingFormSheet = ({
                     <View style={styles.switchKnob} />
                   </View>
                 </TouchableOpacity>
+                {arrivalPhotosOffered ? (
+                  <TouchableOpacity
+                    testID="arrival-photos-switch"
+                    style={[styles.bankToggleRow, arrivalPhotos && styles.arrivalToggleRowActive]}
+                    activeOpacity={0.8}
+                    accessibilityRole="switch"
+                    accessibilityLabel="Arrival Photos: send the photos to Auctioneer's Office Only section, not processed"
+                    accessibilityState={{ checked: arrivalPhotos, disabled: submitting }}
+                    disabled={submitting}
+                    onPress={() => {
+                      const next = !arrivalPhotos;
+                      setArrivalPhotos(next);
+                      arrivalPhotosRef.current = next;
+                      if (!next) setArrivalRequestId('');
+                    }}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={styles.fieldLabelSmall}>Arrival Photos</Text>
+                      <Text style={styles.bankToggleHelp}>
+                        {"Watermarked and sent to the lot's Office Only in Auctioneer. Not processed."}
+                      </Text>
+                    </View>
+                    <View style={[styles.bankCheckbox, arrivalPhotos && styles.bankCheckboxActive]}>
+                      <View style={styles.switchKnob} />
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+                {arrivalPhotosOffered && arrivalPhotos ? (
+                  <View testID="arrival-photo-request-picker" style={styles.arrivalPicker}>
+                    <Text style={styles.fieldLabelSmall}>Which lot? *</Text>
+                    {arrivalRequestsLoading && !arrivalRequests.length ? (
+                      <ActivityIndicator size="small" color="#7C3AED" accessibilityLabel="Loading arrival photo requests" />
+                    ) : null}
+                    {!arrivalRequestsLoading && !arrivalRequests.length ? (
+                      <Text style={styles.bankToggleHelp}>
+                        {"No arrival photo requests are open for you. The office sends them from Auctioneer's Awaiting Arrival board."}
+                      </Text>
+                    ) : null}
+                    {arrivalRequests.map((request) => {
+                      const chosen = request.requestId === arrivalRequestId;
+                      const what = request.description || [request.year, request.make, request.model].filter(Boolean).join(' ');
+                      return (
+                        <TouchableOpacity
+                          key={request.requestId}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: chosen }}
+                          accessibilityLabel={`Lot ${request.lotNumber || 'without a number'}${what ? `, ${what}` : ''}`}
+                          style={[styles.arrivalChoice, chosen && styles.arrivalChoiceActive]}
+                          onPress={() => setArrivalRequestId(request.requestId)}>
+                          <View style={[styles.arrivalRadio, chosen && styles.arrivalRadioActive]} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.arrivalChoiceTitle}>
+                              Lot {request.lotNumber || '—'}
+                              {request.contractNumber ? ` · Contract ${request.contractNumber}` : ''}
+                            </Text>
+                            {what ? <Text style={styles.bankToggleHelp} numberOfLines={2}>{what}</Text> : null}
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <Text style={styles.bankToggleHelp}>
+                      Add the photos below and tap Send. They are copied to Auctioneer with the watermark; nothing is analysed.
+                    </Text>
+                  </View>
+                ) : null}
                 <TouchableOpacity
                   style={styles.bankToggleRow}
                   activeOpacity={0.8}
                   accessibilityRole="switch"
                   accessibilityLabel="Apply watermark to new photos"
-                  accessibilityState={{ checked: watermarkImages }}
+                  accessibilityState={{ checked: watermarkImages || arrivalPhotos, disabled: arrivalPhotos }}
+                  disabled={arrivalPhotos}
                   onPress={() => setWatermarkImages((prev) => !prev)}>
                   <View style={{ flex: 1, paddingRight: 12 }}>
                     <Text style={styles.fieldLabelSmall}>Apply watermark</Text>
@@ -1713,7 +1900,7 @@ const LotListingFormSheet = ({
                       For imported, unwatermarked photos only. Asset Insight camera photos already have a logo. Off by default.
                     </Text>
                   </View>
-                  <View style={[styles.bankCheckbox, watermarkImages && styles.bankCheckboxActive]}>
+                  <View style={[styles.bankCheckbox, (watermarkImages || arrivalPhotos) && styles.bankCheckboxActive]}>
                     <View style={styles.switchKnob} />
                   </View>
                 </TouchableOpacity>
@@ -2193,6 +2380,50 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     backgroundColor: '#fff',
+  },
+  // Arrival Photos (owner, 2026-11-03): the switch row and its lot choice.
+  arrivalToggleRowActive: {
+    backgroundColor: '#F5F3FF',
+  },
+  arrivalPicker: {
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#F5F3FF',
+    borderTopWidth: 1,
+    borderTopColor: '#DDD6FE',
+  },
+  arrivalChoice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  arrivalChoiceActive: {
+    borderColor: '#7C3AED',
+    backgroundColor: '#EDE9FE',
+  },
+  arrivalRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#9CA3AF',
+  },
+  arrivalRadioActive: {
+    borderWidth: 6,
+    borderColor: '#7C3AED',
+  },
+  arrivalChoiceTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
   },
   capturePanelInset: {
     marginHorizontal: 12,

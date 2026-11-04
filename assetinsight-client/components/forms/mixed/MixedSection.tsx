@@ -93,6 +93,12 @@ type Props = {
    * through its own source.locked, not through this.
    */
   sourceMappedLots?: boolean;
+  /**
+   * The photos are copied, never analysed: Lot Listing's Arrival Photos
+   * (owner, 2026-11-03: "Its just file copy only"). Every lot takes a fixed
+   * mode on its own, and the analysis choices and notes are hidden.
+   */
+  photosOnly?: boolean;
 };
 
 type RemovedMedia = {
@@ -115,6 +121,7 @@ export default function MixedSection({
   allowVideo = true,
   analysisImageLimit,
   sourceMappedLots = false,
+  photosOnly = false,
 }: Props) {
   const [lots, setLots] = useState<MixedLot[]>(value || []);
   const lotsRef = useRef<MixedLot[]>(value || []);
@@ -139,6 +146,16 @@ export default function MixedSection({
     },
     []
   );
+
+  // Photos only: a lot without a mode gets one, so photos can be added at once.
+  useEffect(() => {
+    if (!photosOnly) return;
+    commitLots((current) =>
+      current.some((lot) => !lot.mode)
+        ? current.map((lot) => (lot.mode ? lot : { ...lot, mode: "single_lot" as const }))
+        : current
+    );
+  }, [photosOnly, commitLots]);
 
   // Camera overlay state
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -387,7 +404,7 @@ export default function MixedSection({
       : undefined;
     const next: MixedLot[] = [
       ...lotsRef.current,
-      { id, source, ...(sourceMappedLots ? { mode: "single_lot" as const } : {}), files: [], extraFiles: [], videoFiles: [], coverIndex: 0 },
+      { id, source, ...(sourceMappedLots || photosOnly ? { mode: "single_lot" as const } : {}), files: [], extraFiles: [], videoFiles: [], coverIndex: 0 },
     ];
     commitLots(next);
     setActiveIdx(next.length - 1);
@@ -1971,7 +1988,13 @@ export default function MixedSection({
                   </div>
                 </div>
 
-                <fieldset className="mt-4">
+                {photosOnly ? (
+                  <p className="mt-4 rounded-xl border border-violet-300 bg-violet-50 px-3 py-2.5 text-xs leading-5 text-violet-900" role="note">
+                    Arrival Photos: these photos are copied to Auctioneer with the watermark. Nothing is analysed.
+                  </p>
+                ) : null}
+
+                <fieldset className={photosOnly ? "hidden" : "mt-4"}>
                   <legend className="text-sm font-semibold text-[var(--app-text)]">
                     Analysis mode <span className="text-[var(--app-accent)]" aria-hidden="true">*</span>
                   </legend>
@@ -2023,7 +2046,7 @@ export default function MixedSection({
                   ) : null}
                 </fieldset>
 
-                {activeLot.mode === "single_lot" ? (
+                {activeLot.mode === "single_lot" && !photosOnly ? (
                   <div
                     className="mt-4 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2.5 text-xs leading-5 text-sky-900 dark:text-sky-100"
                     role="note"
@@ -2037,7 +2060,7 @@ export default function MixedSection({
                   </div>
                 ) : null}
 
-                {analysisImageLimit && activeLot.files.length > analysisImageLimit ? (
+                {analysisImageLimit && !photosOnly && activeLot.files.length > analysisImageLimit ? (
                   <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:text-amber-200" role="note">
                     At most the first {analysisImageLimit} main photos are analyzed. All {activeLot.files.length} main photos remain included in the report.
                   </div>
@@ -2048,7 +2071,9 @@ export default function MixedSection({
                     <div className="flex items-end justify-between gap-3">
                       <div>
                         <h5 id={`main-media-${activeLot.id}`} className="text-sm font-semibold text-[var(--app-text)]">Main photos</h5>
-                        <p className="mt-0.5 text-xs text-[var(--app-text-muted)]">Used for analysis and included in the report.</p>
+                        <p className="mt-0.5 text-xs text-[var(--app-text-muted)]">
+                          {photosOnly ? "Sent to the lot's Office Only section in Auctioneer." : "Used for analysis and included in the report."}
+                        </p>
                       </div>
                       <span className="shrink-0 text-xs tabular-nums text-[var(--app-text-muted)]">{activeLot.files.length}</span>
                     </div>

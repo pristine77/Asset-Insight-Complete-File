@@ -353,7 +353,125 @@ export function validateAuctioneerSuccessor(
   }
 }
 
+/**
+ * A lot the office asked this user to photograph on arrival (owner,
+ * 2026-11-03). Auctioneer's Awaiting Arrival board makes the request; the
+ * photos are watermarked, never analysed, and kept on the lot's Office Only
+ * section. Same shape as the website's ArrivalPhotoRequest.
+ */
+export interface ArrivalPhotoRequest {
+  requestId: string;
+  requestedAt: string | null;
+  requestedBy: string | null;
+  lotId: string;
+  lotNumber: string | null;
+  description: string | null;
+  serialNumber: string | null;
+  make: string | null;
+  model: string | null;
+  year: string | null;
+  location: string | null;
+  contractId: string | null;
+  contractNumber: string | null;
+  consignorName: string | null;
+  eventNumber: string | null;
+  officeOnlyPhotoCount: number;
+}
+
+export interface ArrivalPhotoSendResult {
+  sent: number;
+  stored: number;
+  skipped: number;
+  photoCount: number;
+}
+
+const nullableText = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+
+/** One request row from the server, or null when it is not usable. */
+export function parseArrivalPhotoRequest(value: unknown): ArrivalPhotoRequest | null {
+  if (!record(value) || !id(value.requestId) || !id(value.lotId)) return null;
+  return {
+    requestId: value.requestId as string,
+    requestedAt: nullableText(value.requestedAt),
+    requestedBy: nullableText(value.requestedBy),
+    lotId: value.lotId as string,
+    lotNumber: nullableText(value.lotNumber),
+    description: nullableText(value.description),
+    serialNumber: nullableText(value.serialNumber),
+    make: nullableText(value.make),
+    model: nullableText(value.model),
+    year: nullableText(value.year),
+    location: nullableText(value.location),
+    contractId: nullableText(value.contractId),
+    contractNumber: nullableText(value.contractNumber),
+    consignorName: nullableText(value.consignorName),
+    eventNumber: nullableText(value.eventNumber),
+    officeOnlyPhotoCount: Math.max(0, Number(value.officeOnlyPhotoCount) || 0),
+  };
+}
+
 class AuctioneerService {
+  /** This user's open arrival photo requests, newest first. */
+  async getArrivalPhotoRequests(): Promise<ArrivalPhotoRequest[]> {
+    const response = await api.get('/auctioneer/arrival-photo-requests');
+    const value = response.data?.data;
+    const rows = Array.isArray(value) ? value : value?.items;
+    if (!Array.isArray(rows)) {
+      throw new Error('The arrival photo requests could not be read. Try refreshing.');
+    }
+    return rows
+      .map(parseArrivalPhotoRequest)
+      .filter((row): row is ArrivalPhotoRequest => row !== null);
+  }
+
+  /**
+   * Sends photos to one arrival photo request. The server watermarks them and
+   * copies them to the lot's Office Only section in Auctioneer; nothing is
+   * analysed and no report is made.
+   */
+  async sendArrivalPhotos(
+    requestId: string,
+    photos: { uri: string; name?: string | null; type?: string | null }[],
+    onProgress?: (percent: number) => void
+  ): Promise<ArrivalPhotoSendResult> {
+    if (!id(requestId)) throw new Error('Choose the arrival photo request these photos are for.');
+    if (!photos.length) throw new Error('Take or add the arrival photos first.');
+    const assertCurrent = captureAuthOperation();
+    const formData = new FormData();
+    photos.forEach((photo, index) => {
+      const uriName = photo.uri.split(/[\\/]/).pop() || `arrival-photo-${index + 1}.jpg`;
+      formData.append('photos', {
+        uri: photo.uri,
+        name: photo.name || uriName,
+        type: photo.type || 'image/jpeg',
+      } as any);
+    });
+    const response = await api.post(
+      `/auctioneer/arrival-photo-requests/${encodeURIComponent(requestId)}/photos`,
+      formData,
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 10 * 60_000,
+        onUploadProgress: (progressEvent: any) => {
+          if (onProgress && progressEvent.total) {
+            onProgress(Math.min(100, Math.round((progressEvent.loaded * 100) / progressEvent.total)));
+          }
+        },
+      }
+    );
+    assertCurrent();
+    const data = response.data?.data;
+    if (response.data?.success !== true || !record(data)) {
+      throw new Error('Auctioneer did not confirm the arrival photos. Check Incoming before sending again.');
+    }
+    return {
+      sent: Number(data.sent) || 0,
+      stored: Number(data.stored) || 0,
+      skipped: Number(data.skipped) || 0,
+      photoCount: Number(data.photoCount) || 0,
+    };
+  }
+
   async getStatus(): Promise<{
     configured: boolean;
     enabled: boolean;

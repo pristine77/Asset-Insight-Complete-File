@@ -63,7 +63,7 @@ jest.mock('../../services/api', () => ({ __esModule: true, default: { get: jest.
 jest.mock('../../services/auctioneerService', () => ({
   ...jest.requireActual('../../services/auctioneerService'),
   __esModule: true,
-  default: { getSetup: jest.fn(), continueWorkItem: jest.fn() },
+  default: { getSetup: jest.fn(), continueWorkItem: jest.fn(), getArrivalPhotoRequests: jest.fn(async () => []), sendArrivalPhotos: jest.fn() },
 }));
 jest.mock('../../services/assetService', () => ({ __esModule: true, default: { createAssetReport: jest.fn() } }));
 jest.mock('../../services/lotListingService', () => ({ __esModule: true, default: { createLotListing: jest.fn() } }));
@@ -539,4 +539,52 @@ it('keeps an Auction Management task in the form', async () => {
   await act(async () => { accept({ jobId: 'job-parent', reportId: 'report-parent', message: 'Queued', phase: 'processing' }); });
   await pressed;
   await waitFor(() => expect(closed).toHaveBeenCalledTimes(1));
+});
+
+/*
+ * Arrival Photos (owner, 2026-11-03: "Its just file copy only"): Submit sends
+ * the photos to the chosen request and nothing else. No report, no
+ * background upload line, no AI.
+ */
+describe('Arrival Photos Submit', () => {
+  const request = {
+    requestId: 'request-1', requestedAt: null, requestedBy: 'Office', lotId: 'lot-1', lotNumber: '3012',
+    description: 'Tractor', serialNumber: null, make: null, model: null, year: null, location: null,
+    contractId: null, contractNumber: '825712', consignorName: null, eventNumber: null, officeOnlyPhotoCount: 0,
+  };
+
+  async function mountArrival() {
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue(ordinaryDraft('lotListing') as any);
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    const closed = jest.fn();
+    await render(<LotListingFormSheet visible backgroundUploads draftIdToLoad="local-parent" arrivalRequest={request} onClose={closed} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    return closed;
+  }
+
+  it('copies every photo, main and report-only, to the request and makes no report', async () => {
+    jest.mocked(auctioneerService.sendArrivalPhotos).mockResolvedValue({ sent: 3, stored: 3, skipped: 0, photoCount: 3 });
+    const closed = await mountArrival();
+    await fireEvent.press(await screen.findByRole('button', { name: 'Send arrival photos' }));
+    await waitFor(() => expect(closed).toHaveBeenCalledTimes(1));
+    expect(auctioneerService.sendArrivalPhotos).toHaveBeenCalledTimes(1);
+    const [requestId, photos] = jest.mocked(auctioneerService.sendArrivalPhotos).mock.calls[0];
+    expect(requestId).toBe('request-1');
+    expect(photos.map((photo) => photo.name)).toEqual(['first.jpg', 'second.jpg', 'report.jpg']);
+    expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+    expect(backgroundUploadManager.getSnapshot().active).toBeNull();
+    expect(Alert.alert).toHaveBeenCalledWith('Arrival photos sent', expect.stringContaining('Office Only'));
+  });
+
+  it('keeps the form and its photos open when the send is refused', async () => {
+    jest.mocked(auctioneerService.sendArrivalPhotos).mockRejectedValue({
+      response: { status: 409, data: { message: 'This arrival photo request was cancelled.' } },
+    });
+    const closed = await mountArrival();
+    await fireEvent.press(await screen.findByRole('button', { name: 'Send arrival photos' }));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Not sent', expect.any(String)));
+    expect(closed).not.toHaveBeenCalled();
+    expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
+    expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+  });
 });

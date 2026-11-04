@@ -17,6 +17,8 @@ import {
   reconcileAuctioneerDeliveryController,
   sendAuctioneerDelivery,
 } from "../controller/auctioneer2.controller.js";
+import multer from "multer";
+import { listArrivalPhotoRequestsController, sendArrivalPhotosController } from "../controller/arrivalPhotos.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
 import type { AuthRequest } from "../middleware/auth.middleware.js";
 import { getAuctioneer2ConfigStatus } from "../service/auctioneer2Client.js";
@@ -32,7 +34,7 @@ router.use((req: AuthRequest, res, next) => {
     return res.json({ success: true, data: { enabled: false, configured: false, reachable: false, baseUrl: "", verificationEndpoint: null, reviewAccount: true } });
   }
   if (req.method === "GET" && req.path === "/incoming/summary") return res.json({ availableCount: 0 });
-  if (req.method === "GET" && ["/incoming", "/deliveries"].includes(req.path)) return res.json({ success: true, data: [] });
+  if (req.method === "GET" && ["/incoming", "/deliveries", "/arrival-photo-requests"].includes(req.path)) return res.json({ success: true, data: [] });
   return res.status(403).json({ success: false, code: "REVIEW_ACCOUNT_ISOLATED", message: "This review account is not connected to live auction assignments." });
 });
 router.get("/status", getAuctioneerStatus);
@@ -57,6 +59,12 @@ router.use((_req: AuthRequest, res: Response, next: NextFunction) => {
 });
 
 router.get("/incoming", getAuctioneerIncoming);
+// Arrival photo requests (owner, 2026-11-03; service/arrivalPhotoService.ts):
+// the signed-in user's open requests, and one request's photos, held in memory
+// only long enough to watermark them and send them on to Auctioneer.
+const arrivalPhotoUpload = multer({ storage: multer.memoryStorage(), limits: { files: 60, fileSize: 20 * 1024 * 1024 } });
+router.get("/arrival-photo-requests", listArrivalPhotoRequestsController);
+router.post("/arrival-photo-requests/:requestId/photos", arrivalPhotoUpload.array("photos", 60), sendArrivalPhotosController);
 router.get("/incoming/summary", getAuctioneerIncomingSummaryController);
 router.post("/incoming/:cycleKey/claim", claimAuctioneerWork);
 router.get("/work-items/:id/setup", getAuctioneerSetup);

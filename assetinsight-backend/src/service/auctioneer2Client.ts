@@ -1226,3 +1226,82 @@ export async function uploadLotPhotos(
   }
   return response;
 }
+
+/*
+ * ARRIVAL PHOTO REQUESTS (owner, 2026-11-03). Auctioneer 2.0's Awaiting
+ * Arrival board asks one Asset Insight user to photograph an arrived lot
+ * (Auctioneer server/arrivalPhotoRequests.ts). These are the two calls:
+ * the user's open requests, and a batch of their watermarked photos, which
+ * Auctioneer keeps on the lot as Office Only. Nothing here touches a work item
+ * or a report: the photos are not processed.
+ */
+export type ArrivalPhotoRequestRecord = {
+  requestId: string;
+  requestedAt: string | null;
+  requestedBy: string | null;
+  lotId: string;
+  lotNumber: string | null;
+  description: string | null;
+  serialNumber: string | null;
+  make: string | null;
+  model: string | null;
+  year: string | null;
+  location: string | null;
+  contractId: string | null;
+  contractNumber: string | null;
+  consignorName: string | null;
+  eventNumber: string | null;
+  officeOnlyPhotoCount: number;
+};
+
+export async function listArrivalPhotoRequests(userId: string): Promise<ArrivalPhotoRequestRecord[]> {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) {
+    throw new Auctioneer2ClientError("An Asset Insight user is required to load arrival photo requests.", {
+      statusCode: 500,
+      code: "auctioneer2_user_required",
+    });
+  }
+  const query = new URLSearchParams({ userId: normalizedUserId });
+  return requireArray(await auctioneer2Request(`/arrival-photo-requests?${query.toString()}`), ["items"]) as unknown as ArrivalPhotoRequestRecord[];
+}
+
+/** One batch (1 to 5) of a request's photos, already watermarked. */
+export async function uploadArrivalPhotos(
+  requestId: string,
+  userId: string,
+  photos: Auctioneer2Photo[],
+): Promise<{ stored: number; skipped: number; photoCount: number }> {
+  if (photos.length < 1 || photos.length > AUCTIONEER2_PHOTO_MAX_FILES_PER_REQUEST) {
+    throw new Auctioneer2ClientError("Each arrival photo request must contain 1 to 5 images.", {
+      statusCode: 400,
+      code: "auctioneer2_invalid_photo_batch",
+    });
+  }
+  const payloadPhotos = photos.map((photo, index) => {
+    if (photo.buffer.byteLength > AUCTIONEER2_PHOTO_MAX_FILE_BYTES) {
+      throw new Auctioneer2ClientError("An arrival photo exceeds the 20 MB limit.", {
+        statusCode: 400,
+        code: "auctioneer2_photo_too_large",
+      });
+    }
+    const contentType = String(photo.contentType || "image/jpeg").split(";")[0].trim().toLowerCase().replace(/^image\/jpg$/, "image/jpeg");
+    return {
+      data: `data:${contentType};base64,${photo.buffer.toString("base64")}`,
+      content_type: contentType,
+      filename: String(photo.filename || `arrival-photo-${index + 1}.jpg`),
+      sha256: createHash("sha256").update(photo.buffer).digest("hex"),
+      order: photo.order ?? index,
+    };
+  });
+  const response = await auctioneer2Request<Auctioneer2Record>(
+    `/arrival-photo-requests/${encodeURIComponent(requestId)}/photos`,
+    { method: "POST", body: JSON.stringify({ photos: payloadPhotos, userId }) },
+    { expectedStatuses: [201] },
+  );
+  return {
+    stored: Number(response.stored ?? 0),
+    skipped: Number(response.skipped ?? 0),
+    photoCount: Number(response.photoCount ?? 0),
+  };
+}

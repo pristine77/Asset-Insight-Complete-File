@@ -29,7 +29,7 @@ jest.mock('../../services/auctioneerService', () => ({
   __esModule: true,
   isEditableAuctioneerSetup: jest.requireActual('../../services/auctioneerService')
     .isEditableAuctioneerSetup,
-  default: { getStatus: jest.fn(), getIncoming: jest.fn(), getSetup: jest.fn(), claim: jest.fn(), getCapturePermission: jest.fn(), reopenContract: jest.fn() },
+  default: { getStatus: jest.fn(), getIncoming: jest.fn(), getArrivalPhotoRequests: jest.fn(), getSetup: jest.fn(), claim: jest.fn(), getCapturePermission: jest.fn(), reopenContract: jest.fn() },
 }));
 jest.mock('../../services/auctionManagementService', () => ({
   __esModule: true,
@@ -73,7 +73,7 @@ jest.mock('../forms/LotListingFormSheet', () => {
   return (props: any) =>
     props.visible ? (
       <View>
-        <Text>Lot form {props.auctioneer?.workItemId || 'legacy'}</Text>
+        <Text>Lot form {props.auctioneer?.workItemId || (props.arrivalRequest ? `arrival ${props.arrivalRequest.requestId}` : 'legacy')}</Text>
       </View>
     ) : null;
 });
@@ -114,6 +114,7 @@ beforeEach(() => {
   mockPanelOwner = undefined;
   jest.mocked(auctioneerService.getStatus).mockResolvedValue({ configured: true, enabled: true });
   jest.mocked(auctioneerService.getIncoming).mockResolvedValue([available]);
+  jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([]);
   jest.mocked(auctioneerService.claim).mockResolvedValue(setup);
   jest.mocked(auctioneerService.getSetup).mockResolvedValue(setup);
   jest.mocked(auctioneerService.getCapturePermission).mockResolvedValue({ reopen: { allowed: false, reason: null, reopenUntil: null } });
@@ -529,4 +530,48 @@ it('labels a Proposal list row with its listed items to capture', async () => {
   expect(await screen.findByText('Proposal list · 3 listed items to capture')).toBeTruthy();
   expect(screen.getByText('Proposal list · 1 listed item to capture')).toBeTruthy();
   expect(screen.getByText('New lot capture')).toBeTruthy();
+});
+
+/*
+ * Arrival Photos tab (owner, 2026-11-03): lots the office asked this user to
+ * photograph on arrival. "Take photos" opens Lot Listing with the switch on
+ * for that request; an unreadable list never stops the contracts loading.
+ */
+describe('Arrival Photos tab', () => {
+  const request = {
+    requestId: 'request-1',
+    requestedAt: '2026-11-03T15:42:00Z',
+    requestedBy: 'Shelby Office',
+    lotId: 'lot-1',
+    lotNumber: '3012',
+    description: '2014 John Deere 8360R tractor',
+    serialNumber: '1RW8360R',
+    make: null,
+    model: null,
+    year: null,
+    location: 'Regina, SK',
+    contractId: 'contract-9',
+    contractNumber: '825712',
+    consignorName: 'Dale Kostenuk',
+    eventNumber: null,
+    officeOnlyPhotoCount: 0,
+  };
+
+  it('lists the requests and opens Lot Listing for the chosen one', async () => {
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
+    await fireEvent.press(await screen.findByRole('tab', { name: 'Arrival photo requests' }));
+    expect(await screen.findByText('Lot 3012')).toBeTruthy();
+    expect(screen.getByText('S/N 1RW8360R')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Take arrival photos for lot 3012' }));
+    expect(await screen.findByText('Lot form arrival request-1')).toBeTruthy();
+    expect(auctioneerService.claim).not.toHaveBeenCalled();
+  });
+
+  it('still loads the contracts when the arrival list cannot be read', async () => {
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockRejectedValue(new Error('offline'));
+    await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
+    expect(await screen.findByText('Contract 93530')).toBeTruthy();
+    expect(screen.queryByText(/Retry/)).toBeNull();
+  });
 });

@@ -36,6 +36,26 @@ export type AuctioneerContractReopen = {
   accessRevision: string | number;
 };
 
+/** One open arrival photo request (owner, 2026-11-03), as Auctioneer lists it. */
+export type ArrivalPhotoRequest = {
+  requestId: string;
+  requestedAt: string | null;
+  requestedBy: string | null;
+  lotId: string;
+  lotNumber: string | null;
+  description: string | null;
+  serialNumber: string | null;
+  make: string | null;
+  model: string | null;
+  year: string | null;
+  location: string | null;
+  contractId: string | null;
+  contractNumber: string | null;
+  consignorName: string | null;
+  eventNumber: string | null;
+  officeOnlyPhotoCount: number;
+};
+
 export type AuctioneerIncomingItem = AuctioneerContractReopenMetadata & {
   cycleKey: string;
   workItemId?: string;
@@ -769,6 +789,44 @@ export const AuctioneerService = {
       ? payload
       : record.items ?? record.contracts ?? record.incoming ?? [];
     return (Array.isArray(values) ? values : []).map(normalizeIncomingItem);
+  },
+
+  /*
+    Arrival photo requests (owner, 2026-11-03): Auctioneer's Awaiting Arrival
+    board asks this user to photograph an arrived lot. The photos are sent
+    with the Lot Listing form's "Arrival Photos" switch: watermarked by the
+    server, not processed, kept on the lot's Office Only section.
+  */
+  async getArrivalPhotoRequests(): Promise<ArrivalPhotoRequest[]> {
+    const response = await API.get("/auctioneer/arrival-photo-requests");
+    const payload = unwrap(response.data);
+    return (Array.isArray(payload) ? payload : []) as ArrivalPhotoRequest[];
+  },
+
+  async sendArrivalPhotos(
+    requestId: string,
+    files: File[],
+    onProgress?: (percent: number) => void,
+  ): Promise<{ sent: number; stored: number; skipped: number; photoCount: number }> {
+    const form = new FormData();
+    files.forEach((file) => form.append("photos", file, file.name));
+    const response = await API.post(
+      `/auctioneer/arrival-photo-requests/${encodeURIComponent(requestId)}/photos`,
+      form,
+      {
+        timeout: 10 * 60_000,
+        onUploadProgress: (event) => {
+          if (onProgress && event.total) onProgress(Math.round((event.loaded / event.total) * 100));
+        },
+      },
+    );
+    const data = asRecord(unwrap(response.data));
+    return {
+      sent: Number(data.sent) || 0,
+      stored: Number(data.stored) || 0,
+      skipped: Number(data.skipped) || 0,
+      photoCount: Number(data.photoCount) || 0,
+    };
   },
 
   async getIncomingSummary(): Promise<{ availableCount: number }> {

@@ -512,3 +512,55 @@ it.each([['USD', 'USD'], ['usd', 'USD'], ['US dollars', undefined], [undefined, 
   const parsed = parseAuctioneerSetup({ ...fixture(), contract: { ...fixture().contract, currency } });
   expect(parsed.contract.currency).toBe(expected);
 });
+
+/*
+ * Arrival photo requests (owner, 2026-11-03): "Its just file copy only". The
+ * phone reads this user's open requests and sends one request's photos; the
+ * server watermarks them and copies them to the lot's Office Only section.
+ */
+describe('arrival photo requests', () => {
+  const row = {
+    requestId: 'request-1',
+    lotId: 'lot-1',
+    lotNumber: '3012',
+    description: '2014 John Deere 8360R',
+    requestedBy: 'Office',
+    officeOnlyPhotoCount: 2,
+  };
+
+  it('reads the open requests and leaves out rows without a request or lot', async () => {
+    jest.mocked(api.get).mockResolvedValue({ data: { success: true, data: [row, { lotId: 'lot-2' }, { requestId: 'r3' }] } });
+    const rows = await auctioneerService.getArrivalPhotoRequests();
+    expect(api.get).toHaveBeenCalledWith('/auctioneer/arrival-photo-requests');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ requestId: 'request-1', lotNumber: '3012', officeOnlyPhotoCount: 2, serialNumber: null });
+  });
+
+  it('says so when the list cannot be read', async () => {
+    jest.mocked(api.get).mockResolvedValue({ data: { success: true, data: 'nope' } });
+    await expect(auctioneerService.getArrivalPhotoRequests()).rejects.toThrow('arrival photo requests could not be read');
+  });
+
+  it('sends every photo in one multipart request to that request only', async () => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: true, data: { sent: 2, stored: 2, skipped: 0, photoCount: 2 } } });
+    const result = await auctioneerService.sendArrivalPhotos('request-1', [
+      { uri: 'file:///photos/front.jpg' },
+      { uri: 'file:///photos/plate.jpg', name: 'plate.jpg', type: 'image/jpeg' },
+    ]);
+    expect(result).toEqual({ sent: 2, stored: 2, skipped: 0, photoCount: 2 });
+    const [url, body] = jest.mocked(api.post).mock.calls[0];
+    expect(url).toBe('/auctioneer/arrival-photo-requests/request-1/photos');
+    expect((body as FormData).getAll('photos')).toHaveLength(2);
+  });
+
+  it('refuses to send without a request or without photos', async () => {
+    await expect(auctioneerService.sendArrivalPhotos('', [{ uri: 'file:///a.jpg' }])).rejects.toThrow('Choose the arrival photo request');
+    await expect(auctioneerService.sendArrivalPhotos('request-1', [])).rejects.toThrow('Take or add the arrival photos');
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('does not report success without the server confirming', async () => {
+    jest.mocked(api.post).mockResolvedValue({ data: { success: false } });
+    await expect(auctioneerService.sendArrivalPhotos('request-1', [{ uri: 'file:///a.jpg' }])).rejects.toThrow('did not confirm');
+  });
+});
