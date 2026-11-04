@@ -22,6 +22,7 @@ npm-debug.*
 *.orig.*
 
 # Signing is provided by EAS remote credentials, never the source archive.
+.git
 credentials.json
 *.jks
 *.keystore

@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   mutationCounter: 0,
 }));
 
+vi.mock("@/context/AuthContext", () => ({ useAuthContext: () => ({ user: { _id: "pv-test-user" } }) }));
+
 vi.mock("@/services/proposalValuation", () => ({
   ProposalValuationAccessLost: class ProposalValuationAccessLost extends Error {
     status: number;
@@ -152,6 +154,8 @@ function makeOwnerPayload(additionalCount = 3): ProposalValuationPayload {
 describe("ProposalValuationDialog", () => {
   afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
     const payload = makePayload();
     mocks.get.mockReset();
     mocks.patchChanges.mockReset();

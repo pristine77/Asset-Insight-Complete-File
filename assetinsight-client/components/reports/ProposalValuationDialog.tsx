@@ -5,6 +5,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,6 +27,11 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
+import { useAuthContext } from "@/context/AuthContext";
+import { captureAuthSession, isAuthSessionCurrent, REFRESH_KEY, type AuthSessionSnapshot } from "@/lib/auth-storage";
+import { cellKey, readCell, rebaseDraft, draftStoragePrefix, draftStorageKey, draftPointerKey, parseDraftBackup,
+  serializeDraftBackup, isEmptyDraft, type DraftEdit, type DraftOverlap, type DraftBackup, type ActiveDraftInput } from "./proposal-valuation/draftRecovery";
+import { buildGridColumns, parseCellNumber } from "./proposal-valuation/gridColumns";
 import { toast } from "@/components/ui/toast";
 import {
   ProposalValuationAccessLost,
@@ -49,13 +55,14 @@ import FormulaDetailsDialog from "./proposal-valuation/FormulaDetailsDialog";
 import ProposalValuationExcelButton from "./proposal-valuation/ProposalValuationExcelButton";
 import { MobileColumnTotals } from "./proposal-valuation/ColumnTotals";
 import { assetLabel, pictureCount, rowDisplayValues, validPictureUrls } from "./proposal-valuation/rowDisplay";
-import ValuationGrid, { type ValuationGridStatus } from "./proposal-valuation/ValuationGrid";
+import ValuationGrid, { type ValuationGridStatus, type ValuationGridDraftController } from "./proposal-valuation/ValuationGrid";
 import type {
   ProposalValuationCalculation,
   ProposalValuationCandidate,
   ProposalValuationChange,
   ProposalValuationEvaluator,
   ProposalValuationPayload,
+  ProposalValuationPermissions,
   ProposalValuationRow,
   ProposalValuationSheet,
 } from "./proposal-valuation/types";
@@ -91,6 +98,10 @@ type FileSummaryChange = <K extends keyof ProposalValuationSheet["file_summary"]
   key: K,
   value: ProposalValuationSheet["file_summary"][K]
 ) => void;
+
+function mayEditDraft(permissions: ProposalValuationPermissions, edit: ProposalValuationChange): boolean {
+  return permissions.canEditAll || Boolean(permissions.evaluatorColumnId && edit.lotId && edit.field === `evaluator_values.${permissions.evaluatorColumnId}`);
+}
 
 type PictureGalleryState = {
   label: string;
@@ -527,13 +538,22 @@ function SummaryTable({
   );
 }
 
-export default function ProposalValuationDialog({
+export default function ProposalValuationDialog(props: Props) {
+  const { user } = useAuthContext();
+  const session = captureAuthSession();
+  if (!user?._id) return <div role="status">Loading sign-in…</div>;
+  return <ProposalValuationEditor key={`${user._id}:${props.reportId}:${session.revision}`} {...props} actorId={user._id} authSession={session} />;
+}
+
+function ProposalValuationEditor({
+  actorId,
+  authSession,
   open,
   reportId,
   onClose,
   onSaved,
   pageMode = false,
-}: Props) {
+}: Props & { actorId: string; authSession: AuthSessionSnapshot }) {
   const desktopGridVisible = useSyncExternalStore(subscribeDesktopGrid, desktopGridSnapshot, serverDesktopGridSnapshot);
   const [payload, setPayload] = useState<ProposalValuationPayload | null>(null);
   const [sheet, setSheet] = useState<ProposalValuationSheet | null>(null);
@@ -569,6 +589,141 @@ export default function ProposalValuationDialog({
   const liveControllerRef = useRef<AbortController | null>(null);
   const resyncInFlightRef = useRef<Promise<ProposalValuationPayload> | null>(null);
   const resyncRequestedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const sessionRef = useRef(authSession);
+  const scopeCurrent = useCallback(() => mountedRef.current && isAuthSessionCurrent(sessionRef.current), []);
+  const baseSheetRef = useRef<ProposalValuationSheet | null>(null);
+  const permissionsRef = useRef<ProposalValuationPermissions>(LEGACY_OWNER_PERMISSIONS);
+  const editsRef = useRef(new Map<string, DraftEdit>());
+  const overlapsRef = useRef<DraftOverlap[]>([]);
+  const droppedRef = useRef<DraftEdit[]>([]);
+  const [overlaps, setOverlaps] = useState<DraftOverlap[]>([]);
+  const [dropped, setDropped] = useState<DraftEdit[]>([]);
+  const gridDraftRef = useRef<ValuationGridDraftController | null>(null);
+  const activeInputRef = useRef<ActiveDraftInput | null>(null);
+  const activeOnlyKeyRef = useRef<string | null>(null);
+  const activePreviousEditRef = useRef<DraftEdit | null>(null);
+  const recoveredInputRef = useRef<ActiveDraftInput | null>(null);
+  const [recoveredInput, setRecoveredInput] = useState<ActiveDraftInput | null>(null);
+  const restoredEnvelopeRef = useRef<DraftMutationEnvelope | null>(null);
+  const restoredPausedRef = useRef(false);
+  const [restoredPaused, setRestoredPaused] = useState(false);
+  const resumingRef = useRef(false);
+  const [resuming, setResuming] = useState(false);
+  const [backupFailed, setBackupFailed] = useState(false);
+  const [otherDrafts, setOtherDrafts] = useState<DraftBackup[]>([]);
+  const writerRef = useRef<{ id: string; lineageId: string } | null>(null);
+  const backupTimerRef = useRef<number | null>(null);
+  const initializedDraftRef = useRef(false);
+  const hasLocalDraft = useCallback(() => Boolean(editsRef.current.size || droppedRef.current.length || retryEnvelopeRef.current || restoredEnvelopeRef.current || activeInputRef.current || recoveredInputRef.current), []);
+  const setRecovery = useCallback((conflicts: DraftOverlap[], missing: DraftEdit[]) => {
+    overlapsRef.current = conflicts; droppedRef.current = missing;
+    setOverlaps(conflicts); setDropped(missing);
+  }, []);
+  const writeDraftNow = useCallback(() => {
+    if (backupTimerRef.current !== null) { window.clearTimeout(backupTimerRef.current); backupTimerRef.current = null; }
+    const writer = writerRef.current;
+    if (!writer || !initializedDraftRef.current) return;
+    try {
+      const record: DraftBackup = { version: 1, actorId, reportId, draftId: writer.id, lineageId: writer.lineageId,
+        savedAt: Date.now(), revision: revisionRef.current, edits: [...editsRef.current.values()],
+        overlaps: overlapsRef.current, dropped: droppedRef.current,
+        retryEnvelope: retryEnvelopeRef.current || restoredEnvelopeRef.current,
+        activeInput: activeInputRef.current || recoveredInputRef.current };
+      const key = draftStorageKey(actorId, reportId, writer.id);
+      window.localStorage.setItem(key, serializeDraftBackup(record));
+      window.sessionStorage.setItem(draftPointerKey(actorId, reportId), key);
+      if (mountedRef.current) setBackupFailed(false);
+    } catch { if (mountedRef.current) setBackupFailed(true); }
+  }, [actorId, reportId]);
+  const scheduleDraftWrite = useCallback(() => {
+    if (backupTimerRef.current !== null) window.clearTimeout(backupTimerRef.current);
+    backupTimerRef.current = window.setTimeout(writeDraftNow, 250);
+  }, [writeDraftNow]);
+  const syncActiveInput = useCallback(() => {
+    const active = gridDraftRef.current?.readDraft() || null;
+    const previous = activeInputRef.current;
+    const key = active ? cellKey(active) : null;
+    if (previous && cellKey(previous) !== key && activeOnlyKeyRef.current === cellKey(previous)) {
+      const prior = activePreviousEditRef.current;
+      if (prior) editsRef.current.set(cellKey(previous), prior);
+      else editsRef.current.delete(cellKey(previous));
+      activeOnlyKeyRef.current = null; activePreviousEditRef.current = null;
+      if (baseSheetRef.current) {
+        const restored = rebaseDraft(baseSheetRef.current, [...editsRef.current.values()],
+          overlapsRef.current.filter(item => item.key !== cellKey(previous)), droppedRef.current);
+        editsRef.current = new Map(restored.edits.map(edit => [cellKey(edit), edit]));
+        setRecovery(restored.overlaps, restored.dropped); setSheet(restored.sheet);
+        const restoredEdit = editsRef.current.get(cellKey(previous));
+        if (restoredEdit && !retryEnvelopeRef.current?.changes.some(change => cellKey(change) === cellKey(previous) && change.value === restoredEdit.value)) {
+          pendingChangesRef.current.set(cellKey(previous), { lotId: restoredEdit.lotId, field: restoredEdit.field, value: restoredEdit.value });
+        } else pendingChangesRef.current.delete(cellKey(previous));
+      }
+    }
+    activeInputRef.current = null;
+    if (active && baseSheetRef.current) {
+      const previousEdit = editsRef.current.get(key!);
+      if (!previous || cellKey(previous) !== key) {
+        activePreviousEditRef.current = previousEdit ? { ...previousEdit } : null;
+        activeOnlyKeyRef.current = key;
+      }
+      const from = previous && cellKey(previous) === key ? previous.from : previousEdit ? previousEdit.from : readCell(baseSheetRef.current, active);
+      if (from !== undefined) {
+        activeInputRef.current = { lotId: active.lotId, field: active.field, raw: active.raw, from };
+        if (active.value !== undefined) editsRef.current.set(key!, { lotId: active.lotId, field: active.field, value: active.value, from });
+        else if (activePreviousEditRef.current) editsRef.current.set(key!, activePreviousEditRef.current);
+        else editsRef.current.delete(key!);
+      }
+    }
+    const conflicts = overlapsRef.current.filter(overlap => editsRef.current.has(overlap.key) || droppedRef.current.some(edit => cellKey(edit) === overlap.key));
+    setRecovery(conflicts, droppedRef.current);
+    setDirty(hasLocalDraft());
+    scheduleDraftWrite();
+    if (!active && pendingChangesRef.current.size && !restoredPausedRef.current && !conflicts.length && !droppedRef.current.length) {
+      if (flushTimerRef.current) window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = window.setTimeout(() => void flushChangesRef.current(), 500);
+    }
+  }, [hasLocalDraft, scheduleDraftWrite, setRecovery]);
+  const mergeSaved = useCallback((response: ProposalValuationPayload) => {
+    if (!scopeCurrent() || response.reportId !== reportId) return false;
+    syncActiveInput();
+    const nextRevision = response.revision ?? 0;
+    if (nextRevision < revisionRef.current) return false;
+    const result = rebaseDraft(response.assetScheduleSheet, [...editsRef.current.values()], overlapsRef.current, droppedRef.current);
+    permissionsRef.current = response.permissions || LEGACY_OWNER_PERMISSIONS;
+    const unavailable = result.edits.filter(edit => !mayEditDraft(permissionsRef.current, edit));
+    result.edits = result.edits.filter(edit => mayEditDraft(permissionsRef.current, edit));
+    result.dropped.push(...unavailable);
+    // An uncertain envelope stays immutable. Preserve any newer desired value,
+    // even if it currently equals the server, until that envelope is resolved.
+    if (!retryEnvelopeRef.current && !restoredEnvelopeRef.current) editsRef.current = new Map(result.edits.map(edit => [cellKey(edit), edit]));
+    if (activeInputRef.current) {
+      const active = editsRef.current.get(cellKey(activeInputRef.current));
+      if (active) activeInputRef.current = { ...activeInputRef.current, from: active.from };
+    }
+    baseSheetRef.current = cloneProposalValuationSheet(response.assetScheduleSheet);
+    revisionRef.current = nextRevision;
+    setPayload(response); setSheet(retryEnvelopeRef.current || restoredEnvelopeRef.current
+      ? applyDraftChanges(result.sheet, [...editsRef.current.values()]) : result.sheet);
+    setRecovery(result.overlaps, result.dropped);
+    pendingChangesRef.current = new Map([...editsRef.current.values()].filter(edit => cellKey(edit) !== activeOnlyKeyRef.current && readCell(response.assetScheduleSheet, edit) !== undefined && mayEditDraft(permissionsRef.current, edit))
+      .map(edit => [cellKey(edit), { lotId: edit.lotId, field: edit.field, value: edit.value }]));
+    if (retryEnvelopeRef.current) for (const change of retryEnvelopeRef.current.changes) {
+      const pending = pendingChangesRef.current.get(cellKey(change));
+      if (pending?.value === change.value) pendingChangesRef.current.delete(cellKey(change));
+    }
+    if (result.overlaps.length || result.dropped.length) { autosavePausedRef.current = true; setSaveBlocked(true); }
+    setDirty(hasLocalDraft()); scheduleDraftWrite();
+    return true;
+  }, [hasLocalDraft, reportId, scheduleDraftWrite, scopeCurrent, setRecovery, syncActiveInput]);
+  const draftFieldLabel = useCallback((field: string) => {
+    const column = buildGridColumns(sheet?.evaluator_columns || []).find(item =>
+      item.kind === "evaluator" ? field === `evaluator_values.${item.evaluatorId}` :
+      (item.kind === "text" || item.kind === "number") && field === item.field);
+    if (column) return column.label;
+    if (field.startsWith("evaluator_values.")) return "Evaluator value";
+    return field.replace(/^(file_summary|market_check)\./, "").replaceAll("_", " ").replace(/^./, char => char.toUpperCase());
+  }, [sheet?.evaluator_columns]);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currency = payload?.currencyCode || "CAD";
   const permissions = payload?.permissions || LEGACY_OWNER_PERMISSIONS;
@@ -637,76 +792,88 @@ export default function ProposalValuationDialog({
   const pictureModalOpen = Boolean(pictureGallery) && !desktopGridVisible;
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
       const response = await ProposalValuationService.get(reportId, signal);
-      setLiveRefreshMessage("");
-      setPayload(response);
-      setSheet(cloneProposalValuationSheet(response.assetScheduleSheet));
-      revisionRef.current = response.revision ?? 0;
-      setDirty(false);
-    } catch (loadError) {
-      if (signal?.aborted) return;
-      if (loadError instanceof ProposalValuationAccessLost) {
-        stopForTerminalError(loadError.message);
-      } else {
-        setError(loadError instanceof Error ? loadError.message : "Unable to load Proposal Valuation.");
+      if (!scopeCurrent() || signal?.aborted || response.reportId !== reportId) return;
+      if (!initializedDraftRef.current) {
+        let stored: DraftBackup | null = null;
+        const id = crypto.randomUUID();
+        writerRef.current = { id, lineageId: id };
+        try {
+          const pointer = window.sessionStorage.getItem(draftPointerKey(actorId, reportId));
+          stored = parseDraftBackup(pointer ? window.localStorage.getItem(pointer) : null, actorId, reportId);
+          // Every mount owns a new key AND lineage: duplicated tabs cannot retire
+          // another live tab's recovery branch. Other copies require explicit review.
+          const available: DraftBackup[] = [];
+          for (let index = 0; index < window.localStorage.length; index++) {
+            const key = window.localStorage.key(index);
+            if (!key?.startsWith(draftStoragePrefix(actorId, reportId)) || key === pointer) continue;
+            const candidate = parseDraftBackup(window.localStorage.getItem(key), actorId, reportId);
+            if (candidate && !isEmptyDraft(candidate)) {
+              const remaining = rebaseDraft(response.assetScheduleSheet, candidate.edits, candidate.overlaps, candidate.dropped);
+              const unfinished = candidate.activeInput;
+              const parsed = unfinished ? parseCellNumber(unfinished.raw) : null;
+              const isNumber = unfinished && (unfinished.field.startsWith("evaluator_values.") || ["lien_search", "video_cost"].includes(unfinished.field));
+              const unfinishedValue = unfinished ? isNumber ? parsed?.ok ? parsed.value : undefined : unfinished.raw : undefined;
+              const rawNeedsReview = Boolean(unfinished && (unfinishedValue === undefined || readCell(response.assetScheduleSheet, unfinished) !== unfinishedValue));
+              const uncertainMayStillArrive = candidate.retryEnvelope && (response.revision ?? 0) <= candidate.retryEnvelope.request.baseRevision;
+              if (remaining.edits.length || remaining.dropped.length || remaining.overlaps.length || rawNeedsReview || uncertainMayStillArrive) available.push(candidate);
+            }
+          }
+          setOtherDrafts(available.sort((a,b) => b.savedAt-a.savedAt));
+        } catch { setBackupFailed(true); }
+        initializedDraftRef.current = true;
+        if (stored && !isEmptyDraft(stored)) {
+          editsRef.current = new Map(stored.edits.map(edit => [cellKey(edit), edit]));
+          overlapsRef.current = stored.overlaps; droppedRef.current = stored.dropped;
+          restoredEnvelopeRef.current = stored.retryEnvelope || null;
+          recoveredInputRef.current = stored.activeInput || null; setRecoveredInput(recoveredInputRef.current);
+          restoredPausedRef.current = true; setRestoredPaused(true); autosavePausedRef.current = true;
+        }
       }
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
-  }, [reportId, stopForTerminalError]);
+      mergeSaved(response); setLiveRefreshMessage("");
+    } catch (loadError) {
+      if (!scopeCurrent() || signal?.aborted) return;
+      if (loadError instanceof ProposalValuationAccessLost) stopForTerminalError(loadError.message);
+      else setError(loadError instanceof Error ? loadError.message : "Unable to load Proposal Valuation.");
+    } finally { if (scopeCurrent() && !signal?.aborted) setLoading(false); }
+  }, [actorId, mergeSaved, reportId, scopeCurrent, stopForTerminalError]);
 
   const resyncWithPending = useCallback(async () => {
-    if (resyncInFlightRef.current) {
-      resyncRequestedRef.current = true;
-      return resyncInFlightRef.current;
-    }
+    if (!scopeCurrent()) throw new Error("The report or sign-in changed. Your browser draft is kept.");
+    if (resyncInFlightRef.current) { resyncRequestedRef.current = true; return resyncInFlightRef.current; }
     const run = async () => {
       let latest: ProposalValuationPayload | null = null;
       do {
         resyncRequestedRef.current = false;
         const response = await ProposalValuationService.get(reportId);
-        setLiveRefreshMessage("");
+        if (!scopeCurrent()) return response;
         latest = response;
-        const responseRevision = response.revision ?? revisionRef.current;
-        if (!terminalRef.current && responseRevision >= revisionRef.current) {
-          const localChanges = new Map<string, ProposalValuationChange>();
-          for (const change of retryEnvelopeRef.current?.changes ?? []) {
-            localChanges.set(draftChangeKey(change), change);
-          }
-          for (const change of pendingChangesRef.current.values()) {
-            localChanges.set(draftChangeKey(change), change);
-          }
-          const pending = [...localChanges.values()];
-          revisionRef.current = responseRevision;
-          setPayload(response);
-          setSheet(
-            pending.length
-              ? applyDraftChanges(response.assetScheduleSheet, pending)
-              : cloneProposalValuationSheet(response.assetScheduleSheet)
-          );
-          setDirty(pending.length > 0);
-        }
-      } while (resyncRequestedRef.current && !terminalRef.current);
+        if (!terminalRef.current) { mergeSaved(response); setLiveRefreshMessage(""); }
+      } while (resyncRequestedRef.current && !terminalRef.current && scopeCurrent());
       return latest!;
     };
-    const request = run().finally(() => {
-      resyncInFlightRef.current = null;
-    });
-    resyncInFlightRef.current = request;
-    return request;
-  }, [reportId]);
+    const request = run().finally(() => { if (scopeCurrent()) resyncInFlightRef.current = null; });
+    resyncInFlightRef.current = request; return request;
+  }, [mergeSaved, reportId, scopeCurrent]);
 
   const flushChanges = useCallback(async () => {
     if (
       !pageMode ||
+      !scopeCurrent() ||
+      restoredPausedRef.current ||
+      activeInputRef.current ||
+      (!retryEnvelopeRef.current && (overlapsRef.current.length > 0 || droppedRef.current.length > 0)) ||
       syncingRef.current ||
       terminalRef.current ||
-      autosavePausedRef.current ||
+      (!retryEnvelopeRef.current && autosavePausedRef.current) ||
       (!retryEnvelopeRef.current && !pendingChangesRef.current.size)
     ) return;
+    const requested = retryEnvelopeRef.current?.changes || [...pendingChangesRef.current.values()];
+    if (requested.some(change => !mayEditDraft(permissionsRef.current, change))) {
+      autosavePausedRef.current = true; setSaveBlocked(true); return;
+    }
     syncingRef.current = true;
     setSyncing(true);
     const envelope = retryEnvelopeRef.current ?? {
@@ -722,6 +889,7 @@ export default function ProposalValuationDialog({
       for (const change of envelope.changes) pendingChangesRef.current.delete(draftChangeKey(change));
     }
     retryEnvelopeRef.current = envelope;
+    writeDraftNow();
     const { changes: batch, request } = envelope;
     let retryDelay = 3000;
     try {
@@ -730,27 +898,31 @@ export default function ProposalValuationDialog({
         batch,
         request
       );
+      if (!scopeCurrent() || response.reportId !== reportId) return;
       retryEnvelopeRef.current = null;
-      const responseRevision = response.revision ?? request.baseRevision + 1;
-      const remaining = [...pendingChangesRef.current.values()];
-      if (responseRevision >= revisionRef.current) {
-        revisionRef.current = responseRevision;
-        setPayload(response);
-        setSheet(
-          remaining.length
-            ? applyDraftChanges(response.assetScheduleSheet, remaining)
-            : cloneProposalValuationSheet(response.assetScheduleSheet)
-        );
-      } else {
-        resyncRequestedRef.current = true;
-      }
-      setDirty(remaining.length > 0);
+      // Only acknowledge the submitted values. Later edits of the same cell stay queued.
       for (const change of batch) {
-        conflictRetriesRef.current.delete(draftChangeKey(change));
+        const key = cellKey(change), local = editsRef.current.get(key);
+        const confirmed = readCell(response.assetScheduleSheet, change);
+        if (local?.value === change.value && !pendingChangesRef.current.has(key) && activeOnlyKeyRef.current !== key) editsRef.current.delete(key);
+        else if (local && confirmed !== undefined) editsRef.current.set(key, { ...local, from: confirmed });
+        // A new focused edit may begin while this request is in flight.
+        const activeAfterSave = activeInputRef.current as ActiveDraftInput | null;
+        if (activeAfterSave && cellKey(activeAfterSave) === key && confirmed !== undefined) {
+          activeInputRef.current = { ...activeAfterSave, from: confirmed };
+          const prior = activePreviousEditRef.current;
+          if (prior?.value === change.value) activePreviousEditRef.current = null;
+          else if (prior) activePreviousEditRef.current = { ...prior, from: confirmed };
+        }
+        conflictRetriesRef.current.delete(key);
       }
-      setSaveBlocked(false);
-      onSaved?.();
+      if ((response.revision ?? request.baseRevision + 1) >= revisionRef.current) mergeSaved(response);
+      else resyncRequestedRef.current = true;
+      setDirty(hasLocalDraft());
+      setSaveBlocked(overlapsRef.current.length > 0 || droppedRef.current.length > 0);
+      scheduleDraftWrite(); onSaved?.();
     } catch (saveError) {
+      if (!scopeCurrent()) return;
       setDirty(true);
       if (saveError instanceof ProposalValuationAccessLost) {
         stopForTerminalError(saveError.message);
@@ -766,7 +938,9 @@ export default function ProposalValuationDialog({
         );
         try {
           await resyncWithPending();
-          if (repeatedConflict) {
+          if (overlapsRef.current.length || droppedRef.current.length || restoredPausedRef.current) {
+            autosavePausedRef.current = true; setSaveBlocked(true);
+          } else if (repeatedConflict) {
             autosavePausedRef.current = true;
             setSaveBlocked(true);
             toast.error(
@@ -797,6 +971,8 @@ export default function ProposalValuationDialog({
         );
       }
     } finally {
+      if (!scopeCurrent()) return;
+      writeDraftNow();
       syncingRef.current = false;
       setSyncing(false);
       if (resyncRequestedRef.current && !terminalRef.current) {
@@ -814,7 +990,8 @@ export default function ProposalValuationDialog({
       }
       if (
         (retryEnvelopeRef.current || pendingChangesRef.current.size) &&
-        !autosavePausedRef.current
+        !restoredPausedRef.current && !activeInputRef.current &&
+        (retryEnvelopeRef.current || !autosavePausedRef.current && !overlapsRef.current.length && !droppedRef.current.length)
       ) {
         if (flushTimerRef.current) window.clearTimeout(flushTimerRef.current);
         flushTimerRef.current = window.setTimeout(
@@ -823,7 +1000,7 @@ export default function ProposalValuationDialog({
         );
       }
     }
-  }, [onSaved, pageMode, reportId, resyncWithPending, stopForTerminalError]);
+  }, [hasLocalDraft, mergeSaved, onSaved, pageMode, reportId, resyncWithPending, scheduleDraftWrite, scopeCurrent, stopForTerminalError, writeDraftNow]);
 
   useEffect(() => {
     flushChangesRef.current = flushChanges;
@@ -831,7 +1008,15 @@ export default function ProposalValuationDialog({
 
   const queueDraftChange = useCallback(
     (change: ProposalValuationChange) => {
-      if (!pageMode || terminalRef.current) return;
+      if (!pageMode || terminalRef.current || !scopeCurrent() || !baseSheetRef.current || !mayEditDraft(permissionsRef.current, change)) return;
+      const key = cellKey(change);
+      const existing = editsRef.current.get(key);
+      const from = existing ? existing.from : readCell(baseSheetRef.current, change);
+      if (from === undefined) return;
+      editsRef.current.set(key, { ...change, from });
+      if (activeOnlyKeyRef.current === key) { activeOnlyKeyRef.current = null; activePreviousEditRef.current = null; }
+      if (recoveredInputRef.current && cellKey(recoveredInputRef.current) === key) { recoveredInputRef.current = null; setRecoveredInput(null); }
+      scheduleDraftWrite();
       pendingChangesRef.current.set(draftChangeKey(change), change);
       setDirty(true);
       if (flushTimerRef.current) window.clearTimeout(flushTimerRef.current);
@@ -840,15 +1025,87 @@ export default function ProposalValuationDialog({
         500
       );
     },
-    [pageMode]
+    [pageMode, scheduleDraftWrite, scopeCurrent]
   );
 
   const retryBlockedSave = useCallback(() => {
+    if (!scopeCurrent() || overlapsRef.current.length || droppedRef.current.length || restoredPausedRef.current) return;
     autosavePausedRef.current = false;
     conflictRetriesRef.current.clear();
     setSaveBlocked(false);
     void flushChangesRef.current();
-  }, []);
+  }, [scopeCurrent]);
+
+  const resumeRecoveredDraft = useCallback(async () => {
+    if (!scopeCurrent() || syncingRef.current || resumingRef.current || terminalRef.current) return;
+    const unfinished = recoveredInputRef.current;
+    if (unfinished && (unfinished.field.startsWith("evaluator_values.") || ["lien_search", "video_cost"].includes(unfinished.field)) && !parseCellNumber(unfinished.raw).ok) {
+      toast.error("Correct or discard the unfinished number before resuming this draft."); return;
+    }
+    const uncertain = restoredEnvelopeRef.current;
+    resumingRef.current = true; setResuming(true);
+    try {
+      const latest = await ProposalValuationService.get(reportId);
+      if (!scopeCurrent() || latest.reportId !== reportId) return;
+      if ((latest.revision ?? 0) < revisionRef.current) {
+        toast.error("The saved values changed during review. Review your draft and try again."); return;
+      }
+      syncActiveInput();
+      const desired = [...editsRef.current.values()];
+      mergeSaved(latest);
+      // This is a new, explicit reviewed intent. A stored request from a closed
+      // editor is never replayed under a later sign-in or different live session.
+      restoredEnvelopeRef.current = null;
+      recoveredInputRef.current = null; setRecoveredInput(null);
+      restoredPausedRef.current = false; setRestoredPaused(false);
+      mergeSaved(latest);
+      if (uncertain && (latest.revision ?? 0) <= uncertain.request.baseRevision) {
+        // Even a desired no-op must claim a new revision, fencing any earlier
+        // uncertain request that has not yet reached its atomic backend write.
+        for (const edit of desired) {
+          const from = readCell(latest.assetScheduleSheet, edit);
+          if (from !== undefined && !editsRef.current.has(cellKey(edit))) {
+            editsRef.current.set(cellKey(edit), { ...edit, from });
+            pendingChangesRef.current.set(cellKey(edit), { lotId: edit.lotId, field: edit.field, value: edit.value });
+          }
+        }
+      }
+      const blocked = overlapsRef.current.length > 0 || droppedRef.current.length > 0;
+      autosavePausedRef.current = blocked; setSaveBlocked(blocked); setDirty(hasLocalDraft()); writeDraftNow();
+      if (!blocked) void flushChangesRef.current();
+    } catch (failure) { if (scopeCurrent()) toast.error(failure instanceof Error ? failure.message : "Unable to check the latest saved values. Your draft is kept."); }
+    finally { resumingRef.current = false; if (scopeCurrent()) setResuming(false); }
+  }, [hasLocalDraft, mergeSaved, reportId, scopeCurrent, syncActiveInput, writeDraftNow]);
+
+  const resolveConflict = useCallback((key: string, keepMine: boolean) => {
+    if (!scopeCurrent() || syncingRef.current || retryEnvelopeRef.current || !baseSheetRef.current) return;
+    const overlap = overlapsRef.current.find(item => item.key === key);
+    const edit = editsRef.current.get(key);
+    if (!overlap || !edit) return;
+    if (keepMine) {
+      editsRef.current.set(key, { ...edit, from: overlap.theirs });
+      pendingChangesRef.current.set(key, { lotId: edit.lotId, field: edit.field, value: edit.value });
+    } else { editsRef.current.delete(key); pendingChangesRef.current.delete(key); }
+    setRecovery(overlapsRef.current.filter(item => item.key !== key), droppedRef.current);
+    setSheet(applyDraftChanges(baseSheetRef.current, [...editsRef.current.values()]));
+    const blocked = restoredPausedRef.current || overlapsRef.current.length > 0 || droppedRef.current.length > 0;
+    autosavePausedRef.current = blocked; setSaveBlocked(blocked); setDirty(hasLocalDraft()); writeDraftNow();
+    if (!blocked) void flushChangesRef.current();
+  }, [hasLocalDraft, scopeCurrent, setRecovery, writeDraftNow]);
+
+  const recoverOtherDraft = useCallback((draft: DraftBackup) => {
+    if (!scopeCurrent() || hasLocalDraft() || !baseSheetRef.current) return;
+    let current: DraftBackup | null = null;
+    try { current = parseDraftBackup(window.localStorage.getItem(draftStorageKey(actorId, reportId, draft.draftId)), actorId, reportId); } catch { /* A missing copy is not an instruction to overwrite. */ }
+    if (!current || isEmptyDraft(current)) return;
+    editsRef.current = new Map(current.edits.map(edit => [cellKey(edit), edit]));
+    overlapsRef.current = current.overlaps; droppedRef.current = current.dropped;
+    restoredEnvelopeRef.current = current.retryEnvelope || null;
+    recoveredInputRef.current = current.activeInput || null; setRecoveredInput(recoveredInputRef.current);
+    restoredPausedRef.current = true; setRestoredPaused(true); autosavePausedRef.current = true;
+    if (payload) mergeSaved(payload);
+    setOtherDrafts(items => items.filter(item => item.draftId !== current!.draftId));
+  }, [actorId, hasLocalDraft, mergeSaved, payload, reportId, scopeCurrent]);
 
   const retryLiveRefresh = useCallback(() => {
     if (terminalRef.current) return;
@@ -870,19 +1127,6 @@ export default function ProposalValuationDialog({
   }, [resyncWithPending, stopForTerminalError]);
 
   useEffect(() => {
-    terminalRef.current = false;
-    autosavePausedRef.current = false;
-    conflictRetriesRef.current.clear();
-    pendingChangesRef.current.clear();
-    retryEnvelopeRef.current = null;
-    resyncRequestedRef.current = false;
-    resyncInFlightRef.current = null;
-    setTerminalMessage("");
-    setLiveRefreshMessage("");
-    setSaveBlocked(false);
-  }, [reportId]);
-
-  useEffect(() => {
     if (!pageMode || !open || !liveReady) return;
     const controller = new AbortController();
     liveControllerRef.current = controller;
@@ -892,7 +1136,7 @@ export default function ProposalValuationDialog({
     let connecting = false;
 
     const canConnect = () =>
-      !controller.signal.aborted &&
+      scopeCurrent() && !controller.signal.aborted &&
       navigator.onLine !== false &&
       document.visibilityState !== "hidden";
 
@@ -916,6 +1160,7 @@ export default function ProposalValuationDialog({
           revisionRef.current,
           controller.signal,
           (event) => {
+            if (!scopeCurrent()) return;
             if (stabilityTimer === null) {
               stabilityTimer = window.setTimeout(() => {
                 reconnectAttempt = 0;
@@ -1010,16 +1255,34 @@ export default function ProposalValuationDialog({
     reportId,
     resyncWithPending,
     stopForTerminalError,
+    scopeCurrent,
   ]);
 
-  useEffect(() => {
-    return () => {
-      if (flushTimerRef.current) window.clearTimeout(flushTimerRef.current);
-      if (pendingChangesRef.current.size || retryEnvelopeRef.current) {
-        void flushChangesRef.current();
-      }
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const flush = () => { syncActiveInput(); writeDraftNow(); };
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      flush();
+      if (hasLocalDraft()) { event.preventDefault(); event.returnValue = ""; }
     };
-  }, []);
+    const visibility = () => { if (document.visibilityState === "hidden") flush(); };
+    const sessionChanged = () => {
+      if (isAuthSessionCurrent(sessionRef.current)) return;
+      flush(); stopForTerminalError("Your sign-in changed. Reopen the report after signing in; the original account's browser draft is kept.");
+    };
+    const storage = (event: StorageEvent) => { if (event.key === REFRESH_KEY) sessionChanged(); };
+    window.addEventListener("beforeunload", beforeUnload);
+    window.addEventListener("storage", storage);
+    window.addEventListener("auth-session-invalidated", sessionChanged);
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      flush(); mountedRef.current = false;
+      if (flushTimerRef.current) window.clearTimeout(flushTimerRef.current);
+      if (backupTimerRef.current !== null) window.clearTimeout(backupTimerRef.current);
+      window.removeEventListener("beforeunload", beforeUnload); window.removeEventListener("storage", storage);
+      window.removeEventListener("auth-session-invalidated", sessionChanged); document.removeEventListener("visibilitychange", visibility);
+    };
+  }, [hasLocalDraft, stopForTerminalError, syncActiveInput, writeDraftNow]);
 
   useEffect(() => {
     if (!open) return;
@@ -1171,7 +1434,7 @@ export default function ProposalValuationDialog({
   );
 
   const updateRow = useCallback<RowChange>((lotId, key, value) => {
-    if (!permissions.canEditAll || terminalRef.current) return;
+    if (!permissions.canEditAll || terminalRef.current || !scopeCurrent()) return;
     setSheet((current) =>
       current
         ? {
@@ -1184,12 +1447,12 @@ export default function ProposalValuationDialog({
     );
     setDirty(true);
     queueDraftChange({ lotId, field: String(key), value });
-  }, [permissions.canEditAll, queueDraftChange]);
+  }, [permissions.canEditAll, queueDraftChange, scopeCurrent]);
 
   const updateEvaluatorValue = useCallback<EvaluatorChange>(
     (lotId, evaluatorId, value) => {
       if (
-        terminalRef.current ||
+        !scopeCurrent() || terminalRef.current ||
         !permissions.canEditAll &&
         permissions.evaluatorColumnId !== evaluatorId
       ) {
@@ -1220,13 +1483,13 @@ export default function ProposalValuationDialog({
         value,
       });
     },
-    [permissions.canEditAll, permissions.evaluatorColumnId, queueDraftChange]
+    [permissions.canEditAll, permissions.evaluatorColumnId, queueDraftChange, scopeCurrent]
   );
 
   const updateLinkedEvaluators = useCallback(
     async (evaluatorUserIds: string[]) => {
       if (
-        terminalRef.current ||
+        !scopeCurrent() || terminalRef.current ||
         !permissions.canManageEvaluators ||
         assigning ||
         syncingRef.current ||
@@ -1248,21 +1511,10 @@ export default function ProposalValuationDialog({
                   ProposalValuationService.newMutationId("pv-evaluators"),
               }
             );
+            if (!scopeCurrent() || response.reportId !== reportId) return;
             const responseRevision = response.revision ?? baseRevision + 1;
             if (responseRevision >= revisionRef.current) {
-              const localChanges = new Map<string, ProposalValuationChange>();
-              for (const change of pendingChangesRef.current.values()) {
-                localChanges.set(draftChangeKey(change), change);
-              }
-              const pending = [...localChanges.values()];
-              revisionRef.current = responseRevision;
-              setPayload(response);
-              setSheet(
-                pending.length
-                  ? applyDraftChanges(response.assetScheduleSheet, pending)
-                  : cloneProposalValuationSheet(response.assetScheduleSheet)
-              );
-              setDirty(pending.length > 0);
+              mergeSaved(response);
             } else {
               resyncRequestedRef.current = true;
               await resyncWithPending();
@@ -1270,6 +1522,7 @@ export default function ProposalValuationDialog({
             toast.success("Evaluator access updated.");
             return;
           } catch (assignmentError) {
+            if (!scopeCurrent()) return;
             if (
               attempt === 0 &&
               assignmentError instanceof ProposalValuationRevisionConflict
@@ -1281,6 +1534,7 @@ export default function ProposalValuationDialog({
           }
         }
       } catch (assignmentError) {
+        if (!scopeCurrent()) return;
         if (assignmentError instanceof ProposalValuationAccessLost) {
           stopForTerminalError(assignmentError.message);
         } else {
@@ -1291,17 +1545,19 @@ export default function ProposalValuationDialog({
           );
         }
       } finally {
-        setAssigning(false);
+        if (scopeCurrent()) setAssigning(false);
       }
     },
     [
       assigning,
       dirty,
       permissions.canManageEvaluators,
+      mergeSaved,
       ownerUserId,
       reportId,
       resyncWithPending,
       stopForTerminalError,
+      scopeCurrent,
     ]
   );
 
@@ -1330,7 +1586,7 @@ export default function ProposalValuationDialog({
   );
 
   const updateFileSummary = useCallback<FileSummaryChange>((key, value) => {
-    if (!permissions.canEditAll || terminalRef.current) return;
+    if (!permissions.canEditAll || terminalRef.current || !scopeCurrent()) return;
     setSheet((current) =>
       current
         ? {
@@ -1341,11 +1597,11 @@ export default function ProposalValuationDialog({
     );
     setDirty(true);
     queueDraftChange({ lotId: null, field: `file_summary.${String(key)}`, value });
-  }, [permissions.canEditAll, queueDraftChange]);
+  }, [permissions.canEditAll, queueDraftChange, scopeCurrent]);
 
   const regenerateFiles = useCallback(async () => {
     if (
-      terminalRef.current ||
+      !scopeCurrent() || terminalRef.current ||
       !permissions.canRegenerateFiles ||
       saving ||
       syncingRef.current ||
@@ -1361,6 +1617,7 @@ export default function ProposalValuationDialog({
             baseRevision: revisionRef.current,
             clientMutationId: ProposalValuationService.newMutationId("pv-files"),
           });
+          if (!scopeCurrent()) return;
           const responseRevision = response.revision ?? revisionRef.current;
           if (responseRevision >= revisionRef.current) {
             revisionRef.current = responseRevision;
@@ -1376,6 +1633,7 @@ export default function ProposalValuationDialog({
           onSaved?.();
           return;
         } catch (regenerateError) {
+          if (!scopeCurrent()) return;
           if (
             attempt === 0 &&
             regenerateError instanceof ProposalValuationRevisionConflict
@@ -1387,6 +1645,7 @@ export default function ProposalValuationDialog({
         }
       }
     } catch (regenerateError) {
+      if (!scopeCurrent()) return;
       if (regenerateError instanceof ProposalValuationAccessLost) {
         stopForTerminalError(regenerateError.message);
       } else {
@@ -1397,7 +1656,7 @@ export default function ProposalValuationDialog({
         );
       }
     } finally {
-      setSaving(false);
+      if (scopeCurrent()) setSaving(false);
     }
   }, [
     dirty,
@@ -1407,6 +1666,7 @@ export default function ProposalValuationDialog({
     resyncWithPending,
     saving,
     stopForTerminalError,
+    scopeCurrent,
   ]);
 
   const calculationFor = (key: string) => calculationMap.get(key);
@@ -1625,6 +1885,50 @@ export default function ProposalValuationDialog({
                 </div>
               </div>
             ) : null}
+            {(restoredPaused || overlaps.length || dropped.length || recoveredInput || backupFailed || otherDrafts.length) ? (
+              <div className="max-h-[35vh] shrink-0 overflow-y-auto border-b border-[var(--app-warning-border)] bg-[var(--app-warning-soft)] px-3 py-2 text-xs text-[var(--app-text)]" aria-label="Browser draft recovery">
+                {backupFailed ? <p role="alert">This browser could not keep a backup. Keep this page open until your changes are saved.</p> : null}
+                {restoredPaused ? <div role="status"><p className="font-bold">Your unsaved browser draft was restored. Review it before resuming.</p>
+                  {restoredEnvelopeRef.current ? <p>An earlier save was not confirmed. Review the restored entries before saving again.</p> : null}
+                  <button type="button" onClick={() => void resumeRecoveredDraft()} disabled={syncing || resuming || Boolean(terminalMessage)} className="my-1 rounded border border-[var(--app-control-border)] px-2 py-1 font-bold disabled:opacity-40">Resume saved draft</button>
+                </div> : null}
+                {overlaps.length ? <div role="alert"><p className="font-bold">You and someone else both changed {overlaps.length} cell{overlaps.length === 1 ? "" : "s"}. Choose which values to keep.</p>
+                  <ul className="space-y-1">{overlaps.map(item => <li key={item.key} className="flex flex-wrap items-center gap-2">
+                    <span>Lot {sheet.rows.find(row => row.lot_id === item.lotId)?.asset_id || item.lotId || "summary"}, {draftFieldLabel(item.field)}: saved <strong>{String(item.theirs ?? "blank")}</strong>; yours <strong>{String(item.yours ?? "blank")}</strong>.</span>
+                    <button type="button" onClick={() => resolveConflict(item.key, true)} disabled={syncing || resuming || Boolean(retryEnvelopeRef.current) || Boolean(terminalMessage)} className="rounded border px-2 py-1 font-bold disabled:opacity-40">Keep mine</button>
+                    <button type="button" onClick={() => resolveConflict(item.key, false)} disabled={syncing || resuming || Boolean(retryEnvelopeRef.current) || Boolean(terminalMessage)} className="rounded border px-2 py-1 font-bold disabled:opacity-40">Keep saved</button>
+                  </li>)}</ul>
+                </div> : null}
+                {dropped.length ? <div role="alert"><p className="font-bold">Some entries are no longer available for editing. Their values are kept for recovery:</p>
+                  <ul>{dropped.map(item => <li key={cellKey(item)}>{item.lotId ? `Lot reference ${item.lotId}` : "File summary"} · {draftFieldLabel(item.field)}: {String(item.value ?? "blank")}</li>)}</ul>
+                  <button type="button" disabled={Boolean(terminalMessage) || syncing || resuming || Boolean(retryEnvelopeRef.current)} onClick={() => {
+                    if (!scopeCurrent() || syncingRef.current || resumingRef.current || retryEnvelopeRef.current || terminalRef.current) return;
+                    if (!window.confirm("Discard the retained entries that are no longer available for editing?")) return;
+                    const discarded = new Set(droppedRef.current.map(cellKey));
+                    if (activeInputRef.current && discarded.has(cellKey(activeInputRef.current))) {
+                      gridDraftRef.current?.discardDraft();
+                      activeInputRef.current = null; activeOnlyKeyRef.current = null; activePreviousEditRef.current = null;
+                    }
+                    if (recoveredInputRef.current && discarded.has(cellKey(recoveredInputRef.current))) {
+                      recoveredInputRef.current = null; setRecoveredInput(null);
+                    }
+                    for (const key of discarded) { editsRef.current.delete(key); pendingChangesRef.current.delete(key); }
+                    setRecovery(overlapsRef.current.filter(overlap => !discarded.has(overlap.key)), droppedRef.current.filter(edit => !discarded.has(cellKey(edit))));
+                    if (baseSheetRef.current) setSheet(applyDraftChanges(baseSheetRef.current, [...editsRef.current.values()]));
+                    setDirty(hasLocalDraft()); writeDraftNow();
+                    autosavePausedRef.current = restoredPausedRef.current || overlapsRef.current.length > 0;
+                    setSaveBlocked(autosavePausedRef.current);
+                    if (!autosavePausedRef.current) void flushChangesRef.current();
+                  }} className="my-1 rounded border px-2 py-1 font-bold">Discard removed entries</button>
+                </div> : null}
+                {recoveredInput ? <div role="alert">Unfinished entry for {sheet.rows.find(row => row.lot_id === recoveredInput.lotId)?.asset_id || recoveredInput.lotId}, {draftFieldLabel(recoveredInput.field)}: <strong>{recoveredInput.raw}</strong>.
+                  <button type="button" onClick={() => { recoveredInputRef.current = null; setRecoveredInput(null); writeDraftNow(); }} className="ml-2 rounded border px-2 py-1 font-bold">Discard unfinished text</button>
+                </div> : null}
+                {otherDrafts.length ? <details><summary className="cursor-pointer font-semibold">Other browser draft copies ({otherDrafts.length})</summary>
+                  {otherDrafts.map(draft => <button key={draft.draftId} type="button" disabled={dirty || syncing || Boolean(terminalMessage)} onClick={() => recoverOtherDraft(draft)} className="mr-2 mt-1 rounded border px-2 py-1 disabled:opacity-40">Review draft from {new Date(draft.savedAt).toLocaleString()}</button>)}
+                </details> : null}
+              </div>
+            ) : null}
             {liveRefreshMessage && !terminalMessage ? (
               <div
                 className="shrink-0 border-b border-[var(--app-warning-border)] bg-[var(--app-warning-soft)] px-3 py-2"
@@ -1681,6 +1985,8 @@ export default function ProposalValuationDialog({
                   <div className="hidden min-h-0 flex-1 flex-col md:flex">
                     <ValuationGrid
                       key={reportId}
+                      draftControllerRef={gridDraftRef}
+                      onDraftChange={syncActiveInput}
                       visible={desktopGridVisible}
                       rows={filteredRows}
                       allRows={sheet.rows}
@@ -1756,13 +2062,15 @@ export default function ProposalValuationDialog({
                   <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--app-danger)]">
                     <AlertCircle className="size-3.5" /> Access ended · draft retained
                   </span>
+                ) : restoredPaused || overlaps.length > 0 || dropped.length > 0 ? (
+                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-semibold text-[var(--app-warning)]"><AlertCircle className="size-3.5" /> Review changes</span>
                 ) : saveBlocked ? (
                   <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--app-danger)]">
                     <AlertCircle className="size-3.5" /> Draft merge paused
                     <button
                       type="button"
                       onClick={retryBlockedSave}
-                      className="rounded border border-[var(--app-danger-border)] px-2 py-0.5 font-bold hover:bg-[var(--app-danger-soft)]"
+                                            className="rounded border border-[var(--app-danger-border)] px-2 py-0.5 font-bold hover:bg-[var(--app-danger-soft)]"
                     >
                       Retry save
                     </button>

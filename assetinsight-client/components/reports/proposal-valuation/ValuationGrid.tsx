@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, Filter, Images } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import type { ProposalValuationColumnTotals } from "./calculations";
@@ -37,7 +37,12 @@ type EvaluatorValueChange = (lotId: string, evaluatorId: string, value: number |
 
 export type ValuationGridStatus = { selection: string; lots: string };
 
+export type ValuationGridDraft = { lotId: string; field: string; raw: string; value: GridCellValue | undefined };
+export type ValuationGridDraftController = { readDraft: () => ValuationGridDraft | null; finishDraft: () => boolean; discardDraft: () => void };
+
 type Props = {
+  draftControllerRef?: React.MutableRefObject<ValuationGridDraftController | null>;
+  onDraftChange?: () => void;
   /** Hidden mobile grids retain editing state without mounting desktop rows. */
   visible?: boolean;
   /** Lots after the search box, in sheet order. */
@@ -365,6 +370,8 @@ function HeaderMenu({
 
 export default function ValuationGrid({
   visible = true,
+  draftControllerRef,
+  onDraftChange,
   rows,
   allRows,
   evaluators,
@@ -406,7 +413,16 @@ export default function ValuationGrid({
   // Handlers read the selection from here: key repeat can deliver a second key
   // before React has rendered the first move.
   const selectionRef = useRef<{ anchor: CellRef | null; extent: CellRef | null }>({ anchor: null, extent: null });
-  const [editing, setEditing] = useState<Editing | null>(null);
+  const [editing, setEditingState] = useState<Editing | null>(null);
+  const editingRef = useRef<Editing | null>(null);
+  const draftIdentityRef = useRef<{ lotId: string; columnId: string; field: string; numeric: boolean } | null>(null);
+  const draftChangeRef = useRef(onDraftChange);
+  draftChangeRef.current = onDraftChange;
+  const setEditing = useCallback((next: Editing | null) => {
+    editingRef.current = next;
+    setEditingState(next);
+    draftChangeRef.current?.();
+  }, []);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
@@ -583,19 +599,43 @@ export default function ValuationGrid({
     const index = columnIndex.get(editing.columnId);
     const column = index === undefined ? undefined : columns[index];
     if (!column || !rowsRef.current.some((row) => row.lot_id === editing.lotId)) {
-      setEditing(null);
-      return true;
+      toast.error("This lot or evaluator column is no longer available. Your unfinished entry is kept in this browser.");
+      return false;
     }
     const parsed = parseFor(column, editing.draft);
     if (!parsed.ok) {
       toast.error("Enter a number, such as 1200 or $1,200.");
       return false;
     }
-    applyEdits([{ lotId: editing.lotId, columnId: editing.columnId, value: parsed.value }]);
+    const result = applyEdits([{ lotId: editing.lotId, columnId: editing.columnId, value: parsed.value }]);
+    if (result.locked) {
+      toast.error("This field is no longer editable. Your unfinished entry is kept in this browser.");
+      return false;
+    }
     setEditing(null);
     if (refocusCell) focusPendingRef.current = true;
     return true;
   }, [applyEdits, columnIndex, columns, editing, parseFor]);
+
+  useLayoutEffect(() => {
+    if (!draftControllerRef) return;
+    draftControllerRef.current = {
+      readDraft: () => {
+        const current = editingRef.current;
+        if (!current) { draftIdentityRef.current = null; return null; }
+        const column = columns.find(item => item.id === current.columnId);
+        const field = column?.kind === "evaluator" ? `evaluator_values.${column.evaluatorId}` :
+          column?.kind === "text" || column?.kind === "number" ? column.field : null;
+        if (field && column) draftIdentityRef.current = { lotId: current.lotId, columnId: current.columnId, field, numeric: isNumericColumn(column) };
+        const identity = draftIdentityRef.current;
+        if (!identity || identity.lotId !== current.lotId || identity.columnId !== current.columnId) return null;
+        const parsed = identity.numeric ? parseCellNumber(current.draft) : { ok: true as const, value: current.draft };
+        return { lotId: current.lotId, field: identity.field, raw: current.draft, value: parsed.ok ? parsed.value : undefined };
+      },
+      finishDraft: () => commit(false),
+      discardDraft: () => setEditing(null),
+    };
+  }, [columns, commit, draftControllerRef, parseFor]);
 
   const startEdit = useCallback(
     (mode: Editing["mode"], draft?: string, origin: Editing["origin"] = "cell") => {
