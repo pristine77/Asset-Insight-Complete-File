@@ -182,14 +182,19 @@ describe("Preview queue affordances", () => {
     expect(mocks.resubmitLotListing).not.toHaveBeenCalled();
   });
 
-  it("offers initial-preview recovery without promising a saved draft when no saved lots exist", async () => {
-    mocks.getAssetReports.mockResolvedValue({ data: [] });
-    mocks.getLotListings.mockResolvedValue({ data: [{ ...lotListingPreview, status: "error", workflow_stage: "error", lots: [], preview_data: {} }] });
+  it.each(["asset", "lotListing"] as const)("offers guarded initial-preview recovery for %s without an unversioned resubmit or promised draft", async (kind) => {
+    const source = kind === "asset" ? assetPreview : lotListingPreview;
+    const failed = { ...source, status: "error", workflow_stage: "error", job_status: "error", lots: [], preview_data: {}, preview_available: false };
+    mocks.getAssetReports.mockResolvedValue({ data: kind === "asset" ? [failed] : [] });
+    mocks.getLotListings.mockResolvedValue({ data: kind === "lotListing" ? [failed] : [] });
     render(<PreviewsPage />);
     expect(await screen.findByRole("link", { name: "check saved drafts" })).toHaveAttribute("href", "/previews?tab=drafts");
     expect(screen.queryByRole("button", { name: /^Preview Lot Listing report/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry generation" })).not.toBeInTheDocument();
     expect(screen.getByTestId("initial-preview-retry")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Retry .* report from its uploaded photos/ })).not.toBeInTheDocument();
+    expect(mocks.resubmitReport).not.toHaveBeenCalled();
+    expect(mocks.resubmitLotListing).not.toHaveBeenCalled();
   });
 
   beforeEach(() => {

@@ -184,6 +184,9 @@ function IncomingContent() {
   // Arrival Photo Requests is the third tab (owner, 2026-11-03), opened
   // straight from a link such as /incoming?tab=arrival after photos are sent.
   const [queueTab, setQueueTab] = useState<"outstanding" | "completed" | "arrival">("outstanding");
+  // On a narrow screen the tab strip scrolls sideways; keep the open tab in
+  // view (a tab opened by link or by Send can otherwise sit off the right edge).
+  const queueTabsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setQueueTab(requestedTab === "arrival" || requestedTab === "completed" ? requestedTab : "outstanding");
     setSelectedKey(null);
@@ -286,6 +289,21 @@ function IncomingContent() {
   const completedItems = items.filter((item) => item.status === "sent");
   const outstandingItems = items.filter((item) => item.status !== "sent");
   const visibleItems = queueTab === "completed" ? completedItems : outstandingItems;
+  useEffect(() => {
+    const keepSelectedTabVisible = () => {
+      const strip = queueTabsRef.current;
+      const tab = strip?.querySelector<HTMLElement>(`[data-tab="${queueTab}"]`);
+      if (!strip || !tab) return;
+      const left = tab.offsetLeft - 8;
+      const right = tab.offsetLeft + tab.offsetWidth + 8;
+      if (left < strip.scrollLeft) strip.scrollLeft = left;
+      else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
+    };
+    keepSelectedTabVisible();
+    window.addEventListener("resize", keepSelectedTabVisible);
+    return () => window.removeEventListener("resize", keepSelectedTabVisible);
+  }, [queueTab, isLoading, outstandingItems.length, completedItems.length, arrivalRequests.length]);
+
 
   useEffect(() => {
     if (selectedKey && !selected) setSelectedKey(null);
@@ -553,6 +571,45 @@ function IncomingContent() {
 
       <section className={styles.workspace} data-panel={Boolean(selected)}>
         <div className={`app-surface ${styles.tableSurface}`}>
+          {/*
+            The queue's three views as a real tab strip across the top of the
+            card (owner, 2026-11-05: "Improve the Tab UI so its obvious its a
+            Tab"). It used to be a small grey pill switch at the right of the
+            header, which read as a filter. Counts stay on the tabs, so the
+            number of rows on screen is always explained by the tab you are on.
+          */}
+          <div ref={queueTabsRef} className={styles.queueTabs} role="tablist" aria-label="Queue">
+            {([
+              { key: "outstanding", label: "Outstanding", Icon: Inbox, count: outstandingItems.length },
+              { key: "completed", label: "Completed", Icon: FileCheck2, count: completedItems.length },
+              { key: "arrival", label: "Arrival Photo Requests", short: "Arrival", Icon: Camera, count: arrivalRequests.length },
+            ] as const).map(({ key, label, Icon, count, ...rest }) => {
+              const short = "short" in rest ? rest.short : label;
+              const active = queueTab === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  data-tab={key}
+                  // One name for the tab, whichever label fits the screen.
+                  aria-label={`${label} ${count}`}
+                  onClick={() => selectTab(key)}
+                  className={`${styles.queueTab} ${active ? styles.queueTabActive : ""}`}
+                >
+                  <Icon size={15} aria-hidden />
+                  <span className={styles.queueTabLabelLong}>{label}</span>
+                  <span className={styles.queueTabLabelShort}>{short}</span>{" "}
+                  <span
+                    className={`${styles.queueTabCount} ${key === "arrival" && count > 0 ? styles.queueTabCountAttention : ""}`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <div className={styles.tableHeader}>
             <div>
               <h2 className={styles.tableTitle}>Assigned contract queue</h2>
@@ -565,46 +622,6 @@ function IncomingContent() {
                   ? "Reports already sent back to Auctioneer. Select a contract to check whether more lots can be added."
                   : "Only the lots assigned to you. Select a contract to claim or continue it."}
               </p>
-            </div>
-            {/*
-              Counts on the tabs rather than only in the summary above, so the
-              number of rows on screen is always explained by the tab you are
-              standing on.
-            */}
-            <div className={styles.tabs} role="tablist" aria-label="Queue">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={queueTab === "outstanding"}
-                onClick={() => {
-                  selectTab("outstanding");
-                }}
-                className={`${styles.tab} ${queueTab === "outstanding" ? styles.tabActive : ""}`}
-              >
-                Outstanding <span className={styles.tabCount}>{outstandingItems.length}</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={queueTab === "completed"}
-                onClick={() => {
-                  selectTab("completed");
-                }}
-                className={`${styles.tab} ${queueTab === "completed" ? styles.tabActive : ""}`}
-              >
-                Completed <span className={styles.tabCount}>{completedItems.length}</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={queueTab === "arrival"}
-                onClick={() => {
-                  selectTab("arrival");
-                }}
-                className={`${styles.tab} ${queueTab === "arrival" ? styles.tabActive : ""}`}
-              >
-                Arrival Photo Requests <span className={styles.tabCount}>{arrivalRequests.length}</span>
-              </button>
             </div>
           </div>
 

@@ -57,6 +57,12 @@ type PreviewItem = {
   lotCount?: number;
   imageCount?: number;
   previewError?: string;
+  /** Server's own answer; false = no preview was ever made to open. */
+  previewAvailable?: boolean;
+  retryContext?: string;
+  retryActorEpoch?: number;
+  /** A kept draft whose report stopped without a preview (2026-11-05). */
+  draftSubmissionMessage?: string;
 };
 
 interface PreviewsScreenProps {
@@ -93,11 +99,18 @@ const PreviewsScreen = ({
   const [items, setItems] = useState<PreviewItem[]>([]);
   const [draftItems, setDraftItems] = useState<ReportDraft[]>([]);
   const [draftActionId, setDraftActionId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [mergeAnchorId, setMergeAnchorId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadingRef = useRef(false);
   const mountedRef = useRef(true);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
+  const itemsRef = useRef(items);
+  const itemsEpochRef = useRef<number | null>(null);
+  const activeTabRef = useRef(activeTab);
+  const retryRequestRef = useRef<AbortController | null>(null);
+  itemsRef.current = items;
+  activeTabRef.current = activeTab;
 
   const fetchItems = useCallback(async () => {
     if (loadingRef.current) return;
@@ -146,6 +159,9 @@ const PreviewsScreen = ({
           workflowProgressPercent: report.workflow_progress_percent,
           generationProgress: report.generation_progress,
           jobError: report.job_error,
+          previewAvailable: typeof (report as any).preview_available === 'boolean' ? (report as any).preview_available : undefined,
+          retryContext: JSON.stringify([report.job_id, report.job_status, report.updatedAt, report.status, report.preview_available]),
+          retryActorEpoch: epoch,
           wasSubmitted: Boolean(
             report.status === 'pending_approval' ||
             report.status === 'approved' ||
@@ -208,6 +224,9 @@ const PreviewsScreen = ({
           workflowProgressPercent: report.workflow_progress_percent,
           generationProgress: report.generation_progress,
           jobError: report.job_error,
+          previewAvailable: typeof report.preview_available === 'boolean' ? report.preview_available : undefined,
+          retryContext: JSON.stringify([report.job_id, report.job_status, report.updatedAt, report.status, report.preview_available]),
+          retryActorEpoch: epoch,
           wasSubmitted: Boolean(
             report.status === 'pending_approval' ||
               report.status === 'approved' ||
@@ -229,6 +248,7 @@ const PreviewsScreen = ({
         });
       }
       next.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      itemsEpochRef.current = epoch;
       setItems(previous => [...previous.filter(item => !succeeded.has(item.type)), ...next].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       if (succeeded.has('Drafts')) setDraftItems(
         [...drafts].sort(
@@ -248,7 +268,7 @@ const PreviewsScreen = ({
   useEffect(() => {
     mountedRef.current = true;
     void fetchItems();
-    return () => { mountedRef.current = false; };
+    return () => { mountedRef.current = false; retryRequestRef.current?.abort(); };
   }, [fetchItems]);
 
   useEffect(() => {
@@ -291,6 +311,7 @@ const PreviewsScreen = ({
           ? draft.media.filter((media) => media.slot !== 'video').length
           : 0,
         previewError: draft.previewError,
+        draftSubmissionMessage: draft.submission?.status === 'failed' ? draft.submission.message : undefined,
       })),
     [draftItems]
   );
@@ -455,6 +476,56 @@ const PreviewsScreen = ({
     [fetchItems]
   );
 
+  /** An explicit same-report retry uses the server's verified source revision. */
+  const handleRetryFromPhotos = useCallback(
+    async (item: PreviewItem) => {
+      if (retryRequestRef.current || !['Asset', 'LotListing'].includes(item.type)) return;
+      const epoch = getAuthOperationEpoch();
+      const controller = new AbortController();
+      const current = () => mountedRef.current && !controller.signal.aborted &&
+        getAuthOperationEpoch() === epoch && itemsEpochRef.current === epoch && activeTabRef.current === 'pending' &&
+        itemsRef.current.some(row => row.id === item.id && row.type === item.type && row.retryContext === item.retryContext &&
+          item.retryActorEpoch === epoch && row.retryActorEpoch === epoch &&
+          row.previewAvailable === false && !row.wasSubmitted && row.status === 'error');
+      if (!current()) return;
+      retryRequestRef.current = controller;
+      const reportType = item.type === 'LotListing' ? 'lotListing' : 'asset';
+      const endpoint = `/${reportType === 'asset' ? 'asset' : 'lot-listing'}/${encodeURIComponent(item.id)}/retry-preview`;
+      try {
+        setRetryingId(item.id);
+        const availability = await api.get(endpoint, { signal: controller.signal, timeout: 30_000 });
+        if (!current()) return;
+        const state = availability.data?.data;
+        if (!state || typeof state.initialPreviewRetryEligible !== 'boolean' ||
+          (state.initialPreviewRetryIneligibleReason != null && typeof state.initialPreviewRetryIneligibleReason !== 'string')) {
+          throw new Error('Retry availability could not be confirmed. Refresh this report before trying again.');
+        }
+        if (!state.initialPreviewRetryEligible) throw new Error(state.initialPreviewRetryIneligibleReason || 'This report cannot be retried now. Refresh its processing status.');
+        if (typeof state.initialPreviewRetryRevision !== 'string' || !/^[a-f0-9]{64}$/.test(state.initialPreviewRetryRevision)) {
+          throw new Error('Retry availability could not be confirmed. Refresh this report before trying again.');
+        }
+        if (!current()) return;
+        const response = await api.post(endpoint, { baseRevision: state.initialPreviewRetryRevision }, {
+          signal: controller.signal, timeout: 60_000, skipAuthRefreshReplay: true,
+        });
+        if (!current()) return;
+        const receipt = response.data?.data;
+        const ready = receipt?.job_status === 'done' && receipt?.preview_available === true;
+        if (response.status !== 202 || receipt?.reportId !== item.id || receipt?.reportType !== reportType ||
+          receipt?.retry_stage !== 'initial_preview' || (!ready && !['queued', 'processing'].includes(receipt?.job_status))) {
+          throw new Error('Retry confirmation was not received. Refresh this report to check whether processing started.');
+        }
+        await fetchItems();
+      } catch (error: any) {
+        if (current()) Alert.alert('Unable to retry', error.response?.data?.message || error.message || 'Refresh this report to check whether processing started.');
+      } finally {
+        if (retryRequestRef.current === controller) retryRequestRef.current = null;
+        if (mountedRef.current && getAuthOperationEpoch() === epoch) setRetryingId(null);
+      }
+    },
+    [fetchItems]
+  );
+
   const handleDraftPreview = useCallback(
     async (item: PreviewItem) => {
       if (!item.draftId) return;
@@ -495,6 +566,13 @@ const PreviewsScreen = ({
         item.isDraftPreview &&
         (item.draftPreviewStatus === 'queued' || item.draftPreviewStatus === 'processing');
       const draftActionBusy = Boolean(item.draftId && draftActionId === item.draftId);
+      // A failed first preview: the server says no preview exists to open.
+      const canRetryFromPhotos =
+        !item.isDraftPreview &&
+        (item.type === 'Asset' || item.type === 'LotListing') &&
+        !isJobActive &&
+        item.status === 'error' &&
+        item.previewAvailable === false;
 
       return (
         <View style={[styles.card, { borderLeftColor: statusBadge.text }]}>
@@ -605,8 +683,17 @@ const PreviewsScreen = ({
           ) : item.workflowStage === 'error' || item.generationState === 'error' ? (
             <View style={styles.errorPanel}>
               <Feather name="alert-triangle" size={16} color={colors.danger} />
-              <Text style={styles.errorText} numberOfLines={3}>
+              <Text style={styles.errorText} numberOfLines={4}>
                 {item.jobError || 'Report processing failed. Open the report to review the issue.'}
+                {canRetryFromPhotos ? '\nNo editable preview is available. Retry checks the original uploaded photos before preparing a preview.' : ''}
+              </Text>
+            </View>
+          ) : item.draftSubmissionMessage ? (
+            // A draft kept after sending; its report stopped without a preview.
+            <View style={styles.errorPanel} testID="draft-submission-failed">
+              <Feather name="alert-triangle" size={16} color={colors.danger} />
+              <Text style={styles.errorText} numberOfLines={4}>
+                {`Sent; processing stopped: ${item.draftSubmissionMessage} Use Retry on the report under Pending, or open this draft to check it.`}
               </Text>
             </View>
           ) : null}
@@ -655,6 +742,24 @@ const PreviewsScreen = ({
             </View>
           ) : activeTab === 'pending' ? (
             <View style={styles.actionRow}>
+              {canRetryFromPhotos ? (
+                // No preview was ever made, so "Review & submit" had nothing to
+                // open. Retry re-runs the report from its uploaded photos.
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  activeOpacity={0.78}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Retry ${item.title} from its uploaded photos`}
+                  disabled={retryingId !== null}
+                  onPress={() => void handleRetryFromPhotos(item)}>
+                  {retryingId === item.id ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Feather name="refresh-cw" size={16} color="#FFFFFF" />
+                  )}
+                  <Text style={styles.primaryButtonText}>{retryingId === item.id ? 'Retrying' : 'Retry'}</Text>
+                </TouchableOpacity>
+              ) : (
               <TouchableOpacity
                 style={[styles.primaryButton, isDeclined && styles.declinedButton]}
                 activeOpacity={0.78}
@@ -662,6 +767,7 @@ const PreviewsScreen = ({
                 <Feather name={isDeclined ? 'rotate-ccw' : 'edit-3'} size={16} color="#FFFFFF" />
                 <Text style={styles.primaryButtonText}>{item.type === 'Salvage' ? 'Open report & progress' : isDeclined ? 'Edit & resubmit' : 'Review & submit'}</Text>
               </TouchableOpacity>
+              )}
               {item.type !== 'Salvage' && <TouchableOpacity
                 style={styles.iconDangerButton}
                 activeOpacity={0.75}
@@ -726,9 +832,11 @@ const PreviewsScreen = ({
       handleDelete,
       handleDraftPreview,
       handleQuickResubmit,
+      handleRetryFromPhotos,
       onOpenPreview,
       onOpenDrafts,
       draftActionId,
+      retryingId,
       styles,
     ]
   );

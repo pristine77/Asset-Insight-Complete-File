@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ verify: vi.fn(), retained: vi.fn(), asset: vi.fn(), lot: vi.fn(), sessions: vi.fn() }));
 vi.mock("../src/service/initialPreviewRetryService.js", () => ({ verifyRetainedPreviewRetrySources: mocks.retained }));
+vi.mock("../src/service/submittedReportDraftService.js", () => ({ settleSubmittedReportDraftsBestEffort: vi.fn(async () => undefined) }));
 vi.mock("../src/service/auctioneerInitialPreviewRetryService.js", () => ({ verifyInitialAuctioneerRetrySources: mocks.verify }));
 vi.mock("../src/jobs/assetReportJob/previewJob.js", () => ({ runAssetPreviewJob: mocks.asset }));
 vi.mock("../src/jobs/assetReportJob/previewFilesJob.js", () => ({ runPreviewFilesJob: vi.fn() }));

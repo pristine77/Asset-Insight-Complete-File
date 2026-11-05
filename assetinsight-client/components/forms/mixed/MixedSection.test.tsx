@@ -345,6 +345,27 @@ describe("Arrival Photos (photos only)", () => {
     expect(JSON.parse(screen.getByTestId("lot-metadata").textContent || "[]")[0].mode).toBe("single_lot");
   });
 
+  // Owner 2026-11-05: "Open folder option to select images already taken
+  // rather than camera". From folder sits beside Camera, same mode rule.
+  it("adds photos chosen from a folder beside the camera's, after a mode is chosen", async () => {
+    render(<Harness photosOnly allowVideo={false} />);
+    await waitFor(() => expect(screen.getByTestId("lot-count")).toHaveTextContent("1"));
+    const folder = screen.getByRole("button", { name: "From folder" });
+    expect(folder).toBeDisabled();
+    expect(screen.getByTestId("arrival-empty-choices")).toHaveTextContent("Choose from folder");
+    fireEvent.click(screen.getByRole("radio", { name: /Bundle/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "From folder" })).toBeEnabled());
+    const input = screen.getByLabelText("Choose arrival photos from a folder") as HTMLInputElement;
+    expect(input.accept).toBe("image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp");
+    expect(input.multiple).toBe(true);
+    const big = new File(["x"], "huge.jpg", { type: "image/jpeg" });
+    Object.defineProperty(big, "size", { value: 21 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [photo("yard-1.jpg", 1), photo("yard-2.jpg", 2), big,
+      new File(["x"], "scan.pdf", { type: "application/pdf" })] } });
+    await waitFor(() => expect(screen.getByText("2 photos added")).toBeInTheDocument());
+    expect(screen.queryByText("huge.jpg")).not.toBeInTheDocument();
+  });
+
   it("shows every photo taken, main and extra, with Remove only", async () => {
     render(
       <Harness
@@ -362,7 +383,7 @@ describe("Arrival Photos (photos only)", () => {
       />
     );
 
-    expect(screen.getByText("3 photos taken")).toBeInTheDocument();
+    expect(screen.getByText("3 photos added")).toBeInTheDocument();
     expect(screen.getAllByText("Photo")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: /as cover image/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Edit focus areas/ })).not.toBeInTheDocument();
@@ -370,7 +391,7 @@ describe("Arrival Photos (photos only)", () => {
     expect(screen.getByTestId("lot-count")).toHaveTextContent("1");
 
     fireEvent.click(screen.getByRole("button", { name: "Remove three.jpg" }));
-    await waitFor(() => expect(screen.getByText("2 photos taken")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("2 photos added")).toBeInTheDocument());
   });
 
   it("takes away the lot it made when Arrival Photos is turned off while it is empty", async () => {

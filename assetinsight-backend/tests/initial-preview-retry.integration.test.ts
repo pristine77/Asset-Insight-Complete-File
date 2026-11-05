@@ -72,6 +72,7 @@ describe.sequential("explicit retained initial preview recovery", () => {
     expect((await ReportJob.findById(f.oldJob._id).lean())?.payload).toEqual(f.payload);
     expect(job?.targetStatus).toBe("preview"); expect(job?.maxAttempts).toBe(1); expect(await f.Model.countDocuments()).toBe(1);
     expect(mocks.head).not.toHaveBeenCalled(); await verify(job as any, context()); expect(mocks.head).toHaveBeenCalledTimes(2);
+    expect((await UploadSession.findById(f.sessionId).lean())?.status).toBe("queued");
   });
   it("supports the known Lot defaults-only intake shell after the processing transition", async () => {
     const f = await seed("lotListing", { preview_data: { include_damage_analysis: true, bank_photos_enabled: false, valuation_methods: ["FML"], lots: [] } });
@@ -103,6 +104,13 @@ describe.sequential("explicit retained initial preview recovery", () => {
     expect((await ReportJob.findById(job!._id).lean())?.status).toBe("failed");
     expect((await ReportJob.findById(job!._id).lean())?.attempts).toBe(1);
     await expect(retry(input)).rejects.toMatchObject({ statusCode: 409 }); expect(await ReportJob.countDocuments()).toBe(2);
+  });
+  it("keeps the three-retry limit on the protected capability path", async () => {
+    const f = await seed("asset", { report_recovery_history: Array.from({ length: 3 }, () => ({ mode: "retained_initial_preview_retry" })) });
+    expect(await state(f.input)).toMatchObject({ initialPreviewRetryEligible: false,
+      initialPreviewRetryIneligibleReason: expect.stringContaining("three times") });
+    await expect(retry({ ...f.input, baseRevision: "a".repeat(64) })).rejects.toMatchObject({ statusCode: 409 });
+    expect(await ReportJob.countDocuments()).toBe(1);
   });
   it.each([
     { preview_data: { lots: [{ title: "Reviewed" }] } }, { preview_data: {} }, { preview_submitted_at: new Date() },
@@ -182,6 +190,65 @@ describe.sequential("explicit retained initial preview recovery", () => {
 });
 
 describe.sequential("worker source checks precede any initial analysis", () => {
+  it.each(["asset", "lotListing"] as const)("pins the verified %s session before HEAD so cleanup cannot claim even an old source", async kind => {
+    const f = await seed(kind); await retry(await prepare(f));
+    const stale = new Date(Date.now() - 8 * 24 * 60 * 60_000);
+    await UploadSession.collection.updateOne({ _id: f.sessionId }, { $set: { status: "failed", updatedAt: stale } });
+    mocks.head.mockImplementation(async () => {
+      expect((await UploadSession.findById(f.sessionId).lean())?.status).toBe("queued");
+      // Even if the timestamp is old, the maintenance worker's allowed-status
+      // filter must not claim a source pinned by the preview worker.
+      await UploadSession.collection.updateOne({ _id: f.sessionId }, { $set: { updatedAt: stale } });
+      const cleanup = await UploadSession.findOneAndUpdate({ _id: f.sessionId,
+        status: { $in: ["created", "uploading", "completed", "failed"] },
+        updatedAt: { $lt: new Date(Date.now() - 7 * 24 * 60 * 60_000) }, cleanupStartedAt: { $exists: false } },
+        { $set: { cleanupStartedAt: new Date() } });
+      expect(cleanup).toBeNull();
+      return { size: 100 };
+    });
+    await verify(await queued(f) as any, context());
+    expect(mocks.head).toHaveBeenCalledTimes(2);
+    const session = await UploadSession.findById(f.sessionId).lean();
+    expect(session?.status).toBe("queued"); expect(session?.cleanupStartedAt).toBeUndefined();
+  });
+  it.each(["cleanup", "superseded", "owner"])("refuses a %s claim racing the worker pin before any HEAD", async changed => {
+    const f = await seed(); await retry(await prepare(f));
+    await UploadSession.collection.updateOne({ _id: f.sessionId }, { $set: { status: "failed" } });
+    const original = UploadSession.updateOne.bind(UploadSession);
+    const spy = vi.spyOn(UploadSession, "updateOne").mockImplementationOnce((...args: any[]) => {
+      const query = original(...args);
+      const exec = query.exec.bind(query);
+      query.exec = async () => {
+        const change = changed === "cleanup" ? { cleanupStartedAt: new Date() } :
+          changed === "superseded" ? { supersededAt: new Date() } : { user: new mongoose.Types.ObjectId() };
+        await UploadSession.collection.updateOne({ _id: f.sessionId }, { $set: change });
+        return exec();
+      };
+      return query;
+    });
+    try { await expect(verify(await queued(f) as any, context())).rejects.toMatchObject({ statusCode: 409 }); }
+    finally { spy.mockRestore(); }
+    expect(mocks.head).not.toHaveBeenCalled();
+    expect((await UploadSession.findById(f.sessionId).lean())?.status).toBe("failed");
+    expect((await read(f)).preview_data).toBeNull();
+  });
+  it("rechecks the original manifest after pinning before any HEAD", async () => {
+    const f = await seed(); await retry(await prepare(f));
+    const original = UploadSession.updateOne.bind(UploadSession);
+    const spy = vi.spyOn(UploadSession, "updateOne").mockImplementationOnce((...args: any[]) => {
+      const query = original(...args);
+      const exec = query.exec.bind(query);
+      query.exec = async () => {
+        const result = await exec();
+        await UploadSession.collection.updateOne({ _id: f.sessionId }, { $set: { "files.0.captureOrder": 999 } });
+        return result;
+      };
+      return query;
+    });
+    try { await expect(verify(await queued(f) as any, context())).rejects.toMatchObject({ statusCode: 409 }); }
+    finally { spy.mockRestore(); }
+    expect(mocks.head).not.toHaveBeenCalled();
+  });
   it.each(["report", "report-details", "session-details"])("blocks Auctionsoft %s added after acceptance before any HEAD and rejects replay", async location => {
     const f = await seed("lotListing"), input = await prepare(f); await retry(input);
     const job = await queued(f), binding = { taskId: "incoming-task" };

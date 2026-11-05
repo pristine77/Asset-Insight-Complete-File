@@ -23,6 +23,7 @@ import {
   MoreHorizontal,
   RotateCcw,
   Video,
+  FolderOpen,
 } from "lucide-react";
 import {
   Button,
@@ -48,6 +49,16 @@ const ImageAnnotator = dynamic(() => import("./ImageAnnotator"), {
 });
 
 const IMAGE_UPLOAD_ACCEPT = "image/*,.heic,.heif,image/heic,image/heif";
+/*
+  Arrival photos chosen from a folder (owner, 2026-11-05). JPEG, PNG and WebP
+  only: they are watermarked and shown in Auctioneer as they are, and leaving
+  HEIC out makes an iPhone hand over a JPEG copy. 20 MB matches the server's
+  per-photo limit (AUCTIONEER2_PHOTO_MAX_FILE_BYTES).
+*/
+const ARRIVAL_FOLDER_ACCEPT = "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp";
+const ARRIVAL_PHOTO_MAX_BYTES = 20 * 1024 * 1024;
+const isArrivalFolderImage = (file: File) =>
+  /^image\/(jpeg|png|webp)$/i.test(file.type) || (!file.type && /\.(jpe?g|png|webp)$/i.test(file.name));
 const MODE_OPTIONS: Array<{
   value: MixedMode;
   label: string;
@@ -241,6 +252,7 @@ export default function MixedSection({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraFileInputRef = useRef<HTMLInputElement>(null);
+  const arrivalFolderInputRef = useRef<HTMLInputElement>(null);
   const videoUploadInputRef = useRef<HTMLInputElement>(null);
   // Video recording state
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -729,6 +741,31 @@ export default function MixedSection({
     const incoming = Array.from(files);
     addFilesToLot(activeIdx, incoming);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  /*
+    Arrival Photos from a folder: photos already taken, added beside the
+    camera's (owner, 2026-11-05: "Open folder option to select images already
+    taken rather than camera"). Same rule as the camera: a mode first. Files
+    the server would refuse are left out here, with a note, rather than at Send.
+  */
+  function onArrivalFolderPick(files: FileList | null) {
+    const input = arrivalFolderInputRef.current;
+    const picked = Array.from(files ?? []);
+    if (input) input.value = "";
+    if (!picked.length) return;
+    if (activeIdx < 0 || !lotsRef.current[activeIdx]?.mode) {
+      toast.warn("Select a mode before adding photos.");
+      return;
+    }
+    const usable = picked.filter((file) => isArrivalFolderImage(file) && file.size > 0 && file.size <= ARRIVAL_PHOTO_MAX_BYTES);
+    const skipped = picked.length - usable.length;
+    if (skipped) {
+      toast.warn(
+        `${skipped} ${skipped === 1 ? "file was" : "files were"} left out: arrival photos must be JPEG, PNG or WebP images up to 20 MB.`
+      );
+    }
+    if (usable.length) addFilesToLotWithMode(activeIdx, usable);
   }
 
   // Manual upload for Extra images (report-only)
@@ -1820,7 +1857,7 @@ export default function MixedSection({
           {photosOnly ? "Capture mode" : "Analysis mode"} <span className="text-[var(--app-accent)]" aria-hidden="true">*</span>
         </legend>
         <p className="mt-1 text-xs leading-5 text-[var(--app-text-muted)]">
-          {photosOnly ? "Choose a capture mode, then open the camera." : "Choose how the main photos in this lot should be interpreted."}
+          {photosOnly ? "Choose a capture mode, then take photos or choose them from a folder." : "Choose how the main photos in this lot should be interpreted."}
         </p>
         <div role="radiogroup" className="mt-3 grid gap-2 @min-[560px]:grid-cols-3">
           {MODE_OPTIONS.map((option) => {
@@ -1874,36 +1911,63 @@ export default function MixedSection({
   ) : null;
 
   /*
-    Arrival Photos' whole section: the three mode options, a Camera button and
-    the photos taken. No lots, no New lot, no file upload, no cover or focus
-    areas. Every photo, whichever capture button took it, is copied to the
-    lot's Office Only section in Auctioneer with the watermark.
+    Arrival Photos' whole section: the three mode options, Camera and From
+    folder buttons, and the photos added. No lots, no New lot, no cover or
+    focus areas. Every photo, taken now or chosen from a folder (owner,
+    2026-11-05), is copied to the lot's Office Only section in Auctioneer with
+    the watermark.
   */
   const arrivalTaken = [
     ...(activeLot?.files ?? []).map((file, index) => ({ file, remove: () => removeImage(activeIdx, index) })),
     ...(activeLot?.extraFiles ?? []).map((file, index) => ({ file, remove: () => removeExtraImage(activeIdx, index) })),
   ];
+  const openArrivalFolder = () => arrivalFolderInputRef.current?.click();
+  const arrivalPrimaryButton =
+    "inline-flex min-h-11 flex-1 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[var(--app-accent)] px-3 py-2.5 @min-[560px]:px-5 text-sm font-semibold text-[var(--app-on-accent)] transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 @min-[560px]:flex-none";
+  const arrivalSecondaryButton =
+    "inline-flex min-h-11 flex-1 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-violet-300 bg-[var(--app-panel)] px-3 py-2.5 @min-[560px]:px-5 text-sm font-semibold text-[var(--app-text)] transition hover:border-violet-500 hover:bg-violet-50 hover:text-violet-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 @min-[560px]:flex-none";
   const arrivalPanel = (
     <div className="space-y-4" data-testid="arrival-camera-panel">
       {modeChoice}
+      <input
+        ref={arrivalFolderInputRef}
+        type="file"
+        accept={ARRIVAL_FOLDER_ACCEPT}
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Choose arrival photos from a folder"
+        onChange={(event) => onArrivalFolderPick(event.target.files)}
+      />
       <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-violet-300 bg-violet-50 px-4 py-3 @min-[560px]:flex-row @min-[560px]:items-center @min-[560px]:justify-between">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-violet-950">
-            {arrivalTaken.length} {arrivalTaken.length === 1 ? "photo" : "photos"} taken
+            {arrivalTaken.length} {arrivalTaken.length === 1 ? "photo" : "photos"} added
           </p>
           <p className="mt-0.5 text-xs leading-5 text-violet-900">
             Copied to the lot&apos;s Office Only section in Auctioneer with the watermark. Nothing is analysed.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCamera}
-          disabled={!activeLotHasMode}
-          title={activeLotHasMode ? undefined : "Select a mode first"}
-          className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--app-accent)] px-5 py-2.5 text-sm font-semibold text-[var(--app-on-accent)] transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 @min-[560px]:w-auto"
-        >
-          <Camera className="h-4 w-4" aria-hidden="true" /> Camera
-        </button>
+        <div className="flex w-full shrink-0 gap-2 @min-[560px]:w-auto">
+          <button
+            type="button"
+            onClick={openArrivalFolder}
+            disabled={!activeLotHasMode}
+            title={activeLotHasMode ? "Choose photos already taken from this device" : "Select a mode first"}
+            className={arrivalSecondaryButton}
+          >
+            <FolderOpen className="h-4 w-4" aria-hidden="true" /> From folder
+          </button>
+          <button
+            type="button"
+            onClick={openCamera}
+            disabled={!activeLotHasMode}
+            title={activeLotHasMode ? undefined : "Select a mode first"}
+            className={arrivalPrimaryButton}
+          >
+            <Camera className="h-4 w-4" aria-hidden="true" /> Camera
+          </button>
+        </div>
       </div>
       {arrivalTaken.length ? (
         <div className="grid grid-cols-2 gap-3 @min-[520px]:grid-cols-3 @min-[900px]:grid-cols-4">
@@ -1912,18 +1976,27 @@ export default function MixedSection({
           ))}
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={openCamera}
-          disabled={!activeLotHasMode}
-          className="flex min-h-40 w-full flex-col items-center justify-center rounded-xl border border-dashed border-violet-300 bg-[var(--app-panel-alt)] px-4 text-center text-[var(--app-text-muted)] transition hover:border-violet-500 disabled:cursor-not-allowed disabled:opacity-55"
-        >
-          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
-            <Camera className="h-5 w-5" aria-hidden="true" />
-          </span>
-          <span className="text-sm font-semibold text-[var(--app-text)]">Open the camera</span>
-          <span className="mt-1 text-xs">Choose a mode above, then take the arrival photos. Each one appears here.</span>
-        </button>
+        // Two ways in, side by side: take them now, or pick ones already taken.
+        <div className="grid min-h-40 grid-cols-1 gap-3 @min-[520px]:grid-cols-2" data-testid="arrival-empty-choices">
+          {[
+            { key: "camera", onClick: openCamera, Icon: Camera, title: "Take photos", hint: "Open the camera and take the arrival photos now." },
+            { key: "folder", onClick: openArrivalFolder, Icon: FolderOpen, title: "Choose from folder", hint: "Pick photos already taken. JPEG, PNG or WebP, up to 20 MB each." },
+          ].map(({ key, onClick, Icon, title, hint }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={onClick}
+              disabled={!activeLotHasMode}
+              className="flex min-h-36 w-full flex-col items-center justify-center rounded-xl border border-dashed border-violet-300 bg-[var(--app-panel-alt)] px-4 py-5 text-center text-[var(--app-text-muted)] transition hover:border-violet-500 hover:bg-violet-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                <Icon className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <span className="text-sm font-semibold text-[var(--app-text)]">{title}</span>
+              <span className="mt-1 max-w-[16rem] text-xs leading-5">{activeLotHasMode ? hint : "Choose a mode above first."}</span>
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import LotListing from "../models/lotListing.model.js";
 import ReportJob, { type IReportJob } from "../models/reportJob.model.js";
 import ReportUploadSession from "../models/reportUploadSession.model.js";
 import User from "../models/user.model.js";
+import { settleSubmittedReportDraftsBestEffort } from "./submittedReportDraftService.js";
 import { getCanonicalLotListingPreview } from "../utils/reportPreviewAvailability.js";
 import { buildReportJobOutbox, ensureReportJobOutbox, shouldUseMongoReportQueue, type ReportJobExecutionContext } from "../utils/reportJobMongoQueue.js";
 import { initialPreviewRetrySnapshotFilter, retainedInitialPreviewSources, verifyRetainedInitialPreviewObjects } from "./auctioneerInitialPreviewRetryService.js";
@@ -45,7 +46,7 @@ async function assertActor(access: Access) {
 async function load(input: Input) {
   await assertActor(input);
   const report = await model(input.reportType).findOne({ _id: input.reportId, ...(input.scope === "owner" ? { user: input.actorId } : {}) })
-    .select("+report_job_outbox +report_recovery +job_execution_token").lean();
+    .select("+report_job_outbox +report_recovery +report_recovery_history +job_execution_token").lean();
   if (!report) throw fail("Report not found.", 404);
   return report;
 }
@@ -57,6 +58,9 @@ function problem(kind: Kind, report: any): string | null {
   if (report.status !== "error" || report.job_status !== "error" || !report.job_id || report.job_execution_token || report.report_job_outbox ||
     report.files_generating || report.files_regenerating || report.files_regeneration_pending || report.excel_regenerating) return "This report is already processing or is not a failed initial preview.";
   if (report.report_recovery?.manualReviewRequired) return "Support must review this report before it can be retried.";
+  if ((report.report_recovery_history || []).filter((entry: any) => [MODE, "owner_failed_preview_retry"].includes(entry?.mode)).length >= 3) {
+    return "This report has already been retried three times. Keep the report and contact support to check its photos and lot numbers.";
+  }
   if (!shouldUseMongoReportQueue()) return "Preview recovery is temporarily unavailable.";
   return null;
 }
@@ -140,6 +144,7 @@ async function accepted(kind: Kind, report: any) {
     try { await ensureReportJobOutbox(kind, String(report._id), String(report.report_job_outbox.token)); }
     catch { console.warn("[InitialPreviewRetry] Durable preview handoff awaits dispatch", { reportId: String(report._id), kind }); }
   }
+  await settleSubmittedReportDraftsBestEffort({ reportId: report._id, reportType: kind, userId: owner(report) });
   return { message: "The same report is queued to verify its original photos and prepare a preview. Review it before submitting.", data: {
     reportId: String(report._id), reportType: kind, job_id: report.job_id, job_status: report.job_status,
     retry_stage: "initial_preview", preview_available: report.job_status === "done" && preview(kind, report) != null,
@@ -208,5 +213,16 @@ export async function verifyRetainedPreviewRetrySources(job: IReportJob, context
     const session = await ReportUploadSession.findOne({ _id: proof.sessionId, type: kind, user: proof.ownerId, reportId: job.reportId }).lean();
     if (verifySession(session, retainedInitialPreviewSources(job.payload)) !== proof.sessionHash) throw sourceError();
   };
+  await assertOwned();
+  // Cleanup atomically claims only unqueued sessions. Pin this exact verified
+  // source before storage reads so an older failed upload cannot expire during
+  // analysis. If cleanup won the race, fail before any photo or AI request.
+  const pinned = await ReportUploadSession.updateOne({ _id: proof.sessionId, type: kind, user: proof.ownerId,
+    reportId: job.reportId, status: { $in: ["failed", "completed", "queued", "processed"] },
+    cleanupStartedAt: null, supersededAt: null }, { $set: { status: "queued" } });
+  if (pinned.matchedCount !== 1) throw sourceError();
+  // Source hashes exclude only mutable processing metadata. Recheck ownership
+  // and the entire manifest after the pin and throughout bounded HEAD reads.
+  await assertOwned();
   await verifyRetainedInitialPreviewObjects(job.payload, assertOwned);
 }

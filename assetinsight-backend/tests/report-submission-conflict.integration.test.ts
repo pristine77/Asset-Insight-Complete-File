@@ -1139,6 +1139,9 @@ describe("active report submission conflicts", () => {
       alreadyQueued: true,
       jobId: secondReplacementId,
     });
+    // Owner 2026-11-05: acceptance no longer deletes the drafts. They are
+    // kept, marked with the report they were sent as, until its preview is
+    // ready (submittedReportDraftService).
     await vi.waitFor(async () => {
       expect(
         await ReportDraft.countDocuments({
@@ -1146,8 +1149,10 @@ describe("active report submission conflicts", () => {
           clientDraftId: {
             $in: [oldId, replacementId, secondReplacementId],
           },
+          submittedReportId: secondReplacementReport._id,
+          submissionStatus: "processing",
         }),
-      ).toBe(0);
+      ).toBe(3);
     });
 
     // The accepted queued session correctly owns this contract. Finish that

@@ -22,6 +22,12 @@ import {
   toReportDraftClient,
 } from "../service/reportDraftService.js";
 import {
+  keepDraftOfAcceptedUpload,
+  SUBMITTED_DRAFT_MARKERS_CLEARED,
+  visibleReportDrafts,
+  submittedDraftSnapshotFilter,
+} from "../service/submittedReportDraftService.js";
+import {
   confirmDraftMedia,
   createDraftMediaTargets,
   deleteDraftMediaObjects,
@@ -209,7 +215,12 @@ export const listReportDrafts = async (req: AuthRequest, res: Response) => {
       ...recoverableUnpromotedDraftFilter(),
     };
     if (["asset", "lotListing"].includes(type)) filter.type = type;
-    const drafts = await ReportDraft.find(filter).sort({ updatedAt: -1 }).select("-__v");
+    // A draft kept after its upload was accepted is hidden while its report
+    // is processing, and shown again with a note if processing stopped.
+    const drafts = await visibleReportDrafts(
+      await ReportDraft.find(filter).sort({ updatedAt: -1 }).select("-__v"),
+      (ids) => ReportDraft.find({ ...filter, _id: { $in: ids } }).select("-__v"),
+    );
     res.status(200).json({
       message: "Drafts fetched successfully",
       data: await serializeDrafts(drafts),
@@ -390,6 +401,9 @@ export const upsertReportDraft = async (req: AuthRequest, res: Response) => {
           reviewReminderClaimedAt: null,
           reviewReminderError: "",
           reviewReminderRecipientIds: [],
+          // A save after the upload was accepted is new work: the draft is no
+          // longer tied to the sent report and is never deleted by it.
+          ...SUBMITTED_DRAFT_MARKERS_CLEARED,
         },
         $setOnInsert: { user: req.userId as any, type, clientDraftId },
       };
@@ -1130,15 +1144,39 @@ export const streamReportDraftMedia = async (req: AuthRequest, res: Response) =>
   }
 };
 
+/**
+ * Deletes one draft, except a draft whose upload was accepted and is still
+ * being processed: that is kept (200 with retained: true) until the preview is
+ * ready, so a processing failure never loses the only copy (owner, 2026-11-05).
+ */
+async function deleteDraftUnlessSent(identity: Record<string, unknown>) {
+  const existing = await ReportDraft.findOne({ ...identity, promotedAt: null, promotionToken: null })
+    .select("_id user type clientDraftId formData.clientSubmissionId revision mediaRevision contentHash updatedAt submittedReportId submissionStatus").lean();
+  if (!existing) return { draft: null, retained: false };
+  if (await keepDraftOfAcceptedUpload(existing)) return { draft: null, retained: true };
+  const draft = await ReportDraft.findOneAndDelete({
+    ...submittedDraftSnapshotFilter(existing),
+    promotedAt: null,
+    promotionToken: null,
+    $and: [{ submissionStatus: { $ne: "processing" } }],
+  });
+  const changed = !draft && await ReportDraft.exists(identity);
+  return { draft, retained: Boolean(changed) };
+}
+
+const RETAINED_DRAFT_BODY = {
+  message: "This draft is kept until its report's preview is ready.",
+  retained: true,
+};
+
 export const deleteReportDraft = async (req: AuthRequest, res: Response) => {
   try {
     setNoStore(res);
-    const draft = await ReportDraft.findOneAndDelete({
+    const { draft, retained } = await deleteDraftUnlessSent({
       _id: req.params.id,
       user: req.userId as any,
-      promotedAt: null,
-      promotionToken: null,
     });
+    if (retained) return res.status(200).json(RETAINED_DRAFT_BODY);
     if (!draft) return res.status(404).json({ message: "Draft not found" });
     await deleteHiddenDraftPreview(draft._id, req.userId);
     await deleteDraftMediaObjects(draft.media || []);
@@ -1152,13 +1190,12 @@ export const deleteReportDraftByClientId = async (req: AuthRequest, res: Respons
   try {
     setNoStore(res);
     const type = String(req.query.type || "");
-    const draft = await ReportDraft.findOneAndDelete({
+    const { draft, retained } = await deleteDraftUnlessSent({
       user: req.userId as any,
       clientDraftId: normalizeDraftClientId(req.params.clientDraftId),
-      promotedAt: null,
-      promotionToken: null,
       ...(["asset", "lotListing"].includes(type) ? { type } : {}),
     });
+    if (retained) return res.status(200).json(RETAINED_DRAFT_BODY);
     if (!draft) return res.status(404).json({ message: "Draft not found" });
     await deleteHiddenDraftPreview(draft._id, req.userId);
     await deleteDraftMediaObjects(draft.media || []);

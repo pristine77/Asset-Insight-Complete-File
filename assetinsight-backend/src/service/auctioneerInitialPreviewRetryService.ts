@@ -161,6 +161,8 @@ export async function retryInitialAuctioneerPreview(input: { reportType: Kind; r
 
 /** Worker-only validation: all retained objects are checked before any paid analysis. */
 export async function verifyInitialAuctioneerRetrySources(job: IReportJob, context: ReportJobExecutionContext) {
+  // Superseded unversioned retries never bypass the accepted-session proof.
+  if (job.payload?.failedPreviewRetry && !job.payload?.retainedPreviewRetry) throw sourceUnavailable();
   if (!job.payload?.eventIdentityRetry) return;
   const assertParent = async () => {
     await context.assertOwned();
