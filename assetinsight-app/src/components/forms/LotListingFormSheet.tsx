@@ -1904,37 +1904,12 @@ const LotListingFormSheet = ({
                     <View style={styles.switchKnob} />
                   </View>
                 </TouchableOpacity>
-                {arrivalPhotosOffered ? (
-                  <TouchableOpacity
-                    testID="arrival-photos-switch"
-                    style={[styles.bankToggleRow, arrivalPhotos && styles.arrivalToggleRowActive]}
-                    activeOpacity={0.8}
-                    accessibilityRole="switch"
-                    accessibilityLabel="Arrival Photos: send the photos to Auctioneer's Office Only section, not processed"
-                    accessibilityState={{ checked: arrivalPhotos, disabled: submitting }}
-                    disabled={submitting}
-                    onPress={() => {
-                      if (currentDraftId || draftIdToLoad || draftSavePromiseRef.current || saveLock.current || lots.some(lot => lot.files.length || lot.extraFiles.length || lot.videoFile)) {
-                        Alert.alert('Start a new capture', 'This capture already contains saved work. Close it to keep the photos, then open a new Lot Listing to choose Arrival Photos.');
-                        return;
-                      }
-                      if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
-                      const next = !arrivalPhotos;
-                      setArrivalPhotos(next);
-                      arrivalPhotosRef.current = next;
-                      if (!next) setArrivalRequestId('');
-                    }}>
-                    <View style={{ flex: 1, paddingRight: 12 }}>
-                      <Text style={styles.fieldLabelSmall}>Arrival Photos</Text>
-                      <Text style={styles.bankToggleHelp}>
-                        {"Watermarked and sent to the lot's Office Only in Auctioneer. Not processed."}
-                      </Text>
-                    </View>
-                    <View style={[styles.bankCheckbox, arrivalPhotos && styles.bankCheckboxActive]}>
-                      <View style={styles.switchKnob} />
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
+                {/* No Arrival Photos switch here (owner, 2026-11-04: "Remove
+                    the Arrival Photo section here as there is Arrival photo
+                    Function in the incoming Tab"). Arrival Photos opens only
+                    from Incoming → Arrival Photos (the arrivalRequest prop), or
+                    from a draft saved in that mode; the lot choice below then
+                    shows as before. */}
                 {arrivalPhotosOffered && arrivalPhotos ? (
                   <View testID="arrival-photo-request-picker" style={styles.arrivalPicker}>
                     <Text style={styles.fieldLabelSmall}>Which lot? *</Text>
@@ -2471,10 +2446,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#fff',
   },
-  // Arrival Photos (owner, 2026-11-03): the switch row and its lot choice.
-  arrivalToggleRowActive: {
-    backgroundColor: '#F5F3FF',
-  },
+  // Arrival Photos (owner, 2026-11-03): the lot choice (its switch row was
+  // removed 2026-11-04; Incoming opens Arrival Photos).
   arrivalPicker: {
     gap: 8,
     paddingHorizontal: 12,

@@ -620,13 +620,15 @@ describe('Arrival Photos Submit', () => {
     expect(lotListingService.createLotListing).not.toHaveBeenCalled();
   });
 
-  it('refuses to repurpose an existing ordinary draft or its photos', async () => {
+  // Owner, 2026-11-04: "Remove the Arrival Photo section here as there is
+  // Arrival photo Function in the incoming Tab". An ordinary Lot Listing offers
+  // no way into Arrival Photos, so an ordinary draft cannot be repurposed.
+  it('offers no Arrival Photos switch on an ordinary Lot Listing', async () => {
     jest.mocked(AutoSaveService.getDraft).mockResolvedValue(ordinaryDraft('lotListing') as any);
     await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
-    await fireEvent.press(screen.getByTestId('arrival-photos-switch'));
-    expect(Alert.alert).toHaveBeenCalledWith('Start a new capture', expect.any(String));
-    expect(screen.getByTestId('arrival-photos-switch').props.accessibilityState.checked).toBe(false);
+    expect(screen.queryByTestId('arrival-photos-switch')).toBeNull();
+    expect(screen.queryByTestId('arrival-photo-request-picker')).toBeNull();
     expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
     expect(auctioneerService.sendArrivalPhotos).not.toHaveBeenCalled();
   });
@@ -639,7 +641,8 @@ describe('Arrival Photos Submit', () => {
     jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
     await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
-    expect(screen.getByTestId('arrival-photos-switch').props.accessibilityState.checked).toBe(true);
+    // Restored in Arrival Photos: the lot choice shows, with no switch.
+    expect(screen.getByTestId('arrival-photo-request-picker')).toBeTruthy();
     await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
     await waitFor(() => expect(AutoSaveService.saveDraft).toHaveBeenCalled());
