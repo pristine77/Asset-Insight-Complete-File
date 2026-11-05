@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { initialPreviewRetryController } from "../controller/initialPreviewRetry.controller.js";
 import { 
   createAssetReport, 
   uploadMiddleware, 
@@ -49,6 +50,8 @@ import {
 } from "../controller/assetProposalValuation.controller.js";
 
 const router = Router();
+router.get("/:id/retry-preview", protect, initialPreviewRetryController("asset", "read"));
+router.post("/:id/retry-preview", protect, initialPreviewRetryController("asset", "retry"));
 
 // Asset report creation and listing
 router.post("/upload-session", protect, createUploadSession("asset"));

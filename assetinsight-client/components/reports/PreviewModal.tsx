@@ -1095,19 +1095,6 @@ export default function PreviewModal({
         .map(([key]) => key)
     );
   }, [lotsArray]);
-  /*
-    Lots whose number was used by another lot when the report was made, and so
-    were renumbered (owner, 2026-11-04, "1 and 2"; the server's
-    renumberRepeatedLotNumbers marks them lot_number_dropped "repeated"). Named
-    at the top so the appraiser checks them before submitting.
-  */
-  const renumberedLots = React.useMemo(
-    () =>
-      lotsArray
-        .map((lot, index) => ({ lot, index }))
-        .filter(({ lot }) => lot?.analysis_metadata?.lot_number_dropped?.reason === "repeated"),
-    [lotsArray]
-  );
   const isDuplicateLotNumber = (lot: any, index: number) =>
     duplicateLotNumberKeys.has(
       String(lot?.lot_number ?? getLotDisplayNumber(lot, index)).trim().toLowerCase()
@@ -1567,6 +1554,12 @@ export default function PreviewModal({
         </div>
       )}
 
+      {!previewData?.is_merged_report && duplicateLotNumberKeys.size > 0 && (
+        <div role="alert" className="app-alert app-alert--warning mb-4">
+          Duplicate lot numbers {Array.from(duplicateLotNumberKeys).join(", ")} must be corrected before report files can be generated. Edit the affected lot numbers, then Save.
+        </div>
+      )}
+
       {workflowLocked && (
         <div className="mb-4 flex items-start gap-3 rounded-lg border border-[var(--app-info-border)] bg-[var(--app-info-soft)] p-4">
           <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-[var(--app-info)]" />
@@ -1610,40 +1603,6 @@ export default function PreviewModal({
           </div>
         </div>
       )}
-
-      {/*
-        Lot numbers to check (owner, 2026-11-04): the lots renumbered because
-        their number was already used, and, on any report, a number now used
-        twice. The server refuses to save a repeat ("Lot numbers must be
-        unique"), keeping the preview, so this says what to change first.
-        Merged reports say the latter in their own panel above.
-      */}
-      {renumberedLots.length > 0 || (duplicateLotNumberKeys.size > 0 && !previewData?.is_merged_report) ? (
-        <div
-          className="mb-4 border border-[var(--app-warning-border)] bg-[var(--app-warning-soft)] p-4"
-          role="note"
-          data-testid="lot-number-notice"
-        >
-          {renumberedLots.length > 0 ? (
-            <>
-              <p className="font-semibold text-[var(--app-text-strong)]">
-                {renumberedLots.length === 1 ? "1 lot was renumbered" : `${renumberedLots.length} lots were renumbered`}
-              </p>
-              <p className="mt-1 text-sm text-[var(--app-warning)]">
-                {renumberedLots
-                  .map(({ lot, index }) => `Lot ${String(lot.lot_number ?? getLotDisplayNumber(lot, index))} (was ${lot.analysis_metadata.lot_number_dropped.value})`)
-                  .join(", ")}
-                : another lot already had that number. Check the numbers before submitting.
-              </p>
-            </>
-          ) : null}
-          {duplicateLotNumberKeys.size > 0 && !previewData?.is_merged_report ? (
-            <p className={`text-sm text-[var(--app-warning)] ${renumberedLots.length > 0 ? "mt-2" : ""}`}>
-              Lot number {Array.from(duplicateLotNumberKeys).join(", ")} is used twice. Change it before this report can be submitted.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
 
       {specPdfUrl && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3 shadow-sm">

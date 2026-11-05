@@ -1,4 +1,4 @@
-import { readCaptureLotIdentity, applyCaptureLotIdentities, renumberRepeatedLotNumbers } from "../service/captureLotIdentity.js";
+import { readCaptureLotIdentity, applyCaptureLotIdentities, resolveInitialAutomaticLotNumbers, findDuplicateInitialLotNumbers } from "../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import {
   getR2PublicUrl,
@@ -1161,8 +1161,8 @@ export async function runAssetReportJob({
       }
     }
 
-    // A repeated number is renumbered, never a stopped report (owner, 2026-11-04).
-    lots = renumberRepeatedLotNumbers(applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(lots), details?.mixed_lots));
+    lots = applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(lots), details?.mixed_lots);
+    lots = resolveInitialAutomaticLotNumbers(lots);
 
     // Rename images based on lot titles (e.g., "2014 Dodge Ram (1).jpg")
     if (Array.isArray(lots) && lots.length > 0 && imageUrls.length > 0) {
@@ -1402,6 +1402,14 @@ export async function runAssetReportJob({
       damage_analysis: buildReportDamageAnalysis(lots, includeDamageAnalysis),
     });
 
+    const needsLotNumberReview = findDuplicateInitialLotNumbers(lots).length > 0;
+    if (needsLotNumberReview) {
+      newReport.set({
+        status: "preview", job_status: "done", processing_completed_at: new Date(),
+        preview_data: { ...details, lots, videoUrls, currency: selectedCurrency,
+          language: selectedLanguage, valuation_methods: valuationMethods, valuation_data: valuationData },
+      });
+    }
     await withStep("save_report", "Persisting report to database", async () => {
       await newReport.save();
       console.log("[AssetReportJob] Report saved with valuation data:", {
@@ -1410,6 +1418,11 @@ export async function runAssetReportJob({
         hasValuationData: !!newReport.valuation_data,
       });
     });
+
+    if (needsLotNumberReview) {
+      if (progressId) endProgress(progressId, true, "Preview saved. Review duplicate lot numbers before generating files.");
+      return;
+    }
 
     const reportObject = newReport.toObject();
     console.log("[AssetReportJob] Report object for generation:", {

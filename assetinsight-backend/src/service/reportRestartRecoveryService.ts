@@ -53,12 +53,14 @@ function savedPreview(kind: Kind, report: any): any {
 }
 
 function previewProblem(kind: Kind, report: any): string | null {
-  if (!hasSavedReportPreview(kind, report)) return "No complete saved preview is available. Reopen the saved draft and finish the upload.";
+  if (!hasSavedReportPreview(kind, report)) return "No editable preview is available. Check preview recovery or contact support; keep this report.";
   const preview = savedPreview(kind, report);
   // Photo-only intake shells are not completed analysis. Do not invent report text.
   if (!preview.lots.every((lot: any) => [lot.title, lot.description].some((value) => typeof value === "string" && value.trim()))) {
-    return "Some lots contain photos but no saved report details. Reopen the draft and complete those lots.";
+    return "Some lots contain photos but no saved report details. Check preview recovery or contact support; keep this report.";
   }
+  const lotNumberProblem = normalizePreviewLotNumbers(preview, preview).message;
+  if (lotNumberProblem) return `${lotNumberProblem}. Open the preview and correct the duplicate numbers before generating files.`;
   return null;
 }
 

@@ -2452,7 +2452,7 @@ export const resubmitLotListing = async (req: AuthRequest, res: Response) => {
     // Allow resubmit from: preview, declined, pending_approval, approved, error
     const allowedStatuses = ["preview", "declined", "pending_approval", "approved", "error"];
     if (listing.status === "error" && !hasRecoverableFailedPreview("lotListing", listing)) {
-      return res.status(400).json({ message: "No saved preview is available. Reopen the saved draft to finish processing." });
+      return res.status(400).json({ message: "No editable preview is available. Check preview recovery or contact support; keep this report." });
     }
     if (!allowedStatuses.includes(listing.status)) {
       return res.status(400).json({ 

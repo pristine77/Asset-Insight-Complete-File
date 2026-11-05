@@ -8,6 +8,7 @@ import { deserializeMulterFiles } from "../../utils/multerFileSerialization.js";
 import type { ReportJobHandler } from "../../utils/reportJobMongoQueue.js";
 import { updateDraftPreviewLifecycle } from "../../service/reportDraftPreviewLifecycleService.js";
 import { verifyInitialAuctioneerRetrySources } from "../../service/auctioneerInitialPreviewRetryService.js";
+import { verifyRetainedPreviewRetrySources } from "../../service/initialPreviewRetryService.js";
 
 export const assetReportJobHandlers = {
   "asset-preview": async (job, context) => {
@@ -23,6 +24,7 @@ export const assetReportJobHandlers = {
       });
     }
     try {
+      await verifyRetainedPreviewRetrySources(job, context);
       await verifyInitialAuctioneerRetrySources(job, context);
       await runAssetPreviewJob(
         {
@@ -37,6 +39,7 @@ export const assetReportJobHandlers = {
           executionContext: context,
           deferSourceFileCleanup: true,
           willRetryOnError: job.attempts < job.maxAttempts,
+          skipReadyNotification: job.payload?.retainedPreviewRetry?.actorScope === "admin",
         }
       );
       await context.assertOwned();

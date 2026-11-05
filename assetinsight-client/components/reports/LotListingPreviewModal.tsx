@@ -493,6 +493,14 @@ export default function LotListingPreviewModal({
   };
 
   const lotsArray: LotListingLot[] = Array.isArray(previewData?.lots) ? previewData.lots : [];
+  const duplicateLotNumbers = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    lotsArray.forEach((lot, index) => {
+      const key = getLotDisplayNumber(lot, index).replace(/^(?:lot\s*#\s*|lot\s+|#\s*)/i, "").trim().toLowerCase();
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return Array.from(counts).filter(([, count]) => count > 1).map(([key]) => key);
+  }, [lotsArray]);
   const displayedTotalValue = calculateTotalValue(lotsArray);
   const includeDamageAnalysis = previewData?.include_damage_analysis !== false;
   const specPdfUrl = previewFiles?.spec_pdf;
@@ -613,6 +621,12 @@ export default function LotListingPreviewModal({
       {status === "error" && (
         <div role="alert" className="app-alert app-alert--error mb-4">
           Generation failed, but your saved preview is available. Review every lot and photo before saving and resubmitting. Missing analysis must be completed before submission.
+        </div>
+      )}
+
+      {duplicateLotNumbers.length > 0 && (
+        <div role="alert" className="app-alert app-alert--warning mb-4">
+          Duplicate lot numbers {duplicateLotNumbers.join(", ")} must be corrected before report files can be generated. Edit the affected lot numbers, then Save.
         </div>
       )}
 

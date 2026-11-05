@@ -1,4 +1,5 @@
 import express, { NextFunction, Request, Response } from "express";
+import { initialPreviewRetryController } from "../controller/initialPreviewRetry.controller.js";
 import { adminLogin, me, getAdmins, postAdmin, deleteAdmin, blockAdmin, changeAdminPassword, getAdminReports, getSameContractReports, archiveAdminReport, restoreAdminReport, getAdminStats, getDesktopDashboardStats, getDashboardAnalytics, refreshAdminToken, getUsers, getAdminUserProfile, updateAdminUserProfile, getReportCreators, getReportApprovers, updateUserReportApprover, getReleaseManagers, updateUserReleaseManager, getPreviewSupervisorSetting, updatePreviewSupervisorSetting, releaseAdminReport, blockUserByAdmin, deleteUserByAdmin, getMonthlyStats, approveLotListing, declineLotListing, getSpecWebSearchSetting, updateSpecWebSearchSetting, getAssetApprovalThresholdSetting, updateAssetApprovalThresholdSetting } from "../controller/admin.controller.js";
 import {
   downloadReport,
@@ -260,6 +261,8 @@ router.post(
 router.get("/preview-reports/:id/reminder", adminProtect, requireSuperadmin, getAdminPreviewReminder);
 router.get("/preview-reports/:id", adminProtect, getAdminPreviewReport);
 router.post("/preview-reports/:id/resubmit", adminProtect, requireSuperadmin, resubmitAdminPreviewReport);
+router.get("/preview-reports/:id/retry-preview", adminProtect, requireSuperadmin, initialPreviewRetryController("admin", "read"));
+router.post("/preview-reports/:id/retry-preview", adminProtect, requireSuperadmin, initialPreviewRetryController("admin", "retry"));
 router.delete(
   "/preview-reports/:id",
   adminProtect,

@@ -103,6 +103,26 @@ afterAll(async () => {
 });
 
 describe.sequential("Asset preview file generation", () => {
+  it("refuses explicit duplicate labels before file output and keeps the editable preview unchanged", async () => {
+    const lots = ["a", "b"].map(id => ({ lot_id: id, lot_number: "27A", title: `Unit ${id}`, estimated_value: "CAD 100",
+      image_urls: [], image_indexes: [], condition_report_specs: {}, condition_report_specs_reviewed: true }));
+    const preview = { lots, currency: "CAD", contract_no: "duplicate-preview" };
+    const report = await AssetReport.create({ user: new mongoose.Types.ObjectId(), grouping_mode: "mixed", imageUrls: [],
+      lots, preview_data: preview, currency: "CAD", status: "preview", job_status: "queued", job_id: "duplicate-guard", files_generating: true });
+    await expect(runPreviewFilesJob(String(report._id), { jobId: "duplicate-guard", targetStatus: "preview" })).rejects.toThrow(/Duplicate lot number 27A/);
+    const saved: any = await AssetReport.findById(report._id).lean();
+    expect(saved.preview_data).toEqual(preview);
+    expect(saved.lots.map((lot: any) => lot.lot_number)).toEqual(["27A", "27A"]);
+    for (const generator of [generationMocks.docx, generationMocks.xlsx, generationMocks.scheduleA, generationMocks.imagesZip, generationMocks.upload]) {
+      expect(generator).not.toHaveBeenCalled();
+    }
+    const corrected = { ...preview, lots: lots.map((lot, index) => ({ ...lot, lot_number: index ? "27B" : "27A" })) };
+    await AssetReport.updateOne({ _id: report._id }, { $set: { preview_data: corrected, job_id: "corrected-guard", job_status: "queued", files_generating: true } });
+    await runPreviewFilesJob(String(report._id), { jobId: "corrected-guard", targetStatus: "preview" });
+    expect(generationMocks.docx).toHaveBeenCalled();
+    expect(generationMocks.docx.mock.calls[0][0].lots.map((lot: any) => lot.lot_number)).toEqual(["27A", "27B"]);
+  });
+
   it("renders the current evaluator average across file regenerations without persisting it over AI estimates", async () => {
     const { buildScheduleRows } = await vi.importActual<typeof import("../src/service/assetSchedulePdfService.js")>("../src/service/assetSchedulePdfService.js");
     const { resolveSelectedAssetValuationMethods } = await import("../src/service/docx/builders/certificate.js");

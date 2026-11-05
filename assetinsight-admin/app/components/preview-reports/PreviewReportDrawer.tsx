@@ -44,6 +44,7 @@ import type {
 } from "./previewReportTypes";
 import ReportLotNavigationControls from "@/app/components/reports/ReportLotNavigationControls";
 import { lotPreviewDisplay, reportPreviewDisplay } from "@/lib/lotPreviewDisplay";
+import InitialPreviewRetryAction from "./InitialPreviewRetryAction";
 
 type Props = {
   open: boolean;
@@ -265,6 +266,17 @@ export default function PreviewReportDrawer({
     const candidate = payload?.preview?.data?.lots;
     return Array.isArray(candidate) ? candidate.filter(isRecord) : [];
   }, [payload]);
+  const duplicateLotNumbers = useMemo(() => {
+    const counts = new Map<string, number>();
+    lots.forEach((lot, index) => {
+      const label = [lot.lot_number, lot.lot_id, lot.lot, lot.id, index + 1]
+        .map((value) => String(value ?? "").trim().replace(/^(?:lot\s*#\s*|lot\s+|#\s*)/i, "").trim())
+        .find(Boolean) || "";
+      const key = label.toLowerCase();
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return Array.from(counts).filter(([, count]) => count > 1).map(([key]) => key);
+  }, [lots]);
   const activeLot = lots[selectedLot] || null;
   const activeImages = useMemo(() => collectImages(activeLot), [activeLot]);
   const resubmitEligible = payload?.report.resubmitEligible === true
@@ -431,6 +443,14 @@ export default function PreviewReportDrawer({
             </IconButton>
           </Stack>
           <Stack direction="row" alignItems="center" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: payload && !readOnly ? 1.5 : 0 }}>
+              {payload && !readOnly && canManage && !payload.report.resubmitEligible &&
+                (payload.report.status === "error" || payload.report.job_status === "error") ? (
+                <InitialPreviewRetryAction key={`${reportId}:${reloadToken}`} reportId={payload.report.id}
+                  disabled={resubmitting || transferring || deleting}
+                  onBusyChange={setResubmitting}
+                  onReload={() => setReloadToken(value => value + 1)}
+                  onAccepted={message => { onResubmitted?.(message); onClose(); }} />
+              ) : null}
               {payload && !readOnly && canManage ? (
                 <Tooltip title={resubmitNeedsReview ? "Reload and review the latest saved preview first." : payload.report.resubmitIneligibleReason || "Rebuild report files from the saved preview, without new analysis."}>
                   <span>
@@ -550,6 +570,11 @@ export default function PreviewReportDrawer({
                     ))}
                   </Box>
 
+                  {duplicateLotNumbers.length > 0 ? (
+                    <Alert severity="warning" sx={{ mt: 2 }}>
+                      The owner must correct duplicate lot numbers {duplicateLotNumbers.join(", ")} in the saved preview before report files can be generated. All saved lots remain available for review.
+                    </Alert>
+                  ) : null}
                   {payload.report.job_error ? <Alert severity="error" sx={{ mt: 2 }}>{payload.report.job_error}</Alert> : null}
                   {!readOnly && canManage && !payload.report.resubmitEligible && payload.report.resubmitIneligibleReason ?<Alert severity="info" sx={{ mt: 1 }}>{payload.report.resubmitIneligibleReason}</Alert> : null}
 

@@ -15,7 +15,7 @@ const activeStatuses = ["queued", "processing"];
 const modelFor = (kind: Kind): any => kind === "asset" ? AssetReport : LotListing;
 const ownerId = (report: any) => String(report?.user?._id || report?.user || "");
 const conflict = (message: string, code = "AUCTIONEER_INITIAL_RETRY_CONFLICT") => Object.assign(new Error(message), { statusCode: 409, code });
-const sourceUnavailable = () => conflict("The original upload is not completely available for this retry. Open the saved draft and check its photos before trying again. Do not create a second report.", "AUCTIONEER_INITIAL_RETRY_SOURCE_UNAVAILABLE");
+const sourceUnavailable = () => conflict("The original upload is not completely available for this retry. Keep this report and contact support; do not create a second report.", "AUCTIONEER_INITIAL_RETRY_SOURCE_UNAVAILABLE");
 
 function canonicalPreview(kind: Kind, report: any) {
   return kind === "asset" ? report.preview_data : getCanonicalLotListingPreview(report);
@@ -37,7 +37,7 @@ function exactValue(report: any, key: string) {
     { $expr: { $eq: [{ $getField: { field: key, input: "$$ROOT" } }, { $literal: report[key] }] } };
 }
 
-function snapshotFilter(kind: Kind, report: any) {
+export function initialPreviewRetrySnapshotFilter(kind: Kind, report: any) {
   return {
     _id: report._id, user: ownerId(report), adminArchivedAt: null, is_draft_preview: { $ne: true },
     $and: [
@@ -52,7 +52,7 @@ function snapshotFilter(kind: Kind, report: any) {
 }
 
 /** Source metadata is immutable queue data, never supplied by the retry request. */
-function originalSources(payload: any): any[] {
+export function retainedInitialPreviewSources(payload: any): any[] {
   if (!payload || !Array.isArray(payload.images) || payload.images.length === 0 || payload.images.length > 5000 ||
     (payload.videos !== undefined && (!Array.isArray(payload.videos) || payload.videos.length > 10000))) throw sourceUnavailable();
   const files = [...payload.images, ...(payload.videos || [])];
@@ -123,8 +123,8 @@ export async function retryInitialAuctioneerPreview(input: { reportType: Kind; r
     String(kind === "asset" ? payload?.reportId : payload?.listingId) !== String(report._id) ||
     String(payload?.progressId || "") !== String(report.job_id || "") ||
     !payload?.details || payload.details.draft_preview || !report.job_id) throw sourceUnavailable();
-  originalSources(payload);
-  const filter = snapshotFilter(kind, report);
+  retainedInitialPreviewSources(payload);
+  const filter = initialPreviewRetrySnapshotFilter(kind, report);
   const assertOwned = async () => {
     if (!await Model.exists(filter) || await ReportJob.exists({ reportId: String(report._id), status: { $in: activeStatuses } })) {
       throw conflict("The report changed or another attempt is already processing. Refresh before retrying.");
@@ -162,10 +162,6 @@ export async function retryInitialAuctioneerPreview(input: { reportType: Kind; r
 /** Worker-only validation: all retained objects are checked before any paid analysis. */
 export async function verifyInitialAuctioneerRetrySources(job: IReportJob, context: ReportJobExecutionContext) {
   if (!job.payload?.eventIdentityRetry) return;
-  const files = originalSources(job.payload);
-  let next = 0;
-  let stopped = false;
-  let failure: unknown;
   const assertParent = async () => {
     await context.assertOwned();
     const Model = modelFor(job.type === "asset-preview" ? "asset" : "lotListing");
@@ -179,23 +175,30 @@ export async function verifyInitialAuctioneerRetrySources(job: IReportJob, conte
   // Queueing can precede execution by minutes. Recheck the exact owner/work-item
   // relationship before storage checks and again before the paid analysis starts.
   await checkEvent();
-  await Promise.all(Array.from({ length: Math.min(4, files.length) }, async () => {
-    while (!stopped) {
-      const index = next++;
-      if (index >= files.length) return;
-      try {
-        await assertParent();
-        const file = files[index];
-        const target = resolvePersistedR2StorageTarget({ r2Bucket: file.r2Bucket });
-        const head = await headR2Object(target.bucketName, file.r2Key);
-        if (Number(head.size) !== file.size) throw sourceUnavailable();
-      } catch (error) { stopped = true; failure ||= error; }
-    }
-  }));
-  if (failure) {
-    await assertParent();
-    throw sourceUnavailable();
-  }
+  await verifyRetainedInitialPreviewObjects(job.payload, assertParent);
   await assertParent();
   await checkEvent();
+}
+
+/** Shared bounded read-only preflight. No URLs, fallback uploads or byte copies. */
+export async function verifyRetainedInitialPreviewObjects(payload: any, assertOwned: () => Promise<void>) {
+  const files = retainedInitialPreviewSources(payload);
+  const deadline = Date.now() + 10 * 60_000;
+  await assertOwned();
+  // Bound both storage requests and ownership checks; large reports do not
+  // create thousands of simultaneous connections or one DB query per photo.
+  for (let offset = 0; offset < files.length; offset += 4) {
+    await assertOwned();
+    if (Date.now() >= deadline) throw sourceUnavailable();
+    const outcomes = await Promise.allSettled(files.slice(offset, offset + 4).map(async file => {
+      const target = resolvePersistedR2StorageTarget({ r2Bucket: file.r2Bucket });
+      const head = await headR2Object(target.bucketName, file.r2Key, { timeoutMs: Math.min(15_000, Math.max(1, deadline - Date.now())) });
+      if (Number(head.size) !== file.size) throw sourceUnavailable();
+    }));
+    if (outcomes.some(result => result.status === "rejected")) {
+      await assertOwned();
+      throw sourceUnavailable();
+    }
+  }
+  await assertOwned();
 }

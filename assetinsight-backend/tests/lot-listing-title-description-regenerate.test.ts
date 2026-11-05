@@ -17,6 +17,9 @@ import { runLotListingJob, runRegenerateLotListingJob } from "../src/jobs/lotLis
 import { generateLotListingXlsxFromReport } from "../src/service/xlsx/assetXlsxService.js";
 import { detectBundleLotNumbersFromPhotos } from "../src/service/bundleLotAnalysisPolicy.js";
 import { resubmitLotListing, submitLotListingForApproval } from "../src/controller/lotListing.controller.js";
+import { pushAuctionsoftLotListingIfReady } from "../src/service/auctionsoftLotListingPush.js";
+import { sendEmail } from "../src/utils/sendVerificationEmail.js";
+import { notifyUser } from "../src/service/notificationService.js";
 
 const upstream = vi.hoisted(() => ({ lots: vi.fn() }));
 vi.mock("dotenv", () => ({ config: () => ({ parsed: {} }), default: { config: () => ({ parsed: {} }) } }));
@@ -101,6 +104,62 @@ const EDITED_TITLE = "2018 Manac Frac Shack Bi-Fuel FracFueller Trailer";
 const EDITED_DESCRIPTION = "Bi-fuel fueling trailer with enclosure, fuel manifold, pump, hoses and portable ramp.";
 
 describe("web Save & Regenerate with an edited title and description", () => {
+  it.each([undefined, false, true])("preserves a completed preview while skipReadyNotification=%s controls ready notifications", async skipReadyNotification => {
+    const report = await runLotListingJob({ skipReadyNotification,
+      user: { id: new mongoose.Types.ObjectId().toString(), email: "editor@example.test" }, images: [photo(1)],
+      details: { contract_no: "notification", sales_date: "2026-11-05", location: "Regina, SK", currency: "CAD",
+        draft_preview: false, watermark_images: false, include_damage_analysis: false, mixed_lots: [{ count: 1, mode: "single_lot" }] } });
+    const saved: any = await LotListing.findById(report._id).lean();
+    expect(saved).toMatchObject({ status: "preview", job_status: "done" });
+    expect(saved.preview_data.lots).toHaveLength(1);
+    expect(saved.imageUrls).toHaveLength(1);
+    expect(sendEmail).toHaveBeenCalledTimes(skipReadyNotification ? 0 : 1);
+    expect(notifyUser).toHaveBeenCalledTimes(skipReadyNotification ? 0 : 1);
+    expect(generateLotListingXlsxFromReport).toHaveBeenCalled();
+  });
+
+  it("repairs only automatic collisions with a later photographed number", async () => {
+    vi.mocked(detectBundleLotNumbersFromPhotos).mockResolvedValue(new Map([[0, null], [1, "1"]]));
+    const report = await runLotListingJob({ user: { id: new mongoose.Types.ObjectId().toString(), email: "editor@example.test" },
+      images: [photo(1), photo(2), photo(3), photo(4)],
+      details: { contract_no: "collision", sales_date: "2026-11-05", location: "Regina, SK", currency: "CAD", draft_preview: true, watermark_images: false,
+        include_damage_analysis: false, mixed_lots: [{ count: 1, extra_count: 1, mode: "single_lot" }, { count: 2, mode: "single_lot" }] } });
+    const saved: any = await LotListing.findById(report._id).lean();
+    expect(saved.preview_data.lots.map((lot: any) => String(lot.lot_number))).toEqual(["2", "1"]);
+    expect(saved.preview_data.lots.map((lot: any) => lot.image_urls.length)).toEqual([1, 2]);
+    expect(saved.preview_data.lots[0].extra_image_urls).toEqual([photo(2).r2PublicUrl]);
+    expect(generateLotListingXlsxFromReport).toHaveBeenCalled();
+  });
+
+  it("saves explicit duplicate analysis and photos for editing and blocks artifacts/send until corrected", async () => {
+    vi.mocked(detectBundleLotNumbersFromPhotos).mockResolvedValue(new Map([[0, "157"], [1, "157"]]));
+    const report = await runLotListingJob({ user: { id: new mongoose.Types.ObjectId().toString(), email: "editor@example.test" },
+      images: [photo(1), photo(2), photo(3), photo(4)],
+      details: { contract_no: "duplicates", sales_date: "2026-11-05", location: "Regina, SK", currency: "CAD", draft_preview: false, watermark_images: false,
+        include_damage_analysis: false, mixed_lots: [{ count: 1, extra_count: 1, mode: "single_lot" }, { count: 2, mode: "single_lot" }] } });
+    let saved: any = await LotListing.findById(report._id).lean();
+    expect(saved).toMatchObject({ status: "preview", job_status: "done" });
+    expect(saved.preview_data.lots.map((lot: any) => String(lot.lot_number))).toEqual(["157", "157"]);
+    expect(saved.preview_data.lots.map((lot: any) => lot.image_urls.length)).toEqual([1, 2]);
+    expect(saved.preview_data.lots[0].extra_image_urls).toEqual([photo(2).r2PublicUrl]);
+    expect(generateLotListingXlsxFromReport).not.toHaveBeenCalled();
+    expect(pushAuctionsoftLotListingIfReady).not.toHaveBeenCalled();
+    const before = structuredClone(saved.preview_data);
+    await LotListing.updateOne({ _id: saved._id }, { $set: { status: "processing", job_id: "duplicate-files", job_status: "queued", files_generating: true } });
+    await expect(runRegenerateLotListingJob({ listingId: String(saved._id), generationToken: "duplicate-files",
+      user: { id: String(saved.user), email: "editor@example.test" }, previewDataSnapshot: before })).rejects.toThrow(/Duplicate lot number 157/);
+    saved = await LotListing.findById(report._id).lean();
+    expect(saved.preview_data).toEqual(before);
+    expect(generateLotListingXlsxFromReport).not.toHaveBeenCalled();
+    expect(pushAuctionsoftLotListingIfReady).not.toHaveBeenCalled();
+    const corrected = { ...before, lots: before.lots.map((lot: any, index: number) => ({ ...lot, lot_number: index ? "158" : "157" })) };
+    await LotListing.updateOne({ _id: saved._id }, { $set: { status: "processing", preview_data: corrected, lots: corrected.lots, job_id: "corrected-files", job_status: "queued", files_generating: true } });
+    await runRegenerateLotListingJob({ listingId: String(saved._id), generationToken: "corrected-files",
+      user: { id: String(saved.user), email: "editor@example.test" }, previewDataSnapshot: corrected });
+    expect(generateLotListingXlsxFromReport).toHaveBeenCalled();
+    expect(vi.mocked(generateLotListingXlsxFromReport).mock.calls[0][0].lots.map((lot: any) => String(lot.lot_number))).toEqual(["157", "158"]);
+  });
+
   it("keeps each exactly as typed, through the save and the regenerated files", async () => {
     const report = await runLotListingJob({
       user: { id: new mongoose.Types.ObjectId().toString(), email: "editor@example.test" },

@@ -43,6 +43,7 @@ import { SalvageService, salvagePreviewPath, salvageStatusPath, salvageIsProcess
 import { salvageSystemText } from "@/lib/salvagePresentation";
 import { captureAuthSession, isAuthSessionCurrent } from "@/lib/auth-storage";
 import { previewLoadError } from "@/lib/previewLoadError";
+import InitialPreviewRetry from "@/components/reports/InitialPreviewRetry";
 
 const AssetMergeDialog = dynamic(
   () => import("@/components/reports/AssetMergeDialog"),
@@ -1216,7 +1217,14 @@ export default function PreviewsPage() {
                         {hasPersistentPreviewAction ? (
                           <p className="mt-2">Your saved preview is available. Open Preview, review all lots and photos, then save and resubmit to generate files.</p>
                         ) : (
-                          <p className="mt-2">No saved preview is available. <a href="/drafts" className="underline">Open saved drafts</a> to recover the source upload.</p>
+                          <>
+                            <p className="mt-2">Processing stopped before an editable preview was saved. Keep this report; do not upload it again.</p>
+                            {report.reportType === "asset" || report.reportType === "lotListing" ? (
+                              <InitialPreviewRetry key={`${report._id}:${report.job_id || ""}`} reportId={report._id} kind={report.reportType}
+                                onQueued={() => { requestReportsRefetch(); void loadReports({ afterMutation: true }); }} />
+                            ) : null}
+                            <p className="mt-2">If you saved a separate draft, you can <Link href="/previews?tab=drafts" onClick={() => setActiveTab("drafts")} className="underline">check saved drafts</Link>.</p>
+                          </>
                         )}
                       </div>
                     ) : null}

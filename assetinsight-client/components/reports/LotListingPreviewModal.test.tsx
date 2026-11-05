@@ -91,6 +91,23 @@ function makeListingPreview() {
 }
 
 describe("LotListingPreviewModal inspection location", () => {
+  it("warns about explicit duplicate lot numbers before Save and clears after correction without renumbering other lots", async () => {
+    const response = makeListingPreview();
+    const first = response.data.preview_data.lots[0];
+    first.lot_number = "duplicate-1";
+    response.data.preview_data.lots.push({ ...first, lot_number: "duplicate-1", title: "Second saved lot" });
+    render(<LotListingPreviewModal isOpen reportId="duplicate-preview" onClose={vi.fn()}
+      loadPreviewDataOverride={vi.fn().mockResolvedValue(response)} />);
+    await screen.findByDisplayValue("LOT-LOCATION-1");
+    expect(screen.getByText(/Duplicate lot numbers duplicate-1 must be corrected/)).toBeInTheDocument();
+    const inputs = screen.getAllByDisplayValue("duplicate-1");
+    fireEvent.change(inputs[inputs.length - 1], { target: { value: "duplicate-2" } });
+    expect(screen.queryByText(/Duplicate lot numbers duplicate-1 must be corrected/)).not.toBeInTheDocument();
+    expect(screen.getAllByDisplayValue("duplicate-1").length).toBeGreaterThan(0);
+    expect(screen.getAllByDisplayValue("duplicate-2").length).toBeGreaterThan(0);
+    expect(mocks.submitForApproval).not.toHaveBeenCalled();
+  });
+
 
   it('submits edited, cleared and deleted specs with authoritative overrides and unchanged lot/media identity', async () => {
     const response: any = makeListingPreview();

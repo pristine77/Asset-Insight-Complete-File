@@ -169,6 +169,23 @@ const lotSelectedMethods = (lot: number) => {
 };
 
 describe("PreviewModal valuation methods", () => {
+  it("warns about explicit duplicate lot numbers before Save and clears after correction without renumbering other lots", async () => {
+    const response = makePreviewResponse();
+    const first = response.data.preview_data.lots[0];
+    first.lot_number = "duplicate-1";
+    response.data.preview_data.lots.push({ ...first, lot_number: "duplicate-1", title: "Second saved lot" });
+    render(<PreviewModal isOpen reportId="duplicate-preview" onClose={vi.fn()}
+      loadPreviewDataOverride={vi.fn().mockResolvedValue(response)} />);
+    await screen.findByDisplayValue("Test Client");
+    expect(screen.getByText(/Duplicate lot numbers duplicate-1 must be corrected/)).toBeInTheDocument();
+    const inputs = screen.getAllByDisplayValue("duplicate-1");
+    fireEvent.change(inputs[inputs.length - 1], { target: { value: "duplicate-2" } });
+    expect(screen.queryByText(/Duplicate lot numbers duplicate-1 must be corrected/)).not.toBeInTheDocument();
+    expect(screen.getAllByDisplayValue("duplicate-1").length).toBeGreaterThan(0);
+    expect(screen.getAllByDisplayValue("duplicate-2").length).toBeGreaterThan(0);
+    expect(mocks.submitForApproval).not.toHaveBeenCalled();
+  });
+
   it("recovers an empty 49-lot selection with a confirmed FLV percentage and preserves all lots on Save", async () => {
     const response: any = makePreviewResponse();
     Object.assign(response.data.preview_data, { include_valuation_table: false, valuation_methods: [], valuation_data: null,
@@ -1016,62 +1033,5 @@ describe("PreviewModal valuation methods", () => {
     expect(onSuccess).toHaveBeenCalledWith(
       expect.objectContaining({ reportId: "promoted-report-1" })
     );
-  });
-});
-
-/*
- * Lot numbers to check (owner, 2026-11-04, "1 and 2"): a lot renumbered because
- * another lot had its number is named at the top, and a number used twice on
- * an ordinary report is called out before submitting.
- */
-describe("PreviewModal lot numbers to check", () => {
-  // The same setup as the valuation-method tests above.
-  beforeEach(() => {
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      callback(0);
-      return 1;
-    });
-    vi.stubGlobal("cancelAnimationFrame", vi.fn());
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
-    mocks.getAssetCategorySpecs.mockReset().mockResolvedValue({ categories: [], specs: [] });
-    mocks.reverseGeocode.mockReset().mockResolvedValue({ location: "Test Yard, London", attribution: "", attributionUrl: "" });
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("names the renumbered lot with the number it had", async () => {
-    const response: any = makePreviewResponse();
-    response.data.preview_data.lots = [
-      { ...response.data.preview_data.lots[0], lot_number: "7" },
-      {
-        ...response.data.preview_data.lots[0],
-        lot_number: "3",
-        title: "Second unit",
-        analysis_metadata: { lot_number_dropped: { version: 1, value: "7", reason: "repeated" } },
-      },
-    ];
-    render(<PreviewModal isOpen reportId="renumbered-1" onClose={vi.fn()} loadPreviewDataOverride={vi.fn().mockResolvedValue(response)} />);
-    const notice = await screen.findByTestId("lot-number-notice");
-    expect(notice).toHaveTextContent("1 lot was renumbered");
-    expect(notice).toHaveTextContent("Lot 3 (was 7)");
-    expect(notice).not.toHaveTextContent("is used twice");
-  });
-
-  it("calls out a number used twice on an ordinary report", async () => {
-    const response: any = makePreviewResponse();
-    response.data.preview_data.lots = [
-      { ...response.data.preview_data.lots[0], lot_number: "7" },
-      { ...response.data.preview_data.lots[0], lot_number: "7", title: "Second unit" },
-    ];
-    render(<PreviewModal isOpen reportId="duplicate-1" onClose={vi.fn()} loadPreviewDataOverride={vi.fn().mockResolvedValue(response)} />);
-    const notice = await screen.findByTestId("lot-number-notice");
-    expect(notice).toHaveTextContent("Lot number 7 is used twice. Change it before this report can be submitted.");
-  });
-
-  it("shows nothing when every lot keeps its own number", async () => {
-    render(<PreviewModal isOpen reportId="clean-1" onClose={vi.fn()} loadPreviewDataOverride={vi.fn().mockResolvedValue(makePreviewResponse())} />);
-    await screen.findByDisplayValue("Test Client");
-    expect(screen.queryByTestId("lot-number-notice")).toBeNull();
   });
 });

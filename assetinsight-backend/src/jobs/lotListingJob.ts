@@ -1,4 +1,4 @@
-import { readCaptureLotIdentity, applyCaptureLotIdentities, renumberRepeatedLotNumbers } from "../service/captureLotIdentity.js";
+import { readCaptureLotIdentity, applyCaptureLotIdentities, assertUniqueInitialLotNumbers, resolveInitialAutomaticLotNumbers, findDuplicateInitialLotNumbers } from "../service/captureLotIdentity.js";
 import { resolvePhotoWatermark } from "../utils/photoWatermarkPolicy.js";
 import { assertMixedLotPhotoManifest, resolveGroupModelImageIndex } from "../utils/mixedLotPhotoManifest.js";
 import {
@@ -104,6 +104,8 @@ import {
 import { stageAndPublishLotListingArtifacts } from "../service/lotListingArtifactPublicationService.js";
 
 export type LotListingJobInput = {
+  /** Internal worker option for administrator-requested recovery. */
+  skipReadyNotification?: boolean;
   listingId?: string;
   user: { id: string; email: string; name?: string | null };
   images: Express.Multer.File[];
@@ -2124,6 +2126,7 @@ export async function runLotListingJob({
   executionContext,
   deferSourceFileCleanup = false,
   willRetryOnError = false,
+  skipReadyNotification = false,
 }: LotListingJobInput) {
   if (progressId) startProgress(progressId);
   let report: any = null;
@@ -2564,10 +2567,7 @@ export async function runLotListingJob({
       defaultLatitude: details.latitude,
       defaultLongitude: details.longitude,
     });
-    // A repeated number is renumbered, never a stopped listing (owner,
-    // 2026-11-04): before allocation, so a work item gives it a free number in
-    // the sale, and once more after it.
-    analyzedLots = renumberRepeatedLotNumbers(applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(analyzedLots), mixedLots));
+    analyzedLots = applyCaptureLotIdentities(reapplyBundleLotNumberDiagnostics(analyzedLots), mixedLots);
     if (listingId) {
       analyzedLots = await allocateInitialAuctioneerLotNumbers({
         reportId: listingId,
@@ -2577,7 +2577,7 @@ export async function runLotListingJob({
         assertOwned: executionContext ? () => executionContext.assertOwned() : undefined,
       });
     }
-    analyzedLots = renumberRepeatedLotNumbers(analyzedLots);
+    analyzedLots = resolveInitialAutomaticLotNumbers(analyzedLots);
     aiAnalysis = {
       ...(aiAnalysis || {}),
       lot_enrichment: enrichmentResult.analyses,
@@ -2673,6 +2673,29 @@ export async function runLotListingJob({
       report.job_status = "processing";
       report.job_error = undefined;
       await report.save();
+    }
+
+    if (findDuplicateInitialLotNumbers(analyzedLots).length > 0) {
+      const message = "Preview saved. Review duplicate lot numbers before generating files.";
+      const set = { job_status: "done", processing_completed_at: new Date(), files_generating: false, files_regenerating: false };
+      if (listingId) {
+        report = await updateLotListingForExecution({ listingId, generationToken, executionContext,
+          filter: { job_status: "processing" }, set, unset: { job_error: 1, error_message: 1 } });
+      } else {
+        report.set(set);
+        await report.save();
+      }
+      await setReportGenerationProgress({ kind: "lotListing", reportId: String(report._id), progressId,
+        generationToken: generationToken || undefined, executionToken: executionToken || undefined,
+        stage: "ready", progressPercent: 100, message, currentLot: analyzedLots.length, totalLots: analyzedLots.length });
+      if (progressId) {
+        await persistProgress({ serverProgress01: 1, message,
+          result: { reportId: String(report._id), reportType: "lotListing", status: "preview" } });
+        await finishProgress(true, message);
+      }
+      await releaseLotListingExecutionOwnership({ listingId: String(report._id), generationToken, executionContext });
+      completed = true;
+      return report;
     }
 
     let reportData: any = buildLotListingExportData({
@@ -2914,8 +2937,9 @@ export async function runLotListingJob({
       });
     }
 
-    // Explicit draft previews remain quiet until the user opens/submits them.
-    if (!details.draft_preview) {
+    // Drafts and administrator recovery remain quiet; ordinary owners still
+    // receive their existing preview-ready email and notification.
+    if (!details.draft_preview && !skipReadyNotification) {
       await assertLotListingExecutionOwned({
         listingId: String(report._id),
         generationToken,
@@ -3214,6 +3238,7 @@ export async function runRegenerateLotListingJob({
     const baseLots = Array.isArray((previewData as any).lots)
       ? (previewData as any).lots
       : listing.lots || [];
+    assertUniqueInitialLotNumbers(baseLots);
     const previewLocation = (previewData as any).location || listing.location;
     const previewLatitude = (previewData as any).latitude;
     const previewLongitude = (previewData as any).longitude;

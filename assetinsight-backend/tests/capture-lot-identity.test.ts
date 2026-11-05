@@ -1,8 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { applyCaptureLotIdentities, readCaptureLotIdentity, renumberRepeatedLotNumbers } from "../src/service/captureLotIdentity.js";
+import { applyCaptureLotIdentities, assertUniqueInitialLotNumbers, readCaptureLotIdentity, resolveInitialAutomaticLotNumbers } from "../src/service/captureLotIdentity.js";
 import { initialLotNumberFallbackIndexes } from "../src/service/initialLotNumberProvenance.js";
 
 describe("capture group identity", () => {
+  it("reserves later photographed labels before assigning colliding automatic fallbacks", () => {
+    const input = [
+      { lot_id: "a", lot_number: "1", image_urls: ["photo-a"], analysis_metadata: { bundle_lot_number_detection: { numberSource: "sequential_fallback", resolvedLotNumber: 1 } } },
+      { lot_id: "b", lot_number: "1", image_urls: ["photo-b"], analysis_metadata: { bundle_lot_number_detection: { numberSource: "first_main_photo", resolvedLotNumber: "1" } } },
+      { lot_id: "c", lot_number: "2", image_urls: ["photo-c"], analysis_metadata: { capture_lot_identity: { id: "capture-c", number: "2", applied: true } } },
+    ];
+    const before = structuredClone(input);
+    const result = resolveInitialAutomaticLotNumbers(input);
+    expect(result.map(lot => lot.lot_number)).toEqual(["3", "1", "2"]);
+    expect(result.map(lot => [lot.lot_id, lot.image_urls])).toEqual(input.map(lot => [lot.lot_id, lot.image_urls]));
+    expect(result[0].analysis_metadata.bundle_lot_number_detection.resolvedLotNumber).toBe("3");
+    expect(resolveInitialAutomaticLotNumbers(result)).toEqual(result);
+    expect(input).toEqual(before);
+  });
+  it("only repairs proven automatic duplicates and never guesses explicit or unknown identities", () => {
+    const fallback = { initial_lot_number: { version: 1, source: "sequential_fallback" } };
+    const input = [{ lot_number: "7", analysis_metadata: fallback }, { lot_number: "7", analysis_metadata: fallback },
+      { lot_number: "27A" }, { lot_number: "27a" }];
+    const result = resolveInitialAutomaticLotNumbers(input);
+    expect(result.map(lot => lot.lot_number)).toEqual(["7", "1", "27A", "27a"]);
+    expect(() => assertUniqueInitialLotNumbers(result)).toThrow(/27a/);
+    expect(resolveInitialAutomaticLotNumbers([{lot_number: "1"}, {lot_number: "1"}])).toEqual([{lot_number: "1"}, {lot_number: "1"}]);
+  });
+
+  it("preserves assigned and reviewed numbers even when older fallback metadata remains", () => {
+    const fallback = { initial_lot_number: { version: 1, source: "sequential_fallback" } };
+    const input = [
+      { lot_number: "7", auctioneer_source_key: "assigned", analysis_metadata: fallback },
+      { lot_number: "7", analysis_metadata: { ...fallback, auctioneer_lot_number: { source: "event_sequence", number: "7" } } },
+      { lot_number: "7", analysis_metadata: { ...fallback, bundle_lot_number_detection: { numberSource: "reviewed_upload", resolvedLotNumber: "7" } } },
+      { lot_number: "7", analysis_metadata: fallback },
+    ];
+    expect(resolveInitialAutomaticLotNumbers(input).map(lot => lot.lot_number)).toEqual(["7", "7", "7", "1"]);
+  });
   it("keeps explicit non-contiguous labels, stable capture identity and exact image assignment", () => {
     const input = [{ lot_id: "lot-001", lot_number: "901", mixed_group_index: 1, image_indexes: [0,1] }, { lot_id: "lot-002", lot_number: "901", mixed_group_index: 2, image_indexes: [2] }];
     const before = structuredClone(input);
@@ -12,7 +46,7 @@ describe("capture group identity", () => {
     expect(input).toEqual(before);
     expect(result[0].analysis_metadata.capture_lot_identity).toEqual({ id:"captured-a", number:"27.1", applied:true });
     expect(initialLotNumberFallbackIndexes(result)).toEqual([]);
-    expect(renumberRepeatedLotNumbers(result)).toEqual(result);
+    expect(() => assertUniqueInitialLotNumbers(result)).not.toThrow();
   });
   it("does not guess labels for groups expanded into multiple items", () => {
     const result = applyCaptureLotIdentities([{ lot_number:"9", mixed_group_index:1 },{ lot_number:"10", mixed_group_index:1 }], [{count:2,capture_lot_id:"a",capture_lot_number:"27"}]);
@@ -27,21 +61,9 @@ describe("capture group identity", () => {
     const result=applyCaptureLotIdentities([{lot_number:"2500",mixed_group_index:1,analysis_metadata:{bundle_lot_number_detection:{numberSource:"reviewed_upload",resolvedLotNumber:"2500"}}}], [{count:1,capture_lot_id:"a",capture_lot_number:"1"}]);
     expect(result[0].lot_number).toBe("2500");
   });
-  // Owner, 2026-11-04 ("1 and 2"): a repeat is renumbered, never a stopped report.
-  it("keeps the first use of a number and gives a repeat the lowest free number, without changing the caller's rows", () => {
-    const lots = [{lot_number:"Lot #27"},{lot_number:"27"},{lot_number:"1"}]; const before=structuredClone(lots);
-    const result = renumberRepeatedLotNumbers(lots);
-    expect(result.map(lot => lot.lot_number)).toEqual(["Lot #27", "2", "1"]);
-    expect(result[1].analysis_metadata.lot_number_dropped).toEqual({ version: 1, value: "27", reason: "repeated" });
+  it("rejects duplicate initial labels without silently changing the caller's rows", () => {
+    const lots = [{lot_number:"Lot #27"},{lot_number:"27"}]; const before=structuredClone(lots);
+    expect(() => assertUniqueInitialLotNumbers(lots)).toThrow(/Duplicate lot number 27/);
     expect(lots).toEqual(before);
-  });
-  it("renumbers the phone's case: a lot-card number beside the same position number", () => {
-    // Lot 3 carries "7" from its lot card; the 7th lot is sent as "7".
-    const phone = ["1","2","7","4","5","6","7","8"].map(lot_number => ({ lot_number }));
-    const result = renumberRepeatedLotNumbers(phone);
-    expect(result.map(lot => lot.lot_number)).toEqual(["1","2","7","4","5","6","3","8"]);
-    expect(new Set(result.map(lot => lot.lot_number)).size).toBe(8);
-    // A renumbered lot takes a free number in the sale on an Auctioneer work item.
-    expect(initialLotNumberFallbackIndexes(result)).toContain(6);
   });
 });

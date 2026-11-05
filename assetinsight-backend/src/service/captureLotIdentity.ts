@@ -1,4 +1,5 @@
 import { normalizeEditableLotNumber } from "../utils/lotNumbers.js";
+import { initialLotNumberFallbackIndexes } from "./initialLotNumberProvenance.js";
 
 export type CaptureLotIdentity = { captureLotId?: string; captureLotNumber?: string };
 
@@ -38,53 +39,56 @@ export function applyCaptureLotIdentities(lots: any[], rawGroups: unknown): any[
   });
 }
 
-/**
- * Never two lots with the same number in one report, and never a stopped
- * report because of it (owner, 2026-11-04, choosing "1 and 2").
- *
- * This replaces assertUniqueInitialLotNumbers (3326c72), which stopped the
- * whole report on a repeat: "Duplicate lot number 7 ... no lots have been
- * renumbered", with no saved preview and the draft already gone, so the
- * appraiser had nothing to reopen. A repeat happens when the phone sends a
- * lot's own number beside another lot's position number (lot 3 carries "7"
- * from a lot card, the 7th lot is sent as "7"), or when the AI reads the same
- * number twice.
- *
- * The first lot in capture order keeps its number. A later lot with the same
- * number takes the lowest number no lot in the report uses, and is marked
- * lot_number_dropped { reason: "repeated" }:
- *   - the preview shows it, so the appraiser checks it before submitting;
- *   - on an Auctioneer 2.0 work item it counts as a fallback lot
- *     (initialLotNumberFallbackIndexes), so the sale gives it a free number.
- * The caller's rows are not changed; new rows are returned.
- */
-export function renumberRepeatedLotNumbers(lots: any[]): any[] {
-  if (!Array.isArray(lots)) return [];
-  const used = new Set(
-    lots.map((lot) => normalizeEditableLotNumber(lot?.lot_number).toLowerCase()).filter(Boolean)
-  );
-  const kept = new Set<string>();
+/** Initial analysis only. A photographed, captured or assigned label always wins
+ * over an automatic fallback, even when the authoritative row appears later. */
+export function resolveInitialAutomaticLotNumbers(lots: any[]): any[] {
+  const automatic = new Set(initialLotNumberFallbackIndexes(lots).filter(index => {
+    const lot = lots[index];
+    return !lot?.auctioneer_source_key && !lot?.auctioneer_source_parent_key
+      && !lot?.schedule_a_parent_lot_id && !lot?.analysis_metadata?.auctioneer_lot_number;
+  }));
+  const labelKey = (lot: any) => normalizeEditableLotNumber(lot?.lot_number).toLowerCase();
+  const occupied = new Set(lots.map(labelKey).filter(Boolean));
+  const retained = new Set(lots.filter((_, index) => !automatic.has(index)).map(labelKey).filter(Boolean));
   let next = 1;
-  const nextFree = () => {
-    while (used.has(String(next))) next += 1;
-    used.add(String(next));
-    return String(next);
-  };
-  return lots.map((lot) => {
-    const label = normalizeEditableLotNumber(lot?.lot_number);
-    if (!label) return lot;
-    const key = label.toLowerCase();
-    if (!kept.has(key)) {
-      kept.add(key);
+  return lots.map((lot, index) => {
+    if (!automatic.has(index)) return lot;
+    const key = labelKey(lot);
+    if (key && !retained.has(key)) {
+      retained.add(key);
       return lot;
     }
-    return {
-      ...lot,
-      lot_number: nextFree(),
-      analysis_metadata: {
-        ...(lot.analysis_metadata || {}),
-        lot_number_dropped: { version: 1, value: label, reason: "repeated" },
-      },
+    while (occupied.has(String(next))) next += 1;
+    const number = String(next++);
+    occupied.add(number);
+    retained.add(number);
+    const metadata = { ...(lot?.analysis_metadata || {}) };
+    if (metadata.bundle_lot_number_detection?.numberSource === "sequential_fallback") {
+      metadata.bundle_lot_number_detection = { ...metadata.bundle_lot_number_detection, resolvedLotNumber: number };
+    }
+    metadata.initial_lot_number = {
+      ...(metadata.initial_lot_number || {}), version: 1, source: "sequential_fallback",
+      previousAutomaticNumber: normalizeEditableLotNumber(lot?.lot_number),
     };
+    return { ...lot, lot_number: number, analysis_metadata: metadata };
   });
+}
+
+export function findDuplicateInitialLotNumbers(lots: any[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Map<string, string>();
+  for (const lot of lots) {
+    const label = normalizeEditableLotNumber(lot?.lot_number);
+    if (!label) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) duplicates.set(key, label);
+    seen.add(key);
+  }
+  return [...duplicates.values()];
+}
+
+/** Stop publication before duplicate labels overwrite identity in downstream imports or edits. */
+export function assertUniqueInitialLotNumbers(lots: any[]): void {
+  const [label] = findDuplicateInitialLotNumbers(lots);
+  if (label) throw new Error(`Duplicate lot number ${label}. Original photos are retained. Review the capture lot numbers before retrying; no lots have been renumbered.`);
 }

@@ -1,4 +1,5 @@
 import AssetReport from "../../models/asset.model.js";
+import { assertUniqueInitialLotNumbers } from "../../service/captureLotIdentity.js";
 import { prepareReportYoutubeVideos } from "../../service/youtubeVideoService.js";
 import { generateAssetDocxFromReport } from "../../service/assetDocxService.js";
 import { generateAssetSchedulePdfFromReport } from "../../service/assetSchedulePdfService.js";
@@ -787,6 +788,8 @@ export async function runPreviewFilesJob(
       { reconcileManualOverrides: false }
     );
     const hasReviewedPreviewLots = Array.isArray(previewDataForJob?.lots);
+    const sourceLots = getSourceLotsForJob(report, previewDataForJob);
+    assertUniqueInitialLotNumbers(sourceLots);
     syncAssetPreviewDataToRoot(report, previewDataForJob);
     // Proposal Valuation edits target a nested preview_data field while this
     // worker can run for minutes. Never persist the worker's stale Mixed
@@ -797,7 +800,6 @@ export async function runPreviewFilesJob(
       generationToken || undefined,
       executionToken || undefined
     );
-    const sourceLots = getSourceLotsForJob(report, previewDataForJob);
     let reportData = buildPreviewReportData(report, user, previewDataForJob);
     await persistAssetGeneratedLots({
       reportId,

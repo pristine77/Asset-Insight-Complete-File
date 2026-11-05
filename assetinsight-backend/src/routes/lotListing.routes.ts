@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { initialPreviewRetryController } from "../controller/initialPreviewRetry.controller.js";
 import {
   createLotListing,
   uploadMiddleware,
@@ -33,6 +34,8 @@ import {
 } from "../controller/smartUpload.controller.js";
 
 const router = Router();
+router.get("/:id/retry-preview", protect, initialPreviewRetryController("lotListing", "read"));
+router.post("/:id/retry-preview", protect, initialPreviewRetryController("lotListing", "retry"));
 
 // Create new lot listing
 router.post("/upload-session", protect, createUploadSession("lotListing"));

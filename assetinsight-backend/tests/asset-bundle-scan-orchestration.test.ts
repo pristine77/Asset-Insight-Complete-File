@@ -60,6 +60,7 @@ import AssetReport from "../src/models/asset.model.js";
 import AuctioneerWorkItem from "../src/models/auctioneerWorkItem.model.js";
 import { remapBundleItemImages, runAssetPreviewJob } from "../src/jobs/assetReportJob/previewJob.js";
 import { runAssetReportJob } from "../src/jobs/assetReportJob.js";
+import { sendEmail } from "../src/utils/sendVerificationEmail.js";
 
 let mongo: MongoMemoryServer;
 beforeAll(async () => {
@@ -267,26 +268,64 @@ describe("Asset Bundle scan orchestration", () => {
     expect(mocks.detect).not.toHaveBeenCalled();
   });
 
-  it.each(["222", null])("keeps independent Bundle identities and all media with sticker=%s", async (number) => {
+  it.each([undefined, false, true])("keeps recovered analysis while skipReadyNotification=%s controls only the ready email", async skipReadyNotification => {
+    const jobInput = input("mixed");
+    jobInput.details.draft_preview = false;
+    await runAssetPreviewJob(jobInput, { skipReadyNotification });
+    const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
+    expect(report).toMatchObject({ status: "preview", job_status: "done" });
+    expect(report.preview_data.lots).toHaveLength(2);
+    expect(report.imageUrls).toHaveLength(122);
+    expect(sendEmail).toHaveBeenCalledTimes(skipReadyNotification ? 0 : 1);
+  });
+
+  it("retains every analyzed group and photo in a 140-group legacy upload after a numbering collision", async () => {
+    const jobInput = input("mixed");
+    jobInput.details.mixed_lots = Array.from({ length: 140 }, (_, index) => ({ mode: "single_lot", count: index < 136 ? 9 : 8, extra_count: 0, cover_index: 0 }));
+    jobInput.images = Array.from({ length: 1256 }, (_, index) => ({ buffer: Buffer.from(`large-photo-${index}`),
+      originalname: `photo-${index}.jpg`, mimetype: "image/jpeg" } as Express.Multer.File));
+    mocks.detect.mockResolvedValue(new Map(Array.from({ length: 140 }, (_, index) => [index, index === 1 ? "1" : null])));
+    await runAssetPreviewJob(jobInput);
+    const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
+    expect(report).toMatchObject({ status: "preview", job_status: "done" });
+    expect(report.preview_data.lots).toHaveLength(140);
+    expect(report.imageUrls).toHaveLength(1256);
+    expect(report.preview_data.lots.flatMap((lot: any) => lot.image_urls)).toEqual(report.imageUrls);
+    expect(new Set(report.preview_data.lots.map((lot: any) => String(lot.lot_number))).size).toBe(140);
+    expect(report.preview_data.lots.slice(0, 3).map((lot: any) => String(lot.lot_number))).toEqual(["2", "1", "3"]);
+    expect(new Set(report.preview_data.lots.map((lot: any) => lot.lot_id)).size).toBe(140);
+  }, 60000);
+
+  it.each(["modern", "legacy"])("%s assigns only a conflicting automatic fallback around a later photographed number", async mode => {
+    const jobInput = input("mixed");
+    mocks.detect.mockResolvedValue(new Map([[0, null], [1, "1"]]));
+    await (mode === "modern" ? runAssetPreviewJob : runAssetReportJob)(jobInput);
+    const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
+    const lots = mode === "modern" ? report.preview_data.lots : report.lots;
+    expect(lots.map((lot: any) => String(lot.lot_number))).toEqual(["2", "1"]);
+    expect(lots.map((lot: any) => lot.image_urls.length)).toEqual([104, 15]);
+    expect(lots.map((lot: any) => lot.extra_image_urls.length)).toEqual([2, 1]);
+  });
+
+  it.each(["222", null].flatMap(number => ["modern", "legacy"].map(mode => ({ number, mode }))))("keeps editable independent Bundle identities and all media with sticker=$number ($mode)", async ({ number, mode }) => {
     const jobInput = input("mixed");
     mocks.detect.mockResolvedValue(new Map([[0, number], [1, number]]));
     mocks.analyze.mockImplementation(async (photos: string[]) => ({ lots: [{
       title: photos[0], description: "Independent submitted unit", estimated_value: "CAD 100",
       image_indexes: [0], lot_number: "222",
     }] }));
-    // Owner, 2026-11-04 ("1 and 2"): two Bundles showing the same card make a
-    // report, the second renumbered; it is never stopped.
-    await runAssetPreviewJob(jobInput);
+    if (mode === "modern") await runAssetPreviewJob(jobInput);
+    else await runAssetReportJob(jobInput);
     const report: any = await AssetReport.findOne({ user: jobInput.user.id }).lean();
-    const lots = report.preview_data.lots;
+    const lots = mode === "modern" || number ? report.preview_data.lots : report.lots;
+    if (number) expect(report).toMatchObject({ status: "preview", job_status: "done" });
     expect(lots).toHaveLength(2);
     expect(lots.map((lot: any) => lot.lot_id)).toEqual(["lot-001", "lot-002"]);
-    // Owner 2026-11-03: never two lots with the same number in one report. The
-    // second Bundle showing card 222 takes the next number in capture order.
-    expect(lots.map((lot: any) => String(lot.lot_number))).toEqual(number ? ["222", "1"] : ["1", "2"]);
+    expect(lots.map((lot: any) => String(lot.lot_number))).toEqual(number ? ["222", "222"] : ["1", "2"]);
     expect(lots.map((lot: any) => lot.image_urls)).toEqual([report.imageUrls.slice(0, 104), report.imageUrls.slice(106, 121)]);
     expect(lots.map((lot: any) => lot.extra_image_urls)).toEqual([report.imageUrls.slice(104, 106), report.imageUrls.slice(121)]);
-    expect(lots.map((lot: any) => lot.title)).toEqual([report.imageUrls[0], report.imageUrls[106]]);
+    expect(lots.map((lot: any) => lot.title)).toEqual(mocks.analyze.mock.calls.map(call => call[0][0]));
+    if (number) expect(mocks.pdf).not.toHaveBeenCalled();
   });
 
   it("persists event-continuing fallback numbers on the actual imported Asset initial job", async () => {

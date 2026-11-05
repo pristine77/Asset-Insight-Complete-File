@@ -593,10 +593,15 @@ export async function createMongoReportJob(input: CreateReportJobInput) {
         input.payload?.eventIdentityRetry?.version === 1 &&
         /^[a-f\d]{24}$/i.test(String(input.payload.eventIdentityRetry.originalJobId || "")) &&
         String(input.progressId || "").startsWith("event-retry-");
+      const explicitRetainedRetry = ["asset-preview", "lot-listing-preview"].includes(input.type) &&
+        input.targetStatus === "preview" && input.maxAttempts === 1 && existing.maxAttempts === 1 &&
+        input.payload?.retainedPreviewRetry?.version === 1 &&
+        /^[a-f\d]{24}$/i.test(String(input.payload.retainedPreviewRetry.originalJobId || "")) &&
+        String(input.progressId || "").startsWith("preview-retry-");
       // This one-attempt manual source retry may already have failed while the
       // API was unable to clear its accepted outbox. A later sweep must record
       // that exact terminal receipt, not authorize another paid analysis call.
-      if (existing.status !== "failed" || explicitEventRetry) return existing;
+      if (existing.status !== "failed" || explicitEventRetry || explicitRetainedRetry) return existing;
       const revived = await ReportJob.findOneAndUpdate(
         { _id: existing._id, status: "failed" },
         {

@@ -112,3 +112,11 @@ export async function readPreviewReminderRequest(request: Request): Promise<Prev
   }
   return { subject, message, baseRevision, requestId };
 }
+
+export async function readInitialPreviewRetryRequest(request: Request): Promise<{ baseRevision: string }> {
+  const body = await readPreviewMutationJson(request);
+  if (Object.keys(body).length !== 1 || typeof body.baseRevision !== "string" || !/^[a-f0-9]{64}$/.test(body.baseRevision)) {
+    throw new PreviewResubmitRequestError("Refresh this report's recovery status before retrying.", 400);
+  }
+  return { baseRevision: body.baseRevision };
+}

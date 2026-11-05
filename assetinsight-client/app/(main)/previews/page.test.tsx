@@ -31,6 +31,8 @@ vi.mock("next/navigation", () => ({
     forward: vi.fn(),
   }),
 }));
+vi.mock("@/components/reports/InitialPreviewRetry", () => ({ default: () => <div data-testid="initial-preview-retry" /> }));
+
 vi.mock("@/services/salvage", async (original) => ({
   ...await original<typeof import("@/services/salvage")>(),
   SalvageService: { getReports: mocks.getSalvageReports },
@@ -180,13 +182,14 @@ describe("Preview queue affordances", () => {
     expect(mocks.resubmitLotListing).not.toHaveBeenCalled();
   });
 
-  it("offers draft recovery, not an empty preview or file retry, when no saved lots exist", async () => {
+  it("offers initial-preview recovery without promising a saved draft when no saved lots exist", async () => {
     mocks.getAssetReports.mockResolvedValue({ data: [] });
     mocks.getLotListings.mockResolvedValue({ data: [{ ...lotListingPreview, status: "error", workflow_stage: "error", lots: [], preview_data: {} }] });
     render(<PreviewsPage />);
-    expect(await screen.findByRole("link", { name: "Open saved drafts" })).toHaveAttribute("href", "/drafts");
+    expect(await screen.findByRole("link", { name: "check saved drafts" })).toHaveAttribute("href", "/previews?tab=drafts");
     expect(screen.queryByRole("button", { name: /^Preview Lot Listing report/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry generation" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("initial-preview-retry")).toBeInTheDocument();
   });
 
   beforeEach(() => {

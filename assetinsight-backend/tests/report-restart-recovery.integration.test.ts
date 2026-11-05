@@ -543,10 +543,12 @@ describe.sequential("safe restart recovery and administrator saved-preview resub
     await modelFor(kind).collection.updateOne({ _id: report._id }, { $set: { "preview_data.lots": duplicateLots } });
     const before = await loadReport(kind, report._id);
     const state = recovery.getReportResubmitState(kind, before);
+    expect(state.resubmitEligible).toBe(false);
+    expect(state.resubmitIneligibleReason).toContain("Lot numbers must be unique");
     await expect(recovery.resubmitSavedReportPreview({
       kind, reportId: String(report._id), actorId: String(actorId), baseRevision: state.resubmitRevision,
     })).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("Lot numbers must be unique") });
-    expect(await recovery.recoverOrphanedReport(kind, String(report._id))).toBe("conflict");
+    expect(await recovery.recoverOrphanedReport(kind, String(report._id))).toBe("incomplete");
     expect(await ReportJob.countDocuments()).toBe(0);
     expect((await loadReport(kind, report._id)).preview_data).toEqual(before.preview_data);
     expect(queueMocks.ensureReportJobOutbox).not.toHaveBeenCalled();
