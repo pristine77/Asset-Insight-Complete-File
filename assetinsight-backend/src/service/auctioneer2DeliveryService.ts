@@ -58,6 +58,7 @@ import { frozenAuctioneerVideo } from "./auctioneer2VideoPolicy.js";
 import { resolveScheduleAMapping } from "./auctioneerScheduleAMapping.js";
 import { requiresScheduleAItem, scheduleAParentLotId } from "./auctioneerScheduleAItemLink.js";
 import { assertAuctioneerVideoReceipt } from "./auctioneer2VideoManifest.js";
+import { isSaleEventPendingWorkItem } from "./auctioneerSaleEventPending.js";
 
 /*
    Moved to its own module so the photo service can throw it too. It used to be
@@ -533,8 +534,13 @@ function completeCrBody(input: {
   opTaskDescription?: string;
   completedBy: string;
   submissionGuid?: string;
+  /**
+   * A lot sent before it has a sale (auctioneerSaleEventPending.ts): no
+   * number goes back, so Auctioneer keeps its own until it assigns the sale.
+   */
+  keepAuctioneerLotNumber?: boolean;
 }) {
-  const lotNumber = resolveAuctioneerLotNumber(input.lot);
+  const lotNumber = input.keepAuctioneerLotNumber ? undefined : resolveAuctioneerLotNumber(input.lot);
   return {
     ...(lotNumber ? { lotNumber } : {}),
     estimatedValue: resolveAuctioneerEstimatedValue(input.lot),
@@ -551,8 +557,11 @@ function completeCrBody(input: {
 async function reconcileCompletedLotNumber(
   lotId: string,
   lot: any,
-  remote: Auctioneer2Record
+  remote: Auctioneer2Record,
+  keepAuctioneerLotNumber = false
 ): Promise<void> {
+  // A sale-pending lot keeps Auctioneer's number (auctioneerSaleEventPending.ts).
+  if (keepAuctioneerLotNumber) return;
   const lotNumber = resolveAuctioneerLotNumber(lot);
   const numberPaths = ["lotNumber", "lot_number", "lot.lotNumber", "lot.lot_number"];
   const remoteNumber = firstText(remote, numberPaths);
@@ -650,7 +659,7 @@ async function deliverScheduleALot(input: {
     // Remote final state is stronger evidence than the missing local timestamp.
     const remote = await getLot(lotId);
     if (isFinalRemoteState(remote, destination)) {
-      await reconcileCompletedLotNumber(lotId, lot, remote);
+      await reconcileCompletedLotNumber(lotId, lot, remote, isSaleEventPendingWorkItem(workItem));
       checkpoint.conditionReportCompletedAt = new Date();
       await storeLotConditionReportPdf({ workItem, checkpoint, report, manifest, lotIndex, lotId, completedBy });
       checkpoint.status = "sent";
@@ -705,6 +714,7 @@ async function deliverScheduleALot(input: {
           opTaskDescription,
           completedBy,
           submissionGuid: checkpoint.sourceSubmissionId || source.submissionId,
+          keepAuctioneerLotNumber: isSaleEventPendingWorkItem(workItem),
         })
       ),
       "completing a Schedule A condition report"

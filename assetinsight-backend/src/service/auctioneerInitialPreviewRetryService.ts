@@ -8,6 +8,8 @@ import { headR2Object, resolvePersistedR2StorageTarget } from "../utils/r2Storag
 import { proposalValuationWritableRevisionCondition } from "./proposalValuationArtifactPublicationService.js";
 import { lotListingArtifactPublicationAvailableCondition } from "./lotListingArtifactPublicationService.js";
 import { AUCTIONEER_EVENT_REQUIRED_MESSAGE, recoverInitialAuctioneerEventIdentity } from "./auctioneerEventResolutionService.js";
+import AuctioneerWorkItem from "../models/auctioneerWorkItem.model.js";
+import { isSaleEventPendingWorkItem } from "./auctioneerSaleEventPending.js";
 
 type Kind = "asset" | "lotListing";
 const mode = "owner_initial_event_retry";
@@ -131,12 +133,22 @@ export async function retryInitialAuctioneerPreview(input: { reportType: Kind; r
     }
   };
   await assertOwned();
-  await recoverInitialAuctioneerEventIdentity({ reportId: report._id, reportType: kind, assertOwned });
+  // A lot Auctioneer 2.0 sent before it has a sale (Bank/Corporate Board,
+  // owner 2026-11-05; auctioneerSaleEventPending.ts) has no event to recover:
+  // its re-run keeps the lot's own number instead of allocating one, so the
+  // event check is skipped here and in the worker. Every other report still
+  // needs its event before the paid re-run.
+  const work = await AuctioneerWorkItem.findById(report.auctioneerWorkItem)
+    .select("source kind contract.eventId snapshot.tasks.saleEventPending snapshot.tasks.lot.saleEventPending").lean();
+  const saleEventPending = isSaleEventPendingWorkItem(work);
+  if (!saleEventPending) await recoverInitialAuctioneerEventIdentity({ reportId: report._id, reportType: kind, assertOwned });
   await assertOwned();
   const token = `event-retry-${createHash("sha256").update(`${kind}:${report._id}:${oldJob._id}`).digest("hex").slice(0, 40)}`;
   const outbox = buildReportJobOutbox({ type: oldJob.type, reportId: String(report._id), progressId: token, token,
     targetStatus: "preview", maxAttempts: 1, idempotencyKey: `auctioneer-event-retry:${kind}:${report._id}:${oldJob._id}`,
-    payload: { ...payload, progressId: token, eventIdentityRetry: { version: 1, originalJobId: String(oldJob._id) } } });
+    payload: { ...payload, progressId: token, eventIdentityRetry: {
+      version: 1, originalJobId: String(oldJob._id), ...(saleEventPending ? { saleEventPending: true } : {}),
+    } } });
   const audit = { mode, actorId: ownerId(report), previousJobId: report.job_id, sourceJobId: String(oldJob._id), jobId: token, requestedAt: new Date() };
   const accepted = await Model.findOneAndUpdate(filter, {
     $set: { status: "processing", job_id: token, job_status: "queued", queued_at: new Date(),
@@ -172,8 +184,12 @@ export async function verifyInitialAuctioneerRetrySources(job: IReportJob, conte
       throw conflict("The initial preview attempt is no longer current.");
     }
   };
-  const checkEvent = () => recoverInitialAuctioneerEventIdentity({ reportId: job.reportId,
-    reportType: job.type === "asset-preview" ? "asset" : "lotListing", assertOwned: assertParent });
+  // A sale-pending lot's retry has no event to recheck (set when it was queued).
+  const checkEvent = async () => {
+    if (job.payload?.eventIdentityRetry?.saleEventPending === true) return;
+    await recoverInitialAuctioneerEventIdentity({ reportId: job.reportId,
+      reportType: job.type === "asset-preview" ? "asset" : "lotListing", assertOwned: assertParent });
+  };
   // Queueing can precede execution by minutes. Recheck the exact owner/work-item
   // relationship before storage checks and again before the paid analysis starts.
   await checkEvent();

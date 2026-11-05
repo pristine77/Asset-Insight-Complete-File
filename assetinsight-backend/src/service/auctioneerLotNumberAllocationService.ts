@@ -8,6 +8,7 @@ import { enforceLotDamageAnalysisPolicy, parseLotNumberNumericPortion } from "..
 import { getAuctioneer2ConfigStatus, getContractLots } from "./auctioneer2Client.js";
 import { recoverInitialAuctioneerEventIdentity } from "./auctioneerEventResolutionService.js";
 import { normalizeAuctioneerEventId } from "../utils/auctioneerEventIdentity.js";
+import { isSaleEventPendingWorkItem, markSaleEventPending } from "./auctioneerSaleEventPending.js";
 
 const MAX_EVENT_ALLOCATIONS = 50_000;
 const MAX_CAS_ATTEMPTS = 64;
@@ -177,7 +178,7 @@ export async function allocateInitialAuctioneerLotNumbers(input: {
   }
   const linkedReportModel = input.reportType === "asset" ? "AssetReport" : "LotListing";
   const work = await AuctioneerWorkItem.findOne({ linkedReportId: reportId, linkedReportModel })
-    .select("_id kind contract.id contract.eventId snapshot.lots.sourceKey snapshot.lots.lotNumber delivery.status delivery.manifest.reportId")
+    .select("_id source kind contract.id contract.eventId snapshot.lots.sourceKey snapshot.lots.lotNumber snapshot.tasks.saleEventPending snapshot.tasks.lot.saleEventPending delivery.status delivery.manifest.reportId")
     .lean();
   if (!work) return input.lots;
   // A retry of file generation/delivery cannot opt an old snapshot into allocation.
@@ -213,6 +214,15 @@ export async function allocateInitialAuctioneerLotNumbers(input: {
   let contractId = normalizeAuctioneerEventId(work.contract?.id);
   if (!eventId || !contractId) {
     if (!toAllocate.length) return lots;
+    // A lot Auctioneer 2.0 sent before it has a sale (Bank/Corporate Board,
+    // owner 2026-11-05) is numbered there when the sale is assigned, not here:
+    // keep its number and give none. A split lot is a new Auctioneer lot and
+    // still needs the event (recovery below says so).
+    if (isSaleEventPendingWorkItem(work) && toAllocate.every((index) => !text(lots[index]?.auctioneer_source_parent_key))) {
+      await input.assertOwned?.();
+      const pending = new Set(toAllocate);
+      return lots.map((lot, index) => (pending.has(index) ? markSaleEventPending(lot) : lot));
+    }
     ({ eventId, contractId } = await recoverInitialAuctioneerEventIdentity(input));
   }
   await input.assertOwned?.();
