@@ -157,6 +157,132 @@
   opacity: 0.7;
 }
 
+/*
+  The queue's main tabs (2026-11-05): a strip across the top of the card with
+  an underline on the tab you are on, the way tabs look everywhere else. The
+  smaller pill switch (.tabs/.tab) stays for the Waiting / Completed choice
+  inside Arrival Photo Requests, so the two levels never look alike.
+*/
+.queueTabs {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-panel-alt);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.queueTabs::-webkit-scrollbar {
+  display: none;
+}
+
+.queueTab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: -1px;
+  padding: 11px 14px 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--app-text-muted);
+  font-size: 0.86rem;
+  font-weight: 620;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.queueTab:hover {
+  color: var(--app-text-strong);
+  background: color-mix(in srgb, var(--app-panel) 60%, transparent);
+}
+
+.queueTab:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
+
+/* The open tab joins the card below it and carries an accent underline. */
+.queueTabActive,
+.queueTabActive:hover {
+  border-color: var(--app-border);
+  background: var(--app-panel);
+  color: var(--app-accent);
+  font-weight: 720;
+}
+
+.queueTabActive::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--app-accent);
+}
+
+.queueTabCount {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--app-border);
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.queueTabActive .queueTabCount {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+/* Photos are waiting to be taken: the Arrival count stands out on any tab. */
+.queueTabCountAttention,
+.queueTabActive .queueTabCountAttention {
+  background: #7c3aed;
+  color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queueTab {
+    transition: none;
+  }
+}
+
+/* The short label ("Arrival") only on a narrow screen, where all three tabs
+   then fit on one line without icons. */
+.queueTabLabelShort {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .queueTabs {
+    padding: 0 6px;
+  }
+
+  .queueTab {
+    gap: 6px;
+    padding: 10px 9px 9px;
+  }
+
+  .queueTab > svg,
+  .queueTabLabelLong {
+    display: none;
+  }
+
+  .queueTabLabelShort {
+    display: inline;
+  }
+}
+
 .row {
   cursor: pointer;
 }
