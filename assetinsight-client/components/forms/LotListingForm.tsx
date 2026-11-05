@@ -439,6 +439,9 @@ export default function LotListingForm({
   const [arrivalRequestLoading, setArrivalRequestLoading] = useState(false);
   const [arrivalRequestRetry, setArrivalRequestRetry] = useState(0);
   arrivalContextRef.current = { userId, requestId: arrivalRequestId };
+  // The chosen request's contract, shown (locked) in Contract Number while Arrival Photos is on.
+  const arrivalContractNumber =
+    arrivalRequests.find((request) => request.requestId === arrivalRequestId)?.contractNumber?.trim() || "";
   useEffect(() => {
     // Read after mount, so the server render and the first client render agree.
     const fromLink = new URLSearchParams(window.location.search).get("arrivalRequest");
@@ -2337,23 +2340,31 @@ export default function LotListingForm({
             }
           >
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              {/*
+                Arrival Photos: the contract is the chosen request's, filled in
+                and locked (owner, 2026-11-04: "this will auto populate contract
+                number right?"). Sending uses only the request, so nothing is
+                typed here; the typed contract is kept, not cleared, for when
+                the switch is turned off.
+              */}
               <FormField
                 id="lot-contract-number"
                 label="Contract Number"
-                required
-                error={errors.contractNo}
+                required={!arrivalPhotos}
+                hint={arrivalPhotos ? "From the arrival photo request chosen below." : undefined}
+                error={arrivalPhotos ? undefined : errors.contractNo}
               >
                 <input
                   type="text"
-                  value={contractNo}
-                  readOnly={Boolean(auctioneer)}
-                  aria-readonly={Boolean(auctioneer)}
+                  value={arrivalPhotos ? arrivalContractNumber : contractNo}
+                  readOnly={Boolean(auctioneer) || arrivalPhotos}
+                  aria-readonly={Boolean(auctioneer) || arrivalPhotos}
                   onChange={(event) => {
                     setContractNo(event.target.value);
                     clearFieldError("contractNo");
                     markDirty();
                   }}
-                  placeholder="e.g., CTR-2026-001"
+                  placeholder={arrivalPhotos ? "Choose the arrival photo request" : "e.g., CTR-2026-001"}
                   autoComplete="off"
                   disabled={submitting}
                   className={formControlClass}

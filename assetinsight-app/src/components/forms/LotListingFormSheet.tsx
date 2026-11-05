@@ -1862,26 +1862,30 @@ const LotListingFormSheet = ({
                   {errors.currency ? <Text style={styles.errorText}>{errors.currency}</Text> : null}
                 </View>
                 ) : null}
+                {/* Arrival Photos: the chosen request's contract, filled in and
+                    locked (owner, 2026-11-04: "this will auto populate contract
+                    number right?"). Sending uses only the request; the typed
+                    contract is kept for when the switch is turned off. */}
                 <View style={styles.fieldContainerSmall}>
-                  <Text style={styles.fieldLabelSmall}>Contract # *</Text>
+                  <Text style={styles.fieldLabelSmall}>{arrivalPhotos ? 'Contract #' : 'Contract # *'}</Text>
                   <TextInput
-                    accessibilityLabel="Contract number, required"
-                    accessibilityHint={isAuctionManagementMode ? 'Provided by the selected contract' : 'Letters, numbers, and split contract suffixes are supported'}
+                    accessibilityLabel={arrivalPhotos ? 'Contract number, from the arrival photo request' : 'Contract number, required'}
+                    accessibilityHint={arrivalPhotos ? 'Filled in from the chosen request' : isAuctionManagementMode ? 'Provided by the selected contract' : 'Letters, numbers, and split contract suffixes are supported'}
                     style={[
                       styles.inputSmall,
-                      errors.contractNo && styles.inputError,
-                      isAuctionManagementMode && styles.inputLocked,
+                      !arrivalPhotos && errors.contractNo && styles.inputError,
+                      (isAuctionManagementMode || arrivalPhotos) && styles.inputLocked,
                     ]}
-                    value={contractNo}
+                    value={arrivalPhotos ? arrivalChosen?.contractNumber?.trim() || '' : contractNo}
                     onChangeText={(t) => {
                       setContractNo(t);
                       clearError('contractNo');
                     }}
-                    placeholder="Contract no."
+                    placeholder={arrivalPhotos ? 'Choose the lot below' : 'Contract no.'}
                     placeholderTextColor="#9CA3AF"
                     autoCapitalize="characters"
                     autoCorrect={false}
-                    editable={!isAuctionManagementMode && !auctioneer}
+                    editable={!isAuctionManagementMode && !auctioneer && !arrivalPhotos}
                   />
                 </View>
                 <TouchableOpacity

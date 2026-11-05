@@ -1916,6 +1916,22 @@ describe("arrival photos stay separate from report generation", () => {
     expect(mocks.apiPost).toHaveBeenCalledTimes(1);
     expect(mocks.apiPost.mock.calls[0][0]).toContain("/arrival-photo-requests/request-one/photos");
   });
+  // Owner, 2026-11-04 (Lot 0615 · Contract 825661): "this will auto populate
+  // contract number right?" The chosen request's contract fills the field, locked.
+  it("fills Contract Number from the chosen request and locks it", async () => {
+    mocks.apiGet.mockResolvedValue({ data: { success: true, data: [{
+      requestId: "request-one", requestedAt: "2026-11-04T19:03:00Z", requestedBy: "Office", lotId: "lot-1",
+      lotNumber: "0615", description: "Office furniture", serialNumber: null, make: null, model: null, year: null,
+      location: null, contractId: "contract-1", contractNumber: "825661", consignorName: null, eventNumber: null,
+      officeOnlyPhotoCount: 0,
+    }] } });
+    render(<LotListingForm />);
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /^Arrival Photos/ })).toBeChecked());
+    const contract = screen.getByLabelText(/^Contract Number/);
+    await waitFor(() => expect(contract).toHaveValue("825661"));
+    expect(contract).toHaveAttribute("readonly");
+    expect(contract).not.toBeRequired();
+  });
   it("retains photos and refuses a false success response", async () => {
     mocks.apiPost.mockResolvedValue({ data: { success: false } });
     render(<LotListingForm />);

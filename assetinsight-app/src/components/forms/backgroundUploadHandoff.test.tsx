@@ -564,6 +564,15 @@ describe('Arrival Photos Submit', () => {
     return closed;
   }
 
+  // Owner, 2026-11-04: "this will auto populate contract number right?"
+  it("shows the chosen request's contract in Contract #, locked", async () => {
+    await mountArrival();
+    const contract = await screen.findByLabelText('Contract number, from the arrival photo request');
+    expect(contract.props.value).toBe('825712');
+    expect(contract.props.editable).toBe(false);
+    expect(screen.queryByLabelText('Contract number, required')).toBeNull();
+  });
+
   it('copies every photo, main and report-only, to the request and makes no report', async () => {
     jest.mocked(auctioneerService.sendArrivalPhotos).mockResolvedValue({ sent: 3, stored: 3, skipped: 0, photoCount: 3 });
     const closed = await mountArrival();
