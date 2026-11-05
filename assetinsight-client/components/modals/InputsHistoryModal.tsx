@@ -511,6 +511,25 @@ export default function InputsHistoryModal({
                                 Original media restores on the browser where it was saved.
                               </span>
                             ) : null}
+                            {draft.submission?.status === "failed" ? (
+                              // A draft is kept until its report's preview is ready
+                              // (2026-11-05); it shows here again only when that
+                              // report stopped without a preview.
+                              <span
+                                data-testid="draft-submission-failed"
+                                style={{
+                                  display: "block",
+                                  padding: "6px 9px",
+                                  borderRadius: 6,
+                                  background: "var(--app-danger-soft)",
+                                  color: "var(--app-danger)",
+                                  fontSize: 12,
+                                  lineHeight: 1.4,
+                                }}
+                              >
+                                Sent{draft.submission.sentAt ? ` ${formatDateTime(draft.submission.sentAt)}` : ""}; processing stopped: {draft.submission.message} Use Retry on the report in Previews, or open this draft to check it.
+                              </span>
+                            ) : null}
                           </span>
                         </button>
                         <button

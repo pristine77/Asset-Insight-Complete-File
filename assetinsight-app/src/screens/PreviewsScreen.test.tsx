@@ -100,3 +100,30 @@ it('shows five processing reports and coalesces repeated refresh while a read is
   await act(async () => { finish([]); });
   expect(screen.getByText('Processing 0')).toBeTruthy();
 });
+
+// 2026-11-05: a first preview that failed has no preview to open; Retry runs
+// the same report again from the photos the server kept.
+it('offers Retry from the uploaded photos for a failed report with no preview, and sends an empty request', async () => {
+  const failed = { _id: 'asset-failed', status: 'error', job_status: 'error', workflow_stage: 'error', createdAt: '2026-11-04',
+    preview_available: false, job_error: 'Duplicate lot number 1. Original photos are retained.', preview_data: { client_name: 'Dustin Hawkins' } };
+  jest.mocked(assetService.getAssetReports).mockResolvedValue([failed as any]);
+  jest.mocked(api.post).mockResolvedValue({ data: { data: { job_status: 'queued' } } });
+  jest.mocked(api.get).mockResolvedValue({ data: { data: [] } });
+  await render(<ThemeProvider><PreviewsScreen {...props} /></ThemeProvider>);
+  const retry = await screen.findByRole('button', { name: 'Retry Dustin Hawkins from its uploaded photos' });
+  expect(screen.queryByText('Review & submit')).toBeNull();
+  await fireEvent.press(retry);
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith('/asset/asset-failed/resubmit'));
+  expect(jest.mocked(api.post).mock.calls[0]).toHaveLength(1);
+  expect(props.onOpenPreview).not.toHaveBeenCalled();
+});
+
+it('keeps Review & submit for a failed report whose saved preview can still be opened', async () => {
+  const failed = { _id: 'asset-saved', status: 'error', job_status: 'error', workflow_stage: 'error', createdAt: '2026-11-04',
+    preview_available: true, preview_data: { client_name: 'Saved Preview', lots: [{ title: 'Loader' }] } };
+  jest.mocked(assetService.getAssetReports).mockResolvedValue([failed as any]);
+  jest.mocked(api.get).mockResolvedValue({ data: { data: [] } });
+  await render(<ThemeProvider><PreviewsScreen {...props} /></ThemeProvider>);
+  expect(await screen.findByText('Review & submit')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /from its uploaded photos/ })).toBeNull();
+});

@@ -2421,11 +2421,11 @@ export const resubmitLotListing = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: "Lot listing not found" });
     }
 
-    if (listing.auctioneerWorkItem) {
-      const initialRetry = await retryInitialAuctioneerPreview({ reportType: "lotListing", reportId: listing._id,
-        userId: req.userId, hasIncomingEdits: Object.keys(req.body || {}).length > 0 });
-      if (initialRetry) return res.status(202).json(initialRetry);
-    }
+    // A failed first preview (no preview to resubmit from) re-runs from its
+    // kept photos, for every report, not only Auctioneer ones (2026-11-05).
+    const initialRetry = await retryInitialAuctioneerPreview({ reportType: "lotListing", reportId: listing._id,
+      userId: req.userId, hasIncomingEdits: Object.keys(req.body || {}).length > 0 });
+    if (initialRetry) return res.status(202).json(initialRetry);
 
     const hasIncomingEdits =
       hasOwn(req.body || {}, "preview_data") ||

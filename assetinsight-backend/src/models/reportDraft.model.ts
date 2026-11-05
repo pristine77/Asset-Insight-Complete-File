@@ -105,6 +105,17 @@ const reportDraftSchema = new mongoose.Schema(
     // Autosave remains non-destructive: conflicts are persisted for immediate
     // client feedback, while preview processing enforces the uniqueness rule.
     duplicateLotConflicts: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    // Kept after its upload is accepted, until the report's preview is ready
+    // (owner, 2026-11-05). Deleting it at acceptance lost the only editable
+    // copy whenever processing then failed. "processing" drafts are hidden
+    // from the Drafts lists; "failed" ones show again with the reason. Any
+    // later save by the user clears these fields: that is new work.
+    submittedReportId: { type: mongoose.Schema.Types.ObjectId },
+    submittedReportType: { type: String, enum: ["asset", "lotListing"] },
+    submittedAt: Date,
+    submissionStatus: { type: String, enum: ["processing", "failed"] },
+    submissionError: { type: String, trim: true },
+    submissionFailedAt: Date,
     reviewReminderSentAt: Date,
     reviewReminderClaimedAt: Date,
     reviewReminderError: { type: String, trim: true },

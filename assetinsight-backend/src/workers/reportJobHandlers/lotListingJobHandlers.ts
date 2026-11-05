@@ -11,6 +11,7 @@ import { deserializeMulterFiles } from "../../utils/multerFileSerialization.js";
 import type { ReportJobHandler } from "../../utils/reportJobMongoQueue.js";
 import { updateDraftPreviewLifecycle } from "../../service/reportDraftPreviewLifecycleService.js";
 import { verifyInitialAuctioneerRetrySources } from "../../service/auctioneerInitialPreviewRetryService.js";
+import { settleSubmittedReportDraftsBestEffort } from "../../service/submittedReportDraftService.js";
 
 export const lotListingJobHandlers = {
   "lot-listing-preview": async (job, context) => {
@@ -47,6 +48,8 @@ export const lotListingJobHandlers = {
             $unset: { activeContractClaim: 1 },
           }
         );
+        // The preview exists now: the draft kept since acceptance can go.
+        await settleSubmittedReportDraftsBestEffort({ reportId: job.reportId, reportType: "lotListing" });
       }
       if ((payload.details as any)?.draft_preview && draftId) {
         await updateDraftPreviewLifecycle(draftId, draftRevision, progressId, {

@@ -74,6 +74,19 @@ export type ReportDraft = {
   duplicateLotConflicts?: DuplicateLotConflict[];
   syncWarningCode?: string;
   syncWarningMessage?: string;
+  /**
+   * Only on a draft kept after its upload was accepted whose report then
+   * stopped without a preview (server, 2026-11-05). Drafts still being
+   * processed are not listed.
+   */
+  submission?: {
+    status: 'failed';
+    reportId: string;
+    reportType: 'asset' | 'lotListing';
+    message: string;
+    sentAt: string | null;
+    failedAt: string | null;
+  };
   createdAt: string;
   updatedAt: string;
 };

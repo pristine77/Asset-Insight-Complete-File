@@ -63,6 +63,7 @@ import {
   deleteReportDraftForSubmission,
   syncSmartUploadReportDraft,
 } from "../service/reportDraftService.js";
+import { markAcceptedReportDraftsSubmitted } from "../service/submittedReportDraftService.js";
 import { getSmartUploadLimitViolation } from "../utils/smartUploadLimits.js";
 import { applyReviewedGroupNumbers, isLotNumberUpload, lotNumberUploadWarnings, smartUploadGroupingMethod } from "../service/lotNumberUploadGrouping.js";
 import { resolveSmartUploadOrderReviewState } from "../utils/smartUploadReviewState.js";
@@ -133,7 +134,7 @@ const normalizeClientSubmissionId = (value: unknown): string =>
 const resolveBoolean = (value: unknown): boolean =>
   value === true || value === "true" || value === 1 || value === "1";
 
-const deleteAcceptedDraftBestEffort = (session: any): void => {
+const keepOrDeleteAcceptedDraftBestEffort = (session: any): void => {
   const notUpdatedAfter = session.uploadCompletedAt || session.queuedAt;
   // Legacy receipts without a server acceptance boundary cannot safely delete
   // a draft that may have been saved since. Retain it for explicit review.
@@ -150,15 +151,32 @@ const deleteAcceptedDraftBestEffort = (session: any): void => {
         .filter(Boolean),
     ),
   );
-  void Promise.all(
-    clientSubmissionIds.map((clientSubmissionId) =>
-      deleteReportDraftForSubmission(
-        session.user,
-        session.type,
-        clientSubmissionId,
-        { notUpdatedAfter },
-      ),
-    ),
+  // The draft is kept until the report's preview is ready, not deleted here
+  // (owner, 2026-11-05): processing runs after acceptance, and a failure then
+  // left no preview and no draft. It is hidden from Drafts meanwhile and
+  // removed by settleSubmittedReportDrafts once the preview exists. A session
+  // that is already processed, or that has no report id to watch, keeps the
+  // old immediate delete.
+  const reportId = String(session.reportId || "");
+  const keep = session.status !== "processed" && /^[a-f\d]{24}$/i.test(reportId);
+  void (keep
+    ? markAcceptedReportDraftsSubmitted({
+        userId: session.user,
+        type: session.type,
+        clientSubmissionIds,
+        reportId,
+        notUpdatedAfter,
+      })
+    : Promise.all(
+        clientSubmissionIds.map((clientSubmissionId) =>
+          deleteReportDraftForSubmission(
+            session.user,
+            session.type,
+            clientSubmissionId,
+            { notUpdatedAfter },
+          ),
+        ),
+      )
   ).catch((error) => {
     console.error("[UploadSession] accepted-session draft cleanup failed", {
       sessionId: String(session._id),
@@ -1602,7 +1620,7 @@ function createUploadSessionUnlocked(type: ReportUploadSessionType) {
               { $unset: { activeContractClaim: 1 } },
             );
           }
-          deleteAcceptedDraftBestEffort(existingSession);
+          keepOrDeleteAcceptedDraftBestEffort(existingSession);
           return res.status(200).json({
             message: processed
               ? "Submission already completed."
@@ -2159,7 +2177,7 @@ function createUploadSessionUnlocked(type: ReportUploadSessionType) {
             return res.status(409).json(legacyUploadSessionReadOnlyBody());
           }
           if (queued) {
-            deleteAcceptedDraftBestEffort(existing);
+            keepOrDeleteAcceptedDraftBestEffort(existing);
           } else if (!readyToComplete) {
             await syncUploadSessionDraftBestEffort(
               existing,
@@ -2438,7 +2456,7 @@ export function completeUploadSession(type: ReportUploadSessionType) {
             });
           }
         }
-        deleteAcceptedDraftBestEffort(session);
+        keepOrDeleteAcceptedDraftBestEffort(session);
         await wakeReportTransferNotification(session).catch(() => undefined);
         return res.status(200).json({
           message: processed ? "Upload session already processed" : "Upload session already queued",
@@ -3204,7 +3222,7 @@ export function completeUploadSession(type: ReportUploadSessionType) {
       // matching client draft; contract numbers are intentionally not unique.
       const unavailableAfterQueue = await unavailableUploadSessionReport({ type, session });
       if (unavailableAfterQueue) return res.status(409).json(unavailableAfterQueue);
-      deleteAcceptedDraftBestEffort(session);
+      keepOrDeleteAcceptedDraftBestEffort(session);
 
       await wakeReportTransferNotification(session).catch(() => undefined);
 

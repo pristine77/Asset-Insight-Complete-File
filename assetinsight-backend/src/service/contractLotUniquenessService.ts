@@ -99,6 +99,9 @@ export async function findContractLotConflicts(input: {
   const draftFilter: any = {
     normalizedContractNo: contractKey,
     promotedAt: null,
+    // A draft kept after its upload was accepted holds the same lots as its
+    // own report; counting both would report the lots as duplicates.
+    submittedReportId: null,
   };
   if (excludeDraftId) draftFilter._id = { $ne: excludeDraftId };
   const reportIdFilter: Record<string, unknown> = excludeReportId

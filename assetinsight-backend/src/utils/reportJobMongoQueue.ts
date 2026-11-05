@@ -13,6 +13,7 @@ import AuctioneerWorkItem from "../models/auctioneerWorkItem.model.js";
 import ReportUploadSession from "../models/reportUploadSession.model.js";
 import { getPositiveIntEnv } from "./concurrency.js";
 import { notifyReportProcessingFailure } from "../service/reportProcessingFailureService.js";
+import { settleSubmittedReportDraftsBestEffort } from "../service/submittedReportDraftService.js";
 import { deserializeMulterFiles } from "./multerFileSerialization.js";
 import { cleanupReportJobSourceFiles } from "./reportTempFiles.js";
 import { summarizeError } from "./errorSummary.js";
@@ -361,6 +362,10 @@ async function reconcileUploadSessionJobTerminalState(
     },
     update,
   );
+  // A draft kept since acceptance is deleted once the preview exists, or shown
+  // again in Drafts when processing stopped without one. It reads the report
+  // itself and never throws, so this terminal projection cannot fail on it.
+  await settleSubmittedReportDraftsBestEffort({ reportId: job.reportId, reportType: type });
 }
 
 async function hasCompletedReportGeneration(job: IReportJob): Promise<boolean> {
@@ -588,11 +593,15 @@ export async function createMongoReportJob(input: CreateReportJobInput) {
     const existing = await ReportJob.findOne({ idempotencyKey: input.idempotencyKey });
     if (existing) {
       assertExistingReportJobIdentity(input, existing);
+      // Both owner Retries (missing event; any other failed first preview,
+      // from the kept photos) are one-attempt paid analyses.
+      const manualRetry = input.payload?.eventIdentityRetry || input.payload?.failedPreviewRetry;
+      const manualPrefix = input.payload?.eventIdentityRetry ? "event-retry-" : "source-retry-";
       const explicitEventRetry = ["asset-preview", "lot-listing-preview"].includes(input.type) &&
         input.targetStatus === "preview" && input.maxAttempts === 1 && existing.maxAttempts === 1 &&
-        input.payload?.eventIdentityRetry?.version === 1 &&
-        /^[a-f\d]{24}$/i.test(String(input.payload.eventIdentityRetry.originalJobId || "")) &&
-        String(input.progressId || "").startsWith("event-retry-");
+        manualRetry?.version === 1 &&
+        /^[a-f\d]{24}$/i.test(String(manualRetry.originalJobId || "")) &&
+        String(input.progressId || "").startsWith(manualPrefix);
       // This one-attempt manual source retry may already have failed while the
       // API was unable to clear its accepted outbox. A later sweep must record
       // that exact terminal receipt, not authorize another paid analysis call.

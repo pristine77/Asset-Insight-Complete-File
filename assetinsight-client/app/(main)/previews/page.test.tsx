@@ -180,13 +180,26 @@ describe("Preview queue affordances", () => {
     expect(mocks.resubmitLotListing).not.toHaveBeenCalled();
   });
 
-  it("offers draft recovery, not an empty preview or file retry, when no saved lots exist", async () => {
-    mocks.getAssetReports.mockResolvedValue({ data: [] });
-    mocks.getLotListings.mockResolvedValue({ data: [{ ...lotListingPreview, status: "error", workflow_stage: "error", lots: [], preview_data: {} }] });
+  // 2026-11-05: the "Open saved drafts" link went to /drafts, a page the
+  // website does not have. A failed first preview now offers Retry, which
+  // re-runs the same report from its uploaded photos.
+  it.each(["asset", "lotListing"] as const)("offers Retry from the uploaded photos, not an empty preview or file retry, when a %s has no saved lots", async (kind) => {
+    const source = kind === "asset" ? assetPreview : lotListingPreview;
+    const failed = { ...source, status: "error", workflow_stage: "error", job_status: "error", lots: [], preview_data: {},
+      preview_available: false, job_error: "Duplicate lot number 1. Original photos are retained." };
+    mocks.getAssetReports.mockResolvedValue({ data: kind === "asset" ? [failed] : [] });
+    mocks.getLotListings.mockResolvedValue({ data: kind === "lotListing" ? [failed] : [] });
+    (kind === "asset" ? mocks.resubmitReport : mocks.resubmitLotListing).mockResolvedValue({ retry_stage: "initial_preview" });
     render(<PreviewsPage />);
-    expect(await screen.findByRole("link", { name: "Open saved drafts" })).toHaveAttribute("href", "/drafts");
-    expect(screen.queryByRole("button", { name: /^Preview Lot Listing report/ })).not.toBeInTheDocument();
+    const retry = await screen.findByRole("button", { name: /^Retry .* report from its uploaded photos/ });
+    expect(screen.queryByRole("link", { name: "Open saved drafts" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Retry runs this report again from the photos already uploaded/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Preview (Asset|Lot Listing) report/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry generation" })).not.toBeInTheDocument();
+    fireEvent.click(retry);
+    await waitFor(() => expect(kind === "asset" ? mocks.resubmitReport : mocks.resubmitLotListing).toHaveBeenCalledWith(source._id));
+    // An empty request: no preview data or files are sent with a Retry.
+    expect((kind === "asset" ? mocks.resubmitReport : mocks.resubmitLotListing).mock.calls[0]).toHaveLength(1);
   });
 
   beforeEach(() => {

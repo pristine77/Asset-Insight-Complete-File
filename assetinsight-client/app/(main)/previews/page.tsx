@@ -569,6 +569,29 @@ export default function PreviewsPage() {
     }
   };
 
+  /**
+   * Retry of a failed first preview. The empty request asks the server to
+   * queue the same report again from the photos it kept with the failed job
+   * (owner, 2026-11-05); no files are generated and nothing is submitted.
+   */
+  const handleRetryFromPhotos = async (report: CombinedReport) => {
+    try {
+      setResubmitting(report._id);
+      if (report.reportType === "lotListing") {
+        await resubmitLotListing(report._id);
+      } else {
+        await resubmitReport(report._id);
+      }
+      requestReportsRefetch();
+      toast.success("Report processing queued again from the uploaded photos.");
+      await loadReports({ afterMutation: true });
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || "This report could not be retried.");
+    } finally {
+      setResubmitting(null);
+    }
+  };
+
   const handleDeleteReport = async () => {
     if (!deleteTarget) return;
     try {
@@ -915,6 +938,15 @@ export default function PreviewsPage() {
                   (report.reportType === "asset" ||
                     report.reportType === "lotListing") &&
                   hasSavedReportPreview(report);
+                // A first preview that failed has nothing to open or resubmit;
+                // the server re-runs it from the photos it kept (2026-11-05).
+                const canRetryFromPhotos =
+                  jobFailed &&
+                  !jobActive &&
+                  (report.reportType === "asset" ||
+                    report.reportType === "lotListing") &&
+                  !hasSavedReportPreview(report) &&
+                  !hasOpenablePreview(report);
                 const badgeStatus = workflowBadgeStatus(report);
                 const badgeLabel =
                   WORKFLOW_LABELS[(report as any).workflow_stage] ||
@@ -1106,6 +1138,22 @@ export default function PreviewsPage() {
                           </button>
                         ) : null}
 
+                        {canRetryFromPhotos ? (
+                          <button
+                            type="button"
+                            aria-label={`Retry ${info.typeLabel} report from its uploaded photos: ${info.title}`}
+                            title="Run this report again from the photos already uploaded"
+                            className={`${styles.action} ${styles.actionPrimary}`}
+                            onClick={() => void handleRetryFromPhotos(report)}
+                            disabled={resubmitting === report._id}
+                          >
+                            <RefreshCw
+                              className={`size-3.5 ${resubmitting === report._id ? "animate-spin" : ""}`}
+                            />
+                            {resubmitting === report._id ? "Retrying..." : "Retry"}
+                          </button>
+                        ) : null}
+
                         {report.reportType === "asset" && !jobActive ? (
                           <button
                             type="button"
@@ -1215,8 +1263,14 @@ export default function PreviewsPage() {
                           "This report failed to process. Please try again or contact an admin."}
                         {hasPersistentPreviewAction ? (
                           <p className="mt-2">Your saved preview is available. Open Preview, review all lots and photos, then save and resubmit to generate files.</p>
+                        ) : canRetryFromPhotos ? (
+                          // Replaces a link to /drafts, a page the website does not
+                          // have (2026-11-05). Retry re-runs this same report from
+                          // the photos already uploaded; the draft it was sent from
+                          // shows in Drafts again while processing is stopped.
+                          <p className="mt-2">No preview was made. Retry runs this report again from the photos already uploaded (the server keeps them for 7 days after processing stops). Its draft is back in Drafts if you want to check the photos or lot numbers first.</p>
                         ) : (
-                          <p className="mt-2">No saved preview is available. <a href="/drafts" className="underline">Open saved drafts</a> to recover the source upload.</p>
+                          <p className="mt-2">No saved preview is available.</p>
                         )}
                       </div>
                     ) : null}

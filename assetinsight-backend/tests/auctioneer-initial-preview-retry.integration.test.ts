@@ -119,7 +119,13 @@ describe.sequential("manual Auctioneer missing-event initial preview retry", () 
     expect((await read(fixture) as any).report_job_outbox).toBeUndefined();
     expect((await read(fixture) as any).job_status).toBe("error");
     expect(await ReportJob.countDocuments()).toBe(2);
-    await expect(run(fixture)).rejects.toMatchObject({ code: "AUCTIONEER_INITIAL_RETRY_INCOMPLETE" });
+    // Owner 2026-11-05: the next Retry runs again from the kept photos as a
+    // NEW one-attempt job; the failed attempt itself is never revived.
+    const next = await run(fixture);
+    expect(next?.data.job_status).toBe("queued");
+    expect(next?.data.job_id).toMatch(/^source-retry-/);
+    expect((await ReportJob.findById(queued!._id).lean())?.status).toBe("failed");
+    expect(await ReportJob.countDocuments()).toBe(3);
   });
   it("ordinary initial jobs retain their existing failed-outbox revival behavior", async () => {
     const fixture = await seed();
@@ -159,8 +165,11 @@ describe.sequential("manual Auctioneer missing-event initial preview retry", () 
     expect(await ReportJob.countDocuments({ status: "queued" })).toBe(1);
     expect((await read(fixture) as any).report_recovery_history).toHaveLength(1);
   });
+  // { job_error: "Unrelated failure" } left this list on 2026-11-05: any other
+  // failed first preview now re-runs from its kept photos
+  // (failed-preview-source-retry.integration.test.ts).
   it.each([
-    { job_error: "Unrelated failure" }, { status: "preview", job_status: "done" },
+    { status: "preview", job_status: "done" },
     { preview_data: { lots: [] } }, { preview_data: { lots: [{ title: "Edited" }] } },
     { preview_submitted_at: new Date() }, { approval_requested_at: new Date() }, { released_at: new Date() },
     { preview_files: { xlsx: "https://fixture.test/saved.xlsx" } },

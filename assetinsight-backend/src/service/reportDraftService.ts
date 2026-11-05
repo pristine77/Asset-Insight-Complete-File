@@ -16,6 +16,7 @@ import { resolveSmartUploadOrderReviewState } from "../utils/smartUploadReviewSt
 import { normalizeReportContractKey } from "../utils/reportContractIdentity.js";
 import { draftMediaClientValue, sortDraftMedia } from "./reportDraftMediaService.js";
 import { smartUploadGroupingMethod } from "./lotNumberUploadGrouping.js";
+import { submittedDraftClientValue } from "./submittedReportDraftService.js";
 
 export const normalizeDraftContract = normalizeReportContractKey;
 
@@ -114,6 +115,13 @@ export async function toReportDraftClient(draft: any) {
   delete result.promotionClaimedAt;
   delete result.mediaRevision;
   delete result.contentHash;
+  // A draft kept after its upload was accepted carries one plain note
+  // (submittedReportDraftService); the raw markers stay internal.
+  const submission = submittedDraftClientValue(raw);
+  for (const key of ["submittedReportId", "submittedReportType", "submittedAt", "submissionStatus", "submissionError", "submissionFailedAt"]) {
+    delete result[key];
+  }
+  if (submission) result.submission = submission;
   result.media = sortDraftMedia((raw.media || []).map(draftMediaClientValue)).map(
     (item: any) => ({
       ...item,

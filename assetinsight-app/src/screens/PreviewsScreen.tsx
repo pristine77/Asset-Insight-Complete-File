@@ -57,6 +57,10 @@ type PreviewItem = {
   lotCount?: number;
   imageCount?: number;
   previewError?: string;
+  /** Server's own answer; false = no preview was ever made to open. */
+  previewAvailable?: boolean;
+  /** A kept draft whose report stopped without a preview (2026-11-05). */
+  draftSubmissionMessage?: string;
 };
 
 interface PreviewsScreenProps {
@@ -93,6 +97,7 @@ const PreviewsScreen = ({
   const [items, setItems] = useState<PreviewItem[]>([]);
   const [draftItems, setDraftItems] = useState<ReportDraft[]>([]);
   const [draftActionId, setDraftActionId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [mergeAnchorId, setMergeAnchorId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadingRef = useRef(false);
@@ -146,6 +151,7 @@ const PreviewsScreen = ({
           workflowProgressPercent: report.workflow_progress_percent,
           generationProgress: report.generation_progress,
           jobError: report.job_error,
+          previewAvailable: typeof (report as any).preview_available === 'boolean' ? (report as any).preview_available : undefined,
           wasSubmitted: Boolean(
             report.status === 'pending_approval' ||
             report.status === 'approved' ||
@@ -208,6 +214,7 @@ const PreviewsScreen = ({
           workflowProgressPercent: report.workflow_progress_percent,
           generationProgress: report.generation_progress,
           jobError: report.job_error,
+          previewAvailable: typeof report.preview_available === 'boolean' ? report.preview_available : undefined,
           wasSubmitted: Boolean(
             report.status === 'pending_approval' ||
               report.status === 'approved' ||
@@ -291,6 +298,7 @@ const PreviewsScreen = ({
           ? draft.media.filter((media) => media.slot !== 'video').length
           : 0,
         previewError: draft.previewError,
+        draftSubmissionMessage: draft.submission?.status === 'failed' ? draft.submission.message : undefined,
       })),
     [draftItems]
   );
@@ -455,6 +463,26 @@ const PreviewsScreen = ({
     [fetchItems]
   );
 
+  /**
+   * Retry of a failed first preview (2026-11-05). The empty request asks the
+   * server to run the same report again from the photos it kept with the
+   * failed job; nothing is submitted and no files are made.
+   */
+  const handleRetryFromPhotos = useCallback(
+    async (item: PreviewItem) => {
+      try {
+        setRetryingId(item.id);
+        await api.post(item.type === 'LotListing' ? `/lot-listing/${item.id}/resubmit` : `/asset/${item.id}/resubmit`);
+        await fetchItems();
+      } catch (error: any) {
+        Alert.alert('Unable to retry', error.response?.data?.message || 'Please try again.');
+      } finally {
+        setRetryingId(null);
+      }
+    },
+    [fetchItems]
+  );
+
   const handleDraftPreview = useCallback(
     async (item: PreviewItem) => {
       if (!item.draftId) return;
@@ -495,6 +523,13 @@ const PreviewsScreen = ({
         item.isDraftPreview &&
         (item.draftPreviewStatus === 'queued' || item.draftPreviewStatus === 'processing');
       const draftActionBusy = Boolean(item.draftId && draftActionId === item.draftId);
+      // A failed first preview: the server says no preview exists to open.
+      const canRetryFromPhotos =
+        !item.isDraftPreview &&
+        (item.type === 'Asset' || item.type === 'LotListing') &&
+        !isJobActive &&
+        (item.status === 'error' || item.workflowStage === 'error' || item.generationState === 'error') &&
+        item.previewAvailable === false;
 
       return (
         <View style={[styles.card, { borderLeftColor: statusBadge.text }]}>
@@ -605,8 +640,17 @@ const PreviewsScreen = ({
           ) : item.workflowStage === 'error' || item.generationState === 'error' ? (
             <View style={styles.errorPanel}>
               <Feather name="alert-triangle" size={16} color={colors.danger} />
-              <Text style={styles.errorText} numberOfLines={3}>
+              <Text style={styles.errorText} numberOfLines={4}>
                 {item.jobError || 'Report processing failed. Open the report to review the issue.'}
+                {canRetryFromPhotos ? '\nNo preview was made. Retry runs it again from the photos already uploaded (kept 7 days).' : ''}
+              </Text>
+            </View>
+          ) : item.draftSubmissionMessage ? (
+            // A draft kept after sending; its report stopped without a preview.
+            <View style={styles.errorPanel} testID="draft-submission-failed">
+              <Feather name="alert-triangle" size={16} color={colors.danger} />
+              <Text style={styles.errorText} numberOfLines={4}>
+                {`Sent; processing stopped: ${item.draftSubmissionMessage} Use Retry on the report under Pending, or open this draft to check it.`}
               </Text>
             </View>
           ) : null}
@@ -655,6 +699,24 @@ const PreviewsScreen = ({
             </View>
           ) : activeTab === 'pending' ? (
             <View style={styles.actionRow}>
+              {canRetryFromPhotos ? (
+                // No preview was ever made, so "Review & submit" had nothing to
+                // open. Retry re-runs the report from its uploaded photos.
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  activeOpacity={0.78}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Retry ${item.title} from its uploaded photos`}
+                  disabled={retryingId === item.id}
+                  onPress={() => void handleRetryFromPhotos(item)}>
+                  {retryingId === item.id ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Feather name="refresh-cw" size={16} color="#FFFFFF" />
+                  )}
+                  <Text style={styles.primaryButtonText}>{retryingId === item.id ? 'Retrying' : 'Retry'}</Text>
+                </TouchableOpacity>
+              ) : (
               <TouchableOpacity
                 style={[styles.primaryButton, isDeclined && styles.declinedButton]}
                 activeOpacity={0.78}
@@ -662,6 +724,7 @@ const PreviewsScreen = ({
                 <Feather name={isDeclined ? 'rotate-ccw' : 'edit-3'} size={16} color="#FFFFFF" />
                 <Text style={styles.primaryButtonText}>{item.type === 'Salvage' ? 'Open report & progress' : isDeclined ? 'Edit & resubmit' : 'Review & submit'}</Text>
               </TouchableOpacity>
+              )}
               {item.type !== 'Salvage' && <TouchableOpacity
                 style={styles.iconDangerButton}
                 activeOpacity={0.75}
@@ -726,9 +789,11 @@ const PreviewsScreen = ({
       handleDelete,
       handleDraftPreview,
       handleQuickResubmit,
+      handleRetryFromPhotos,
       onOpenPreview,
       onOpenDrafts,
       draftActionId,
+      retryingId,
       styles,
     ]
   );

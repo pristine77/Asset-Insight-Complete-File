@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import AssetReport from "../models/asset.model.js";
 import LotListing from "../models/lotListing.model.js";
 import ReportJob, { type IReportJob } from "../models/reportJob.model.js";
-import { getCanonicalLotListingPreview } from "../utils/reportPreviewAvailability.js";
+import ReportUploadSession from "../models/reportUploadSession.model.js";
+import { getCanonicalLotListingPreview, hasSavedReportPreview } from "../utils/reportPreviewAvailability.js";
+import { settleSubmittedReportDraftsBestEffort } from "./submittedReportDraftService.js";
 import { buildReportJobOutbox, ensureReportJobOutbox, shouldUseMongoReportQueue, type ReportJobExecutionContext } from "../utils/reportJobMongoQueue.js";
 import { headR2Object, resolvePersistedR2StorageTarget } from "../utils/r2Storage/r2Upload.js";
 import { proposalValuationWritableRevisionCondition } from "./proposalValuationArtifactPublicationService.js";
@@ -69,9 +71,106 @@ function response(kind: Kind, report: any) {
     message: ready ? "The preview is ready. Open it and review the details before submitting." : "The same report is queued for preview processing. Review the preview before submitting.",
     data: { reportId: String(report._id), reportType: kind, status: report.status, job_id: report.job_id,
       job_status: report.job_status, retry_stage: "initial_preview", preview_available: ready,
-      auctioneer_work_item_id: String(report.auctioneerWorkItem), downloadable: false,
-      files_generating: false, files_regenerating: false },
+      ...(report.auctioneerWorkItem ? { auctioneer_work_item_id: String(report.auctioneerWorkItem) } : {}),
+      downloadable: false, files_generating: false, files_regenerating: false },
   };
+}
+
+/** Owner Retry of any other failed first preview, from the kept photos. */
+const sourceMode = "owner_failed_preview_retry";
+/** Each run is a paid AI analysis; past this the photos should be checked. */
+export const MAX_SOURCE_RETRIES = 3;
+const photosGone = () => conflict("The photos for this report are no longer kept on the server (they are removed 7 days after processing stops). Upload them again as a new report.", "PREVIEW_RETRY_SOURCE_REMOVED");
+
+/**
+ * Re-runs a failed first preview from the photos the server kept with the
+ * failed job (owner, 2026-11-05: Colin Kostenuk's "Dustin Hawkins" report
+ * stopped on "Duplicate lot number 1" with no preview and no draft).
+ *
+ * The failed job's queue payload still names every original photo in R2, in
+ * order with its lot/role; those objects stay until the upload-session sweep
+ * (SMART_UPLOAD_ABANDONED_HOURS, 7 days after the failure). The same payload
+ * is queued again under a new token, exactly like the missing-event retry;
+ * the worker checks every photo is still there before the paid analysis.
+ * Auctioneer lot numbers come back the same: allocation is keyed per report
+ * and lot (auctioneerLotNumberAllocationService).
+ *
+ * Returns null when the report is not a failed first preview (it has a saved
+ * preview to resubmit from, was submitted, or is not failed).
+ */
+async function retryFromRetainedSource(kind: Kind, report: any, input: { userId: unknown; hasIncomingEdits: boolean }) {
+  if (report.status !== "error" || report.job_status !== "error") return null;
+  if (hasSavedReportPreview(kind, report) || wasSubmitted(report) || hasArtifacts(report)) return null;
+  // Edits need a saved preview; the caller's existing answer explains that.
+  if (input.hasIncomingEdits) return null;
+  // The last attempt already found photos missing: another run cannot help.
+  if ([sourceUnavailable().message, photosGone().message].includes(String(report.job_error || ""))) throw photosGone();
+  if (report.adminArchivedAt || report.is_draft_preview || report.report_job_outbox || report.files_generating || report.files_regenerating ||
+    report.files_regeneration_pending || report.excel_regenerating || report.report_recovery?.manualReviewRequired || !shouldUseMongoReportQueue()) {
+    throw conflict("This report cannot be retried in its current state. Refresh the page and check its processing status.");
+  }
+  const attempts = (report.report_recovery_history || []).filter((entry: any) => entry?.mode === sourceMode).length;
+  if (attempts >= MAX_SOURCE_RETRIES) {
+    throw conflict(`This report has already been retried ${MAX_SOURCE_RETRIES} times. Check the photos and lot numbers, then upload them again as a new report, or contact support.`, "PREVIEW_RETRY_LIMIT_REACHED");
+  }
+  const jobType = kind === "asset" ? "asset-preview" : "lot-listing-preview";
+  const oldJob = await ReportJob.findOne({ reportId: String(report._id), progressId: report.job_id,
+    type: jobType, status: "failed", targetStatus: "preview" }).sort({ createdAt: -1 }).lean();
+  // Older uploads went through server disk, which is emptied when a job ends;
+  // a report moved to another user no longer matches its upload. Neither can
+  // be run again as it was sent.
+  const cannotRerun = () => conflict("This report's original upload cannot be run again: its photos are not all kept on the server. Upload them again as a new report.", "PREVIEW_RETRY_SOURCE_UNAVAILABLE");
+  if (!oldJob || oldJob.executionToken || oldJob.lockedBy || oldJob.leaseUntil) throw cannotRerun();
+  const payload: any = oldJob.payload;
+  if (String(payload?.user?.id || "") !== ownerId(report) ||
+    String(kind === "asset" ? payload?.reportId : payload?.listingId) !== String(report._id) ||
+    String(payload?.progressId || "") !== String(report.job_id || "") ||
+    !payload?.details || payload.details.draft_preview || !report.job_id) throw cannotRerun();
+  try { originalSources(payload); } catch { throw cannotRerun(); }
+  // The sweep claims a session before deleting its photos: once it has
+  // started, the photos are going or gone.
+  if (await ReportUploadSession.exists({ reportId: String(report._id), type: kind, cleanupStartedAt: { $exists: true } })) {
+    throw photosGone();
+  }
+  const filter = snapshotFilter(kind, report);
+  if (await ReportJob.exists({ reportId: String(report._id), status: { $in: activeStatuses } })) {
+    throw conflict("Another attempt for this report is already processing. Refresh to see its progress.");
+  }
+  // One token per failed job, so a repeated click for the same failure can
+  // only ever reach the same queued attempt.
+  const token = `source-retry-${createHash("sha256").update(`${kind}:${report._id}:${oldJob._id}`).digest("hex").slice(0, 40)}`;
+  const outbox = buildReportJobOutbox({ type: oldJob.type, reportId: String(report._id), progressId: token, token,
+    targetStatus: "preview", maxAttempts: 1, idempotencyKey: `preview-source-retry:${kind}:${report._id}:${oldJob._id}`,
+    payload: { ...payload, progressId: token, failedPreviewRetry: { version: 1, originalJobId: String(oldJob._id) } } });
+  const audit = { mode: sourceMode, actorId: ownerId(report), previousJobId: report.job_id, previousError: String(report.job_error || "").slice(0, 500),
+    sourceJobId: String(oldJob._id), jobId: token, requestedAt: new Date() };
+  const accepted = await modelFor(kind).findOneAndUpdate(filter, {
+    $set: { status: "processing", job_id: token, job_status: "queued", queued_at: new Date(),
+      files_generating: false, files_regenerating: false, generation_target_status: "preview", report_job_outbox: outbox,
+      report_recovery: audit, generation_progress: { stage: "queued", phase: "processing", progressPercent: 0,
+        message: "Queued to prepare the preview again from the uploaded photos", updatedAt: new Date() } },
+    $unset: { job_error: 1, error_message: 1, job_execution_token: 1 },
+    $push: { report_recovery_history: audit },
+  }, { returnDocument: "after" }).select("+report_job_outbox +report_recovery").lean();
+  if (!accepted) {
+    const current = await modelFor(kind).findOne({ _id: report._id, user: input.userId }).select("+report_job_outbox +report_recovery").lean();
+    if (current?.report_recovery?.mode === sourceMode && current.report_recovery.previousJobId === report.job_id &&
+      current.report_recovery.jobId === current.job_id && activeStatuses.includes(current.job_status)) {
+      await dispatch(kind, current);
+      return response(kind, current);
+    }
+    throw conflict("The report changed while retrying. Refresh before trying again.");
+  }
+  // While the attempt runs, its upload session must not look abandoned to
+  // the sweep; the attempt's own end sets it to processed or failed again.
+  await ReportUploadSession.updateMany(
+    { reportId: String(report._id), type: kind, status: "failed", cleanupStartedAt: { $exists: false } },
+    { $set: { status: "queued" }, $unset: { lastError: 1 } },
+  );
+  // A draft kept from this report hides again until the new attempt ends.
+  await settleSubmittedReportDraftsBestEffort({ reportId: report._id, reportType: kind });
+  await dispatch(kind, accepted);
+  return response(kind, accepted);
 }
 
 async function dispatch(kind: Kind, report: any) {
@@ -84,28 +183,53 @@ async function dispatch(kind: Kind, report: any) {
   }
 }
 
-/** Existing empty-body Reports Retry, only for an unreviewed missing-event failure. */
+/**
+ * The empty-body Reports Retry for a report whose first preview failed.
+ *
+ * - The Auctioneer "needs an auction event" failure keeps its own path below
+ *   (it repairs the event identity before re-running).
+ * - Every other failed first preview re-runs from the photos the server kept
+ *   with the failed job (retryFromRetainedSource, owner 2026-11-05). Before
+ *   this there was no way back: no preview to open, no draft, and Resubmit
+ *   answered "Cannot resubmit report with status: error".
+ * Returns null when the report is not a failed first preview, so the caller's
+ * ordinary resubmit continues.
+ */
 export async function retryInitialAuctioneerPreview(input: { reportType: Kind; reportId: unknown; userId: unknown; hasIncomingEdits: boolean }) {
   const kind = input.reportType;
   const Model = modelFor(kind);
   const report = await Model.findOne({ _id: input.reportId, user: input.userId })
-    .select("+report_job_outbox +report_recovery +job_execution_token").lean();
-  if (!report || !report.auctioneerWorkItem) return null;
+    .select("+report_job_outbox +report_recovery +report_recovery_history +job_execution_token").lean();
+  if (!report) return null;
   const receipt = report.report_recovery;
-  if (!input.hasIncomingEdits && receipt?.mode === mode && receipt.jobId === report.job_id &&
+  // A second click while the same attempt is queued, running or done answers
+  // with that attempt; it never starts another.
+  if (!input.hasIncomingEdits && [mode, sourceMode].includes(receipt?.mode) && receipt.jobId === report.job_id &&
     receipt.actorId === ownerId(report) && !wasSubmitted(report) && !report.adminArchivedAt && !report.is_draft_preview &&
     (activeStatuses.includes(report.job_status) || report.job_status === "done")) {
     await dispatch(kind, report);
     return response(kind, report);
   }
-  if (receipt?.mode === mode && receipt.jobId === report.job_id && !wasSubmitted(report) &&
+  const eventFailure = Boolean(report.auctioneerWorkItem) && report.job_error === AUCTIONEER_EVENT_REQUIRED_MESSAGE;
+  const afterEventRetry = receipt?.mode === mode && receipt.jobId === report.job_id;
+  if (!eventFailure) {
+    try {
+      const fromSource = await retryFromRetainedSource(kind, report, input);
+      if (fromSource) return fromSource;
+    } catch (error) {
+      // After a failed missing-event retry, keep that path's own answer below
+      // when the photos cannot be run again.
+      if (!afterEventRetry) throw error;
+    }
+  }
+  if (afterEventRetry && !wasSubmitted(report) &&
     canonicalPreview(kind, report) == null && report.job_status === "error" &&
     report.job_error !== AUCTIONEER_EVENT_REQUIRED_MESSAGE) {
     // Root Lot rows may still be the original photo/intake shell. A different
     // failure during this retry must never turn that shell into file submission.
     throw conflict("Initial preview processing has not finished. Open the saved draft and check its photos and details before trying again. Keep this report; do not create a duplicate.", "AUCTIONEER_INITIAL_RETRY_INCOMPLETE");
   }
-  if (report.job_error !== AUCTIONEER_EVENT_REQUIRED_MESSAGE || report.status !== "error" || report.job_status !== "error") return null;
+  if (!eventFailure || report.status !== "error" || report.job_status !== "error") return null;
   // A deliberately saved review is authoritative and stays on the ordinary
   // file-generation path, not this source-based paid initial-analysis retry.
   if (canonicalPreview(kind, report) != null || wasSubmitted(report) || hasArtifacts(report)) return null;
@@ -161,8 +285,13 @@ export async function retryInitialAuctioneerPreview(input: { reportType: Kind; r
 
 /** Worker-only validation: all retained objects are checked before any paid analysis. */
 export async function verifyInitialAuctioneerRetrySources(job: IReportJob, context: ReportJobExecutionContext) {
-  if (!job.payload?.eventIdentityRetry) return;
-  const files = originalSources(job.payload);
+  const eventRetry = Boolean(job.payload?.eventIdentityRetry);
+  // A Retry from the kept photos gets the same photo check, without the
+  // Auctioneer event repair (its failure was not about the event).
+  if (!eventRetry && !job.payload?.failedPreviewRetry) return;
+  const missing = eventRetry ? sourceUnavailable : photosGone;
+  let files: any[];
+  try { files = originalSources(job.payload); } catch { throw missing(); }
   let next = 0;
   let stopped = false;
   let failure: unknown;
@@ -174,8 +303,11 @@ export async function verifyInitialAuctioneerRetrySources(job: IReportJob, conte
       throw conflict("The initial preview attempt is no longer current.");
     }
   };
-  const checkEvent = () => recoverInitialAuctioneerEventIdentity({ reportId: job.reportId,
-    reportType: job.type === "asset-preview" ? "asset" : "lotListing", assertOwned: assertParent });
+  const checkEvent = async () => {
+    if (!eventRetry) return;
+    await recoverInitialAuctioneerEventIdentity({ reportId: job.reportId,
+      reportType: job.type === "asset-preview" ? "asset" : "lotListing", assertOwned: assertParent });
+  };
   // Queueing can precede execution by minutes. Recheck the exact owner/work-item
   // relationship before storage checks and again before the paid analysis starts.
   await checkEvent();
@@ -188,13 +320,13 @@ export async function verifyInitialAuctioneerRetrySources(job: IReportJob, conte
         const file = files[index];
         const target = resolvePersistedR2StorageTarget({ r2Bucket: file.r2Bucket });
         const head = await headR2Object(target.bucketName, file.r2Key);
-        if (Number(head.size) !== file.size) throw sourceUnavailable();
+        if (Number(head.size) !== file.size) throw missing();
       } catch (error) { stopped = true; failure ||= error; }
     }
   }));
   if (failure) {
     await assertParent();
-    throw sourceUnavailable();
+    throw missing();
   }
   await assertParent();
   await checkEvent();

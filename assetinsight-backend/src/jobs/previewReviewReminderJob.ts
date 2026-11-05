@@ -93,6 +93,9 @@ function draftClaimFilter(cutoff: Date, claimExpiredBefore: Date) {
     reviewReminderSentAt: null,
     promotedAt: null,
     promotionToken: null,
+    // A draft kept after its upload was accepted is the report's work now;
+    // the report's own preview reminder covers it.
+    submittedReportId: null,
     updatedAt: { $lte: cutoff },
     previewStatus: { $in: ["idle", "ready", "error"] },
     $or: [
