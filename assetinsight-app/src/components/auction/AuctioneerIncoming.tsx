@@ -479,8 +479,19 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
                   accessibilityState={{ selected: queueTab === tab }}
                   onPress={() => setQueueTab(tab)}
                   style={[styles.tab, queueTab === tab && styles.selectedTab]}>
-                  <Text style={[styles.tabText, queueTab === tab && styles.selectedTabText]}>
-                    {tab === 'outstanding' ? 'Outstanding' : tab === 'completed' ? 'Completed' : 'Arrival Photos'} (
+                  {/*
+                    The count on a line of its own, and a line budget (two, or
+                    three for the two-word "Arrival Photos") the text shrinks to
+                    fit: on a narrow phone "Outstanding" was split mid-word as
+                    "Outsta / nding" (owner's screenshot, 2026-11-04).
+                  */}
+                  <Text
+                    numberOfLines={tab === 'arrival' ? 3 : 2}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    style={[styles.tabText, queueTab === tab && styles.selectedTabText]}>
+                    {tab === 'outstanding' ? 'Outstanding' : tab === 'completed' ? 'Completed' : 'Arrival Photos'}
+                    {'\n'}(
                     {tab === 'outstanding'
                       ? outstandingItems.length
                       : tab === 'completed'
@@ -491,10 +502,15 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
                 </TouchableOpacity>
               ))}
             </View>
+            {/*
+              Waiting / Completed as one row of two equal halves (owner,
+              2026-11-04, phone screenshot: "arrange this"). The camera and the
+              words "Arrival photos" before them pushed Completed onto a second
+              line on a phone; the selected tab above already names the list,
+              so the row holds only the two choices.
+            */}
             {showingArrival ? (
               <View style={styles.arrivalBar} accessibilityRole="tablist">
-                <Feather name="camera" size={14} color={isDark ? "#C4B5FD" : "#6D28D9"} />
-                <Text style={styles.arrivalBarLabel}>Arrival photos</Text>
                 {(['waiting', 'completed'] as const).map((view) => {
                   const selected = arrivalView === view;
                   const count = view === 'waiting' ? arrivalRequests.length : completedArrival.length;
@@ -506,7 +522,11 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
                       accessibilityState={{ selected }}
                       onPress={() => setArrivalView(view)}
                       style={[styles.subTab, selected && styles.subTabSelected]}>
-                      <Text style={[styles.subTabText, selected && styles.subTabTextSelected]}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                        style={[styles.subTabText, selected && styles.subTabTextSelected]}>
                         {view === 'waiting' ? 'Waiting' : 'Completed'}
                       </Text>
                       <Text style={view === 'waiting' ? styles.countWaiting : styles.countDone}>{count}</Text>
@@ -618,26 +638,31 @@ export default function AuctioneerIncoming({ refreshVersion = 0, onOpenReport }:
 */
 const createStyles = (colors: AppThemeColors, isDark = false) =>
   StyleSheet.create({
+    // One row that never wraps: two halves of equal width on the violet track.
     arrivalBar: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      alignItems: 'center',
-      gap: 8,
-      padding: 8,
+      alignItems: 'stretch',
+      gap: 4,
+      padding: 4,
       borderRadius: 10,
       backgroundColor: isDark ? 'rgba(139, 92, 246, 0.14)' : '#F5F3FF',
     },
-    arrivalBarLabel: { fontSize: 12, fontWeight: '700', color: isDark ? '#C4B5FD' : '#6D28D9', marginRight: 4 },
+    // The border is always there (clear when not selected), so picking a
+    // half does not nudge the row by a pixel.
     subTab: {
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'center',
       gap: 6,
       minHeight: 40,
-      paddingHorizontal: 12,
+      paddingHorizontal: 8,
       borderRadius: 8,
+      borderWidth: 1,
+      borderColor: 'transparent',
     },
-    subTabSelected: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-    subTabText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+    subTabSelected: { backgroundColor: colors.surface, borderColor: colors.border },
+    subTabText: { flexShrink: 1, fontSize: 13, fontWeight: '700', color: colors.textSecondary },
     subTabTextSelected: { color: colors.text },
     countWaiting: {
       fontSize: 12,
@@ -688,7 +713,8 @@ const createStyles = (colors: AppThemeColors, isDark = false) =>
     tab: {
       flex: 1,
       minHeight: 44,
-      padding: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 4,
       justifyContent: 'center',
       alignItems: 'center',
       borderWidth: 1,

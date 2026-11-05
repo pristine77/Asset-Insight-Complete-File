@@ -1,4 +1,5 @@
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { act, fireEvent, render as nativeRender, screen } from '@testing-library/react-native';
 import { ThemeProvider } from '../../context/ThemeContext';
 import AuctioneerIncoming, { retainAuctioneerAccessRevision } from './AuctioneerIncoming';
@@ -569,6 +570,24 @@ describe('Arrival Photos tab', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Take arrival photos for lot 3012' }));
     expect(await screen.findByText('Lot form arrival request-1')).toBeTruthy();
     expect(auctioneerService.claim).not.toHaveBeenCalled();
+  });
+
+  // Owner, 2026-11-04, phone screenshot: "arrange this". Completed had wrapped
+  // onto a second line behind a camera and the words "Arrival photos", and
+  // "Outstanding" split mid-word as "Outsta / nding".
+  it('lays Waiting and Completed out as one row of equal halves, and never splits a tab word', async () => {
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    await render(<AuctioneerIncoming onOpenReport={jest.fn()} />);
+    await fireEvent.press(await screen.findByRole('tab', { name: 'Arrival photo requests' }));
+    const waiting = await screen.findByRole('tab', { name: 'Waiting arrival photo requests, 1' });
+    const completed = screen.getByRole('tab', { name: /^Completed arrival photo requests/ });
+    expect(StyleSheet.flatten(waiting.props.style)).toMatchObject({ flex: 1 });
+    expect(StyleSheet.flatten(completed.props.style)).toMatchObject({ flex: 1 });
+    expect(screen.queryByText('Arrival photos')).toBeNull();
+    const outstanding = screen.getByText(/^Outstanding \(\d+\)$/);
+    expect(outstanding.props.numberOfLines).toBe(2);
+    expect(outstanding.props.adjustsFontSizeToFit).toBe(true);
+    expect(outstanding.props.children).toContain('\n');
   });
 
   it('still loads the contracts when the arrival list cannot be read', async () => {
