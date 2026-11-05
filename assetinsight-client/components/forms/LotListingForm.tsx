@@ -2467,9 +2467,11 @@ export default function LotListingForm({
                 />
               </FormField>
 
-              {/* The three switches side by side, Arrival Photos in the middle
-                  (owner, 2026-11-03, marked between the other two). */}
-              <div className={`grid grid-cols-1 gap-5 sm:col-span-2 ${auctioneer ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
+              {/* The two switches side by side. No Arrival Photos switch
+                  (owner, 2026-11-04: "remove the arrival photos switch on the
+                  website too", as on the phone): Incoming → Arrival Photo
+                  Requests opens this form in that mode (?arrivalRequest=). */}
+              <div className="grid grid-cols-1 gap-5 sm:col-span-2 sm:grid-cols-2">
               <div className="rounded-lg border border-[var(--app-control-border)] bg-[var(--app-panel-alt)] px-4 py-3">
                 <FormSwitch
                   id="lot-bank-photos"
@@ -2484,27 +2486,6 @@ export default function LotListingForm({
                 />
               </div>
 
-              {/* Arrival photos belong to a lot already in Auctioneer, never to
-                  the Auctioneer contract this form may be capturing. */}
-              {!auctioneer ? <div
-                className={`rounded-lg border px-4 py-3 ${arrivalPhotos ? "border-violet-400 bg-violet-50" : "border-[var(--app-control-border)] bg-[var(--app-panel-alt)]"}`}
-                data-testid="arrival-photos-switch"
-              >
-                <FormSwitch
-                  id="lot-arrival-photos"
-                  label="Arrival Photos"
-                  description="Choose before adding photos. Sends to the lot's Office Only in Auctioneer without analysis. Use a new form for arrival photos when resuming a draft."
-                  checked={arrivalPhotos}
-                  onChange={(event) => {
-                    if (arrivalModeLocked || arrivalHasMedia) return;
-                    arrivalPhotosRef.current = event.target.checked;
-                    arrivalSentRef.current = false;
-                    setArrivalPhotos(event.target.checked);
-                    if (!event.target.checked) setArrivalRequestId("");
-                  }}
-                  disabled={submitting || !arrivalModeReady || arrivalModeLocked || arrivalHasMedia}
-                />
-              </div> : null}
 
               <div className="rounded-lg border border-[var(--app-control-border)] bg-[var(--app-panel-alt)] px-4 py-3">
                 <FormSwitch
