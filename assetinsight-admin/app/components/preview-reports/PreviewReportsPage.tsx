@@ -143,11 +143,14 @@ function WorkflowBadge({ report }: { report: PreviewReportSummary }) {
 
 function ReportCard({
   report,
+  canManage,
   onOpen,
   onReminder,
   onDelete,
 }: {
   report: PreviewReportSummary;
+  /** Superadmin: Notify and Delete. An admin opens and reassigns only. */
+  canManage: boolean;
   onOpen: () => void;
   onReminder: () => void;
   onDelete: () => void;
@@ -174,6 +177,7 @@ function ReportCard({
       <Box sx={{ mt: 1.25 }}><WorkflowBadge report={report} /></Box>
       <Stack direction="row" spacing={1} sx={{ mt: 1.25 }}>
         <Button fullWidth variant="outlined" startIcon={<Eye size={16} />} onClick={onOpen} sx={{ borderRadius: "4px" }}>Open full report</Button>
+        {canManage ? (<>
         <Tooltip title="Review an email to the report owner or check a previous delivery">
           <span>
             <Button
@@ -198,12 +202,18 @@ function ReportCard({
             </IconButton>
           </span>
         </Tooltip>
+        </>) : null}
       </Stack>
     </Box>
   );
 }
 
-export default function PreviewReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
+/**
+ * canManage: the superadmin's Resubmit preview, Delete and Notify. An admin
+ * (owner, 2026-11-04) sees every preview, both tabs, and may Reassign only;
+ * the server refuses the rest to an admin too.
+ */
+export default function PreviewReportsPage({ initialReportId = null, canManage = true }: { initialReportId?: string | null; canManage?: boolean }) {
   const [viewMode, setViewMode] = useState<"reports" | "drafts">("reports");
   const [data, setData] = useState<PreviewReportsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -387,7 +397,7 @@ export default function PreviewReportsPage({ initialReportId = null }: { initial
       </Stack>
 
       {viewMode === "drafts" ? (
-        <DraftPreviewsPanel onOpenPreview={openDraftPreview} />
+        <DraftPreviewsPanel onOpenPreview={openDraftPreview} canDelete={canManage} />
       ) : (
         <>
 
@@ -438,6 +448,7 @@ export default function PreviewReportsPage({ initialReportId = null }: { initial
                 <ReportCard
                   key={report.id}
                   report={report}
+                  canManage={canManage}
                   onOpen={() => openReport(report.id)}
                   onReminder={() => openReminder(report)}
                   onDelete={() => { setDeleteError(""); setDeleteTarget(report); }}
@@ -461,12 +472,16 @@ export default function PreviewReportsPage({ initialReportId = null }: { initial
                       <TableCell align="center">
                         <Stack direction="row" justifyContent="center" spacing={0.75}>
                           <Tooltip title="Open complete preview"><IconButton aria-label={`Open ${report.title}`} onClick={() => openReport(report.id)} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "4px" }}><Eye size={17} /></IconButton></Tooltip>
-                          <Tooltip title="Review an email to the report owner or check a previous delivery">
-                            <span><Button size="small" variant="outlined" aria-label={`Notify owner about ${report.title}`} onClick={() => openReminder(report)} startIcon={<Mail size={16} />}>Notify</Button></span>
-                          </Tooltip>
-                          <Tooltip title={report.deleteEligible ? "Delete preview report" : report.deleteIneligibleReason || "This preview cannot be deleted."}>
-                            <span><IconButton aria-label={`Delete ${report.title}`} color="error" disabled={!report.deleteEligible} onClick={() => { setDeleteError(""); setDeleteTarget(report); }} sx={{ border: "1px solid", borderColor: report.deleteEligible ? "error.light" : "divider", borderRadius: "4px" }}><Trash2 size={17} /></IconButton></span>
-                          </Tooltip>
+                          {canManage ? (
+                            <>
+                              <Tooltip title="Review an email to the report owner or check a previous delivery">
+                                <span><Button size="small" variant="outlined" aria-label={`Notify owner about ${report.title}`} onClick={() => openReminder(report)} startIcon={<Mail size={16} />}>Notify</Button></span>
+                              </Tooltip>
+                              <Tooltip title={report.deleteEligible ? "Delete preview report" : report.deleteIneligibleReason || "This preview cannot be deleted."}>
+                                <span><IconButton aria-label={`Delete ${report.title}`} color="error" disabled={!report.deleteEligible} onClick={() => { setDeleteError(""); setDeleteTarget(report); }} sx={{ border: "1px solid", borderColor: report.deleteEligible ? "error.light" : "divider", borderRadius: "4px" }}><Trash2 size={17} /></IconButton></span>
+                              </Tooltip>
+                            </>
+                          ) : null}
                         </Stack>
                       </TableCell>
                     </TableRow>
@@ -491,6 +506,7 @@ export default function PreviewReportsPage({ initialReportId = null }: { initial
         open={Boolean(selectedReportId)}
         reportId={selectedReportId}
         readOnly={selectedReportReadOnly}
+        canManage={canManage}
         onClose={() => {
           setSelectedReportId(null);
           setSelectedReportReadOnly(false);

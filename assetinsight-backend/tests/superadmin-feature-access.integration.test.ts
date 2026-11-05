@@ -92,9 +92,14 @@ describe.sequential("superadmin feature access", () => {
     const admin = await createAdmin("admin");
     const headers = authHeaders(String(admin._id), "admin");
 
+    // Preview Reports' list is shared with admins since 2026-11-04 (owner:
+    // Reassign for admins); its Notify, Resubmit and Delete are not.
+    const preview = "/api/admin/preview-reports/000000000000000000000000";
     const responses = await Promise.all([
       request(app).get("/api/admin/stats/desktop-dashboard").set(headers),
-      request(app).get("/api/admin/preview-reports").set(headers),
+      request(app).get(`${preview}/reminder`).set(headers),
+      request(app).post(`${preview}/resubmit`).set(headers),
+      request(app).delete(preview).set(headers),
       request(app).get("/api/admin/admins").set(headers),
       request(app).get("/api/crm/admin/revenue-radar").set(headers),
       request(app).get("/api/admin/apk-releases").set(headers),
@@ -106,6 +111,17 @@ describe.sequential("superadmin feature access", () => {
       expect(response.status).toBe(403);
       expect(response.body.message).toBe("Superadmin privileges required");
     }
+  });
+
+  it("lets regular admins open Preview Reports (owner, 2026-11-04)", async () => {
+    const admin = await createAdmin("admin");
+    const headers = authHeaders(String(admin._id), "admin");
+    const [list, drafts] = await Promise.all([
+      request(app).get("/api/admin/preview-reports").set(headers),
+      request(app).get("/api/admin/preview-reports/drafts").set(headers),
+    ]);
+    expect(list.status).toBe(200);
+    expect(drafts.status).toBe(200);
   });
 
   it("allows superadmins to load every restricted feature API", async () => {

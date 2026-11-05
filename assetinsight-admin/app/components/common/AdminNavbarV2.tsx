@@ -168,12 +168,10 @@ export default function AdminNavbarV2({ children }: { children?: ReactNode }) {
     if (role !== "superadmin" && role !== "admin") return [];
 
     return [
-      ...(role === "superadmin"
-        ? [
-            { href: "/dashboard", label: "Dashboard", icon: Grid2X2 },
-            { href: "/preview-reports", label: "Preview Reports", icon: FileClock },
-          ]
-        : []),
+      ...(role === "superadmin" ? [{ href: "/dashboard", label: "Dashboard", icon: Grid2X2 }] : []),
+      // Admins too since 2026-11-04 (owner: Reassign for Admins); the page
+      // hides its superadmin-only buttons from them.
+      { href: "/preview-reports", label: "Preview Reports", icon: FileClock },
       { href: "/reports", label: "Approved Reports", icon: FileCheck2 },
       { href: "/pending-approvals", label: "Pending Approvals", icon: ClipboardCheck },
       { href: "/report-activity", label: "Report Activity", icon: Camera },

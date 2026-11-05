@@ -54,6 +54,11 @@ type Props = {
   onResubmitted?: (message: string) => void;
   onNotify?: (reportId: string) => void;
   readOnly?: boolean;
+  /**
+   * Superadmin: Resubmit preview, Delete and Notify. An admin (owner,
+   * 2026-11-04) gets Reassign only; the server refuses the rest to an admin.
+   */
+  canManage?: boolean;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -185,6 +190,7 @@ export default function PreviewReportDrawer({
   onResubmitted,
   onNotify,
   readOnly = false,
+  canManage = true,
 }: Props) {
   const [payload, setPayload] = useState<PreviewReportDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -425,7 +431,7 @@ export default function PreviewReportDrawer({
             </IconButton>
           </Stack>
           <Stack direction="row" alignItems="center" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: payload && !readOnly ? 1.5 : 0 }}>
-              {payload && !readOnly ? (
+              {payload && !readOnly && canManage ? (
                 <Tooltip title={resubmitNeedsReview ? "Reload and review the latest saved preview first." : payload.report.resubmitIneligibleReason || "Rebuild report files from the saved preview, without new analysis."}>
                   <span>
                     <Button variant="contained" startIcon={<RefreshCw size={17} />} disabled={!resubmitEligible || resubmitting || transferring || deleting} onClick={() => {
@@ -459,7 +465,7 @@ export default function PreviewReportDrawer({
                   </span>
                 </Tooltip>
               ) : null}
-              {payload && !readOnly ? (
+              {payload && !readOnly && canManage ? (
                 <Tooltip
                   title={
                     payload.report.deleteEligible
@@ -485,7 +491,7 @@ export default function PreviewReportDrawer({
                   </span>
                 </Tooltip>
               ) : null}
-              {payload && reportId && !readOnly && onNotify ? (
+              {payload && reportId && !readOnly && canManage && onNotify ? (
                 <Tooltip title="Review an email to the report owner or check a previous delivery">
                   <span><Button variant="outlined" startIcon={<Mail size={17} />} disabled={resubmitting || transferring || deleting || transferNeedsReview} onClick={() => onNotify(reportId)}>Notify</Button></span>
                 </Tooltip>
@@ -545,7 +551,7 @@ export default function PreviewReportDrawer({
                   </Box>
 
                   {payload.report.job_error ? <Alert severity="error" sx={{ mt: 2 }}>{payload.report.job_error}</Alert> : null}
-                  {!readOnly && !payload.report.resubmitEligible && payload.report.resubmitIneligibleReason ? <Alert severity="info" sx={{ mt: 1 }}>{payload.report.resubmitIneligibleReason}</Alert> : null}
+                  {!readOnly && canManage && !payload.report.resubmitEligible && payload.report.resubmitIneligibleReason ?<Alert severity="info" sx={{ mt: 1 }}>{payload.report.resubmitIneligibleReason}</Alert> : null}
 
                   {lots.length ? (
                     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "240px minmax(0, 1fr)" }, gap: 2, mt: 2 }}>

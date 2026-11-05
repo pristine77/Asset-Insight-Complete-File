@@ -121,14 +121,23 @@ describe.sequential("failed submitted preview reassignment", () => {
     expect(String((await snapshot(kind, own._id)).user)).toBe(String(reviewer._id));
   });
 
-  it("retains authentication and the existing superadmin boundary", async () => {
+  it("retains authentication and refuses an ordinary user", async () => {
     const report = await fixture("asset");
     const url = `/api/admin/preview-reports/${report._id}/transfer`;
     expect((await request(app).post(url).send({ targetUserId: String(actors.target._id) })).status).toBe(401);
     expect((await transfer(report._id, actors.owner)).status).toBe(403);
-    expect((await transfer(report._id, actors.admin)).status).toBe(403);
     expect(String((await snapshot("asset", report._id)).user)).toBe(String(actors.owner._id));
     expect(delivery.notify).not.toHaveBeenCalled();
+  });
+
+  // Owner, 2026-11-04: "Can the 'reassign' Function be given to an Admin too?"
+  it("lets an admin reassign, recorded as that admin", async () => {
+    const report = await fixture("asset");
+    const result = await transfer(report._id, actors.admin);
+    expect(result.status).toBe(200);
+    const saved = await snapshot("asset", report._id);
+    expect(String(saved.user)).toBe(String(actors.target._id));
+    expect(saved.report_recovery).toMatchObject({ mode: "transfer", actorId: String(actors.admin._id), toOwnerId: String(actors.target._id) });
   });
 
   it.each(kinds)("%s exposes failed submitted rows in the queue and detail as reassignable", async (kind) => {

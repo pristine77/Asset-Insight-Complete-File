@@ -223,25 +223,32 @@ router.post(
   extractSpecSheetFields
 );
 
-// Preview report management (superadmin only)
-router.get("/preview-reports/drafts", adminProtect, requireSuperadmin, getAdminDraftPreviews);
+/*
+ * Preview report management.
+ *
+ * Owner, 2026-11-04: "Can the 'reassign' Function be given to an Admin too? It
+ * is currently in the Super admin." Answers: Admins see every preview, both
+ * tabs (Report previews and Draft previews), and may Reassign; Resubmit
+ * preview, Delete and Notify stay superadmin only. adminProtect already admits
+ * only admins and superadmins, so the routes Admins share carry no further
+ * guard; the others keep requireSuperadmin.
+ */
+router.get("/preview-reports/drafts", adminProtect, getAdminDraftPreviews);
 router.delete(
   "/preview-reports/drafts/:id",
   adminProtect,
   requireSuperadmin,
   deleteAdminDraftPreview
 );
-router.get("/preview-reports", adminProtect, requireSuperadmin, getAdminPreviewReports);
+router.get("/preview-reports", adminProtect, getAdminPreviewReports);
 router.get(
   "/preview-reports/transfer-users",
   adminProtect,
-  requireSuperadmin,
   getAdminPreviewTransferUsers
 );
 router.post(
   "/preview-reports/:id/transfer",
   adminProtect,
-  requireSuperadmin,
   transferAdminPreviewReport
 );
 router.post(
@@ -251,7 +258,7 @@ router.post(
   sendAdminPreviewReminder
 );
 router.get("/preview-reports/:id/reminder", adminProtect, requireSuperadmin, getAdminPreviewReminder);
-router.get("/preview-reports/:id", adminProtect, requireSuperadmin, getAdminPreviewReport);
+router.get("/preview-reports/:id", adminProtect, getAdminPreviewReport);
 router.post("/preview-reports/:id/resubmit", adminProtect, requireSuperadmin, resubmitAdminPreviewReport);
 router.delete(
   "/preview-reports/:id",
