@@ -148,6 +148,8 @@ const LotListingFormSheet = ({
   const [arrivalRequestId, setArrivalRequestId] = useState(arrivalRequest?.requestId ?? '');
   const [arrivalRequests, setArrivalRequests] = useState<ArrivalPhotoRequest[]>(arrivalRequest ? [arrivalRequest] : []);
   const [arrivalRequestsLoading, setArrivalRequestsLoading] = useState(false);
+  const arrivalChosen = arrivalRequests.find((request) => request.requestId === arrivalRequestId);
+  const displayedContractNo = arrivalPhotos ? arrivalChosen?.contractNumber?.trim() || '' : contractNo;
   const [auctionCloseContract, setAuctionCloseContract] = useState(false);
   const [auctionServiceSelections, setAuctionServiceSelections] = useState<Record<number, string[]>>({});
 
@@ -248,7 +250,7 @@ const LotListingFormSheet = ({
   // contract or task this form may be capturing.
   const arrivalPhotosOffered = !auctioneer && !isAuctionManagementMode;
 
-  // Opened from Incoming → Arrival Photos: the switch is on for that request.
+  // Incoming opens a dedicated Arrival Photos capture for its selected request.
   useEffect(() => {
     if (!visible || !arrivalRequest || draftIdToLoad) return;
     setArrivalPhotos(true);
@@ -290,7 +292,7 @@ const LotListingFormSheet = ({
     setActiveLotIdx(0);
   }, [visible, arrivalPhotos, setLots]);
 
-  // The user's open requests, read while the switch is on.
+  // Read available destinations while this is an Arrival Photos capture.
   useEffect(() => {
     if (!visible || !arrivalPhotos) return;
     let cancelled = false;
@@ -690,7 +692,7 @@ const LotListingFormSheet = ({
         submissionIdRef.current ||
         (submissionIdRef.current = `ll-mobile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`),
       supersedesClientSubmissionId: supersedesSubmissionIdRef.current,
-      contractNo,
+      contractNo: displayedContractNo,
       effectiveDate: salesDate,
       salesDate,
       currency,
@@ -701,7 +703,7 @@ const LotListingFormSheet = ({
       watermarkImages,
       selectedValuationMethods: LOT_LISTING_VALUATION_METHODS,
     }),
-    [arrivalPhotos, arrivalRequestId, arrivalRequests, auctioneer, scheduleAItem.required, scheduleAItem.choices, scheduleAItem.parentLotId, proposalList.listed, proposalList.items, auctionManagementTask, auctionServiceSelections, auctionCloseContract, captureMode, manualSubmissionRequired, bankPhotosEnabled, contractNo, latitude, location, longitude, salesDate, currency, watermarkImages]
+    [arrivalPhotos, arrivalRequestId, arrivalRequests, auctioneer, scheduleAItem.required, scheduleAItem.choices, scheduleAItem.parentLotId, proposalList.listed, proposalList.items, auctionManagementTask, auctionServiceSelections, auctionCloseContract, captureMode, manualSubmissionRequired, bankPhotosEnabled, displayedContractNo, latitude, location, longitude, salesDate, currency, watermarkImages]
   );
 
   const hasDraftableWork = useCallback((candidateLots: MixedLot[] = lots) => {
@@ -1594,7 +1596,6 @@ const LotListingFormSheet = ({
   const canTapSubmit = totalImages > 0;
   const canSaveDraftPreview = Boolean(contractNo.trim()) && totalImages > 0;
   // The camera's name for the one arrival lot: the Auctioneer lot chosen above.
-  const arrivalChosen = arrivalRequests.find((request) => request.requestId === arrivalRequestId);
   const arrivalCameraLabel = arrivalChosen?.lotNumber ? `Lot ${arrivalChosen.lotNumber} · Arrival photos` : 'Arrival photos';
   const uploadTitle = arrivalPhotos
     ? 'Sending arrival photos'
@@ -1863,9 +1864,8 @@ const LotListingFormSheet = ({
                 </View>
                 ) : null}
                 {/* Arrival Photos: the chosen request's contract, filled in and
-                    locked (owner, 2026-11-04: "this will auto populate contract
-                    number right?"). Sending uses only the request; the typed
-                    contract is kept for when the switch is turned off. */}
+                    locked. Draft metadata uses the same displayed contract;
+                    delivery still uses the selected request ID. */}
                 <View style={styles.fieldContainerSmall}>
                   <Text style={styles.fieldLabelSmall}>{arrivalPhotos ? 'Contract #' : 'Contract # *'}</Text>
                   <TextInput
@@ -1876,7 +1876,7 @@ const LotListingFormSheet = ({
                       !arrivalPhotos && errors.contractNo && styles.inputError,
                       (isAuctionManagementMode || arrivalPhotos) && styles.inputLocked,
                     ]}
-                    value={arrivalPhotos ? arrivalChosen?.contractNumber?.trim() || '' : contractNo}
+                    value={displayedContractNo}
                     onChangeText={(t) => {
                       setContractNo(t);
                       clearError('contractNo');

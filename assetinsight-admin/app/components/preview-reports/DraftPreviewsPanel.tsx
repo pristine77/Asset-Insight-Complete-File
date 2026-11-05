@@ -358,7 +358,7 @@ export default function DraftPreviewsPanel({ onOpenPreview, canDelete = true }: 
   }
 
   async function deleteDraft() {
-    if (!deleteTarget || deletingId) return;
+    if (!canDelete || !deleteTarget || deletingId) return;
     setDeletingId(deleteTarget.id);
     setError("");
     try {
@@ -610,7 +610,7 @@ export default function DraftPreviewsPanel({ onOpenPreview, canDelete = true }: 
                                 </Button>
                               </span>
                             </Tooltip>
-                            <Tooltip title={["queued", "processing"].includes(draft.previewStatus) ? "Active draft previews cannot be deleted." : "Permanently delete saved draft"}>
+                            {canDelete ? <Tooltip title={["queued", "processing"].includes(draft.previewStatus) ? "Active draft previews cannot be deleted." : "Permanently delete saved draft"}>
                               <span>
                               <Button
                                 variant="outlined"
@@ -623,7 +623,7 @@ export default function DraftPreviewsPanel({ onOpenPreview, canDelete = true }: 
                                 {deletingId === draft.id ? <CircularProgress size={15} color="inherit" /> : <Trash2 size={16} />}
                               </Button>
                               </span>
-                            </Tooltip>
+                            </Tooltip> : null}
                           </Stack>
                         </TableCell>
                       </TableRow>
@@ -672,7 +672,7 @@ export default function DraftPreviewsPanel({ onOpenPreview, canDelete = true }: 
         </Stack>
       ) : null}
 
-      <Dialog open={Boolean(deleteTarget)} onClose={deletingId ? undefined : () => setDeleteTarget(null)} maxWidth="xs" fullWidth>
+      <Dialog open={canDelete && Boolean(deleteTarget)} onClose={deletingId ? undefined : () => setDeleteTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Delete saved draft?</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">

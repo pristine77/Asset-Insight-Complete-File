@@ -1885,7 +1885,7 @@ describe("LotListingForm explicit save and upload workflow", () => {
 describe("arrival photos stay separate from report generation", () => {
   beforeEach(() => {
     mocks.userId = "user-1";
-    mocks.apiGet.mockResolvedValue({ data: { success: true, data: [] } });
+    mocks.apiGet.mockReset().mockResolvedValue({ data: { success: true, data: [] } });
     window.history.replaceState({}, "", "/create/lot-listing?arrivalRequest=request-one");
     mocks.push.mockClear(); mocks.apiPost.mockReset(); mocks.toastSuccess.mockClear();
   });
@@ -1940,6 +1940,60 @@ describe("arrival photos stay separate from report generation", () => {
     await waitFor(() => expect(contract).toHaveValue("825661"));
     expect(contract).toHaveAttribute("readonly");
     expect(contract).not.toBeRequired();
+  });
+  it("changes the locked contract with the selected request and sends only to that request", async () => {
+    mocks.apiGet.mockResolvedValue({ data: { success: true, data: [
+      { requestId: "request-one", contractNumber: "00123", lotNumber: "1", description: "First lot" },
+      { requestId: "request-two", contractNumber: " 00456-A ", lotNumber: "2", description: "Second lot" },
+    ] } });
+    mocks.apiPost.mockResolvedValue({ data: { success: true, data: { sent: 1, stored: 1, skipped: 0, photoCount: 1 } } });
+    render(<LotListingForm />);
+    const contract = await screen.findByLabelText(/^Contract Number/);
+    await waitFor(() => expect(contract).toHaveValue("00123"));
+    fireEvent.change(screen.getByLabelText(/^Arrival photo request/), { target: { value: "request-two" } });
+    expect(contract).toHaveValue("00456-A");
+    expect(contract).toHaveAttribute("readonly");
+    fireEvent.click(screen.getByText("Add test media"));
+    fireEvent.click(screen.getByRole("button", { name: "Send Arrival Photos" }));
+    await waitFor(() => expect(mocks.apiPost).toHaveBeenCalledOnce());
+    expect(mocks.apiPost.mock.calls[0][0]).toContain("/arrival-photo-requests/request-two/photos");
+    expect((mocks.apiPost.mock.calls[0][1] as FormData).has("contractNo")).toBe(false);
+  });
+  it("keeps the contract blank and sending paused while the request list loads, then uses its current value", async () => {
+    const response = deferred<unknown>();
+    mocks.apiGet.mockReturnValue(response.promise);
+    render(<LotListingForm />);
+    const contract = await screen.findByLabelText(/^Contract Number/);
+    expect(contract).toHaveValue("");
+    expect(contract).toHaveAttribute("readonly");
+    fireEvent.click(screen.getByText("Add test media"));
+    fireEvent.click(screen.getByRole("button", { name: "Send Arrival Photos" }));
+    expect(mocks.apiPost).not.toHaveBeenCalled();
+    await act(async () => response.resolve({ data: { success: true, data: [
+      { requestId: "request-one", contractNumber: "REQUEST-123", lotNumber: "1", description: "Requested lot" },
+    ] } }));
+    expect(contract).toHaveValue("REQUEST-123");
+    expect(screen.getByTestId("selected-listing-media")).toHaveTextContent("lot-photo.jpg");
+  });
+  it("does not turn a restored report draft into Arrival Photos because of the page query", async () => {
+    mocks.restoreLots.mockResolvedValue([]);
+    const draft = makeLotResumeDraft();
+    render(<LotListingForm resumeDraft={draft} />);
+    const contract = await screen.findByLabelText(/^Contract Number/);
+    expect(contract).toHaveValue("LOT-RESTORE-1");
+    expect(contract).not.toHaveAttribute("readonly");
+    expect(screen.queryByTestId("arrival-photo-request-picker")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Lot Listing" })).toBeInTheDocument();
+    expect(mocks.apiGet).not.toHaveBeenCalled();
+  });
+  it("retains the assigned Auctioneer contract even when the page has an Arrival query", async () => {
+    render(<LotListingForm auctioneer={makeAuctioneerSetup("scheduleA")} />);
+    const contract = await screen.findByLabelText(/^Contract Number/);
+    expect(contract).toHaveValue("IMPORTED-100");
+    expect(contract).toHaveAttribute("readonly");
+    expect(screen.queryByTestId("arrival-photo-request-picker")).not.toBeInTheDocument();
+    expect(screen.getByTestId("listing-source-locks")).toHaveTextContent('"sourceMappedLots":true');
+    expect(mocks.apiGet).not.toHaveBeenCalled();
   });
   it("retains photos and refuses a false success response", async () => {
     mocks.apiPost.mockResolvedValue({ data: { success: false } });

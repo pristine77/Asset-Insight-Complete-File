@@ -402,8 +402,8 @@ export default function LotListingForm({
      watermarked and not processed by Asset Insight. They are just images that
      are sent to Auctioneer and saved in the 'Office Only' section." The photos
      go to one of this user's arrival photo requests (Incoming → Arrival Photo
-     Requests, which opens this form with ?arrivalRequest=<id> and the switch
-     on). Submit then sends them, and nothing else, through
+     Requests, which opens this form with ?arrivalRequest=<id>). Submit then sends
+     them, and nothing else, through
      AuctioneerService.sendArrivalPhotos: no report, no AI, no draft.
   */
   const [arrivalPhotos, setArrivalPhotos] = useState(false);
@@ -2341,11 +2341,9 @@ export default function LotListingForm({
           >
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               {/*
-                Arrival Photos: the contract is the chosen request's, filled in
-                and locked (owner, 2026-11-04: "this will auto populate contract
-                number right?"). Sending uses only the request, so nothing is
-                typed here; the typed contract is kept, not cleared, for when
-                the switch is turned off.
+                Arrival Photos uses the chosen request's contract as a read-only
+                label. Sending is bound to that request ID; the ordinary report
+                contract remains separate.
               */}
               <FormField
                 id="lot-contract-number"
@@ -2467,10 +2465,8 @@ export default function LotListingForm({
                 />
               </FormField>
 
-              {/* The two switches side by side. No Arrival Photos switch
-                  (owner, 2026-11-04: "remove the arrival photos switch on the
-                  website too", as on the phone): Incoming → Arrival Photo
-                  Requests opens this form in that mode (?arrivalRequest=). */}
+              {/* Incoming → Arrival Photo Requests opens the photo-only mode.
+                  Ordinary Lot Listing keeps only its report photo settings. */}
               <div className="grid grid-cols-1 gap-5 sm:col-span-2 sm:grid-cols-2">
               <div className="rounded-lg border border-[var(--app-control-border)] bg-[var(--app-panel-alt)] px-4 py-3">
                 <FormSwitch
@@ -2485,7 +2481,6 @@ export default function LotListingForm({
                   disabled={submitting || arrivalPhotos}
                 />
               </div>
-
 
               <div className="rounded-lg border border-[var(--app-control-border)] bg-[var(--app-panel-alt)] px-4 py-3">
                 <FormSwitch

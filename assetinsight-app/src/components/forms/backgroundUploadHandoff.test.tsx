@@ -553,11 +553,11 @@ describe('Arrival Photos Submit', () => {
     contractId: null, contractNumber: '825712', consignorName: null, eventNumber: null, officeOnlyPhotoCount: 0,
   };
 
-  async function mountArrival(onSuccess?: () => void, withVideo = false) {
+  async function mountArrival(onSuccess?: () => void, withVideo = false, availableRequests = [request]) {
     const draft = ordinaryDraft('lotListing');
     if (withVideo) (draft.lots[0].videoFiles as any[]).push({uri:'file:///saved-arrival.mp4',name:'saved-arrival.mp4',type:'video/mp4'});
     jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft, formData: { ...draft.formData, capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId, arrivalPhotoRequest: request } } as any);
-    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue(availableRequests);
     const closed = jest.fn();
     await render(<LotListingFormSheet visible backgroundUploads draftIdToLoad="local-parent" arrivalRequest={request} onClose={closed} onSuccess={onSuccess} />);
     await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
@@ -571,6 +571,76 @@ describe('Arrival Photos Submit', () => {
     expect(contract.props.value).toBe('825712');
     expect(contract.props.editable).toBe(false);
     expect(screen.queryByLabelText('Contract number, required')).toBeNull();
+  });
+
+  it('persists the selected Arrival contract rather than an older ordinary contract', async () => {
+    await mountArrival();
+    await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
+    await waitFor(() => expect(AutoSaveService.saveDraft).toHaveBeenCalled());
+    expect(jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0].formData).toMatchObject({
+      contractNo: '825712', capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId,
+    });
+  });
+
+  it('changes the locked contract and saved destination together when choosing another request', async () => {
+    const next = { ...request, requestId: 'request-2', lotId: 'lot-2', lotNumber: '401', contractNumber: '  95065-1  ', description: 'Trailer' };
+    await mountArrival(undefined, false, [request, next]);
+    await fireEvent.press(await screen.findByRole('radio', { name: 'Lot 401, Trailer' }));
+    expect(screen.getByLabelText('Contract number, from the arrival photo request').props.value).toBe('95065-1');
+    await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
+    await waitFor(() => expect(AutoSaveService.saveDraft).toHaveBeenCalled());
+    expect(jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0].formData).toMatchObject({
+      contractNo: '95065-1', capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: next.requestId,
+      arrivalPhotoRequest: expect.objectContaining({ requestId: next.requestId }),
+    });
+    expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+  });
+
+  it('keeps a missing Arrival contract blank instead of borrowing the old ordinary draft contract', async () => {
+    const draft = ordinaryDraft('lotListing');
+    const noContract = { ...request, contractNumber: null };
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft, formData: { ...draft.formData,
+      capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId, arrivalPhotoRequest: noContract } } as any);
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([noContract]);
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    const field = screen.getByLabelText('Contract number, from the arrival photo request');
+    expect(field.props.value).toBe('');
+    expect(field.props.editable).toBe(false);
+    await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
+    await waitFor(() => expect(AutoSaveService.saveDraft).toHaveBeenCalled());
+    expect(jest.mocked(AutoSaveService.saveDraft).mock.calls.at(-1)![0].formData).toMatchObject({
+      contractNo: '', capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: request.requestId,
+    });
+  });
+
+  it('retains an Arrival draft with no selected request and refuses ordinary report submission', async () => {
+    const draft = ordinaryDraft('lotListing');
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue({ ...draft, formData: { ...draft.formData, capturePurpose: 'arrivalPhotos' } } as any);
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([]);
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    await fireEvent.press(screen.getByRole('button', { name: 'Send arrival photos' }));
+    expect(Alert.alert).toHaveBeenCalledWith('Choose the lot', expect.any(String));
+    expect(auctioneerService.sendArrivalPhotos).not.toHaveBeenCalled();
+    expect(lotListingService.createLotListing).not.toHaveBeenCalled();
+    expect(AutoSaveService.removeDraftRecordOnly).not.toHaveBeenCalled();
+    expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
+  });
+
+  it('restores an ordinary draft as ordinary even if an Arrival request prop was supplied', async () => {
+    jest.mocked(AutoSaveService.getDraft).mockResolvedValue(ordinaryDraft('lotListing') as any);
+    jest.mocked(auctioneerService.getArrivalPhotoRequests).mockResolvedValue([request]);
+    await render(<LotListingFormSheet visible draftIdToLoad="local-parent" arrivalRequest={request} onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('mock-photo-count').props.children).toBe(2));
+    expect(screen.queryByTestId('arrival-photo-request-picker')).toBeNull();
+    expect(screen.getByLabelText('Contract number, required').props.value).toBe('93530.3-A');
+    expect(screen.getByRole('button', { name: 'Submit lot listing' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Send arrival photos' })).toBeNull();
+    expect(auctioneerService.sendArrivalPhotos).not.toHaveBeenCalled();
   });
 
   it('copies every photo, main and report-only, to the request and makes no report', async () => {

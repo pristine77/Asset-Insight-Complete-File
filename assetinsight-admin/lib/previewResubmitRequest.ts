@@ -78,6 +78,15 @@ export async function readPreviewResubmitRequest(request: Request): Promise<{ ba
   return { baseRevision: revision };
 }
 
+/** Ownership is changed only to a validated target; actor/report fields stay server-owned. */
+export async function readPreviewTransferRequest(request: Request): Promise<{ targetUserId: string }> {
+  const body = await readPreviewMutationJson(request);
+  if (typeof body.targetUserId !== "string" || !/^[a-f\d]{24}$/i.test(body.targetUserId)) {
+    throw new PreviewResubmitRequestError("Choose a valid account to receive this preview.", 400);
+  }
+  return { targetUserId: body.targetUserId };
+}
+
 export type PreviewReminderRequest = {
   subject: string;
   message: string;

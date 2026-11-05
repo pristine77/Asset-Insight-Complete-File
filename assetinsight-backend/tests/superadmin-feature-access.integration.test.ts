@@ -96,6 +96,7 @@ describe.sequential("superadmin feature access", () => {
     // Reassign for admins); its Notify, Resubmit and Delete are not.
     const preview = "/api/admin/preview-reports/000000000000000000000000";
     const responses = await Promise.all([
+      request(app).delete("/api/admin/preview-reports/drafts/000000000000000000000000").set(headers),
       request(app).get("/api/admin/stats/desktop-dashboard").set(headers),
       request(app).get(`${preview}/reminder`).set(headers),
       request(app).post(`${preview}/resubmit`).set(headers),
@@ -115,14 +116,42 @@ describe.sequential("superadmin feature access", () => {
 
   it("lets regular admins open Preview Reports (owner, 2026-11-04)", async () => {
     const admin = await createAdmin("admin");
+    const owner = await createUser("preview-owner@example.test");
+    const report = await createAssetReport(owner._id, "preview", "ADMIN-PREVIEW");
     const headers = authHeaders(String(admin._id), "admin");
-    const [list, drafts] = await Promise.all([
+    const [list, drafts, detail, targets] = await Promise.all([
       request(app).get("/api/admin/preview-reports").set(headers),
       request(app).get("/api/admin/preview-reports/drafts").set(headers),
+      request(app).get(`/api/admin/preview-reports/${report._id}`).set(headers),
+      request(app).get("/api/admin/preview-reports/transfer-users").set(headers),
     ]);
     expect(list.status).toBe(200);
+    expect(list.body.items.some((item: any) => item.id === String(report._id))).toBe(true);
     expect(drafts.status).toBe(200);
+    expect(detail.status).toBe(200);
+    expect(detail.body.report.id).toBe(String(report._id));
+    expect(targets.status).toBe(200);
+    expect(targets.body.users.some((user: any) => user.id === String(owner._id))).toBe(true);
   });
+
+  it.each(["anonymous", "ordinary", "blocked", "demoted"] as const)(
+    "keeps preview reads and reassignment closed to %s accounts",
+    async (actorKind) => {
+      const actor = actorKind === "ordinary"
+        ? await createUser("ordinary-preview@example.test")
+        : await createAdmin("admin");
+      const headers = actorKind === "anonymous" ? {} : authHeaders(String(actor._id), "superadmin");
+      if (actorKind === "blocked") await User.updateOne({ _id: actor._id }, { $set: { isBlocked: true } });
+      if (actorKind === "demoted") await User.updateOne({ _id: actor._id }, { $set: { role: "user" } });
+      const paths = ["", "/drafts", "/transfer-users", "/000000000000000000000000"];
+      const responses = await Promise.all([
+        ...paths.map((path) => request(app).get(`/api/admin/preview-reports${path}`).set(headers)),
+        request(app).post("/api/admin/preview-reports/000000000000000000000000/transfer")
+          .set(headers).send({ targetUserId: "000000000000000000000001" }),
+      ]);
+      for (const response of responses) expect(response.status).toBe(actorKind === "anonymous" ? 401 : 403);
+    }
+  );
 
   it("allows superadmins to load every restricted feature API", async () => {
     const superadmin = await createAdmin("superadmin");

@@ -103,9 +103,31 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Redirect authenticated users away from auth pages
+  // Expiry is only a navigation hint: a revoked/blocked session can still have
+  // an unexpired cookie. Verify it before bouncing away from login, otherwise
+  // the protected page and login redirect to each other indefinitely.
   if (isAuthPath(pathname) && hasSession) {
-    return NextResponse.redirect(new URL("/reports", request.url));
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:4000";
+      const response = await fetch(`${serverUrl}/api/admin/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        if (payload.user?.role === "admin" || payload.user?.role === "superadmin") {
+          return NextResponse.redirect(new URL("/reports", request.url));
+        }
+      } else if (response.status === 401 || response.status === 403) {
+        const login = NextResponse.next();
+        login.cookies.delete(AUTH_COOKIE);
+        login.cookies.delete("cv_admin_refresh");
+        return login;
+      }
+    } catch {
+      // A temporary outage must not discard a session. Keep login reachable.
+    }
   }
 
   return nextAdminPage(request);

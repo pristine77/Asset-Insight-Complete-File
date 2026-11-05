@@ -170,7 +170,7 @@ test('publication guidance does not infer a private-only restriction from projec
 });
 test('route and UI boundaries preserve roles, single attempts and credential stripping', () => {
   const source = path => readFileSync(new URL(path, import.meta.url), 'utf8');
-  assert.match(source('../lib/requireOperationalAdminPage.ts'), /\["admin", "superadmin"\]/);
+  assert.match(source('../lib/requireOperationalAdminPage.ts'), /role !== "admin" && role !== "superadmin"/);
   assert.match(source('../lib/youtubeProxy.ts'), /replayAfterRefresh: action === "status"/);
   assert.match(source('../lib/adminProxy.ts'), /init\.replayAfterRefresh === false/);
   assert.match(source('../app/youtube/page.tsx'), /requireOperationalAdminPage/);
