@@ -127,6 +127,24 @@ describe("Auctioneer 2.0 client", () => {
     expect(error.message).not.toMatch(/test-secret|127\.0|status 409|stack trace/);
   });
 
+  // 2026-11-05 connection check: Auctioneer 2.0 now sends the permission's
+  // reason upper-case, as its Re-Open refusals; lower-case was dropped here.
+  it("keeps a refused Re-Open's reason so the user is told why", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, contractId: "contract", userId: "owner",
+      reopen: { allowed: false, reason: "EVENT_CLOSED", reopenUntil: null } }), { status: 200 })));
+    expect(await getContractCapturePermission("contract", "owner")).toEqual({ reopen: { allowed: false, reason: "EVENT_CLOSED", reopenUntil: null } });
+  });
+
+  it("explains a Proposal whose Schedule A is already approved", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: "This Proposal already has an approved Schedule A and cannot accept more items", code: "PROPOSAL_SCHEDULE_A_APPROVED",
+    }), { status: 409 })));
+    const error = await auctioneer2Request("/proposals/contract/review-items", { method: "POST", body: "{}" }).catch(e => e);
+    expect(error).toMatchObject({ statusCode: 409, code: "PROPOSAL_SCHEDULE_A_APPROVED" });
+    expect(error.message).toContain("Schedule A has already been approved");
+    expect(error.message).not.toMatch(/status 409/);
+  });
+
   it("retains an uncertain POST outcome without automatically replaying it", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError("connection lost")); vi.stubGlobal("fetch", fetchMock);
     await expect(reopenContractForUser("contract", { userId: "owner", reopenedBy: "Appraiser" })).rejects.toMatchObject({ ambiguousWrite: true, code: "auctioneer2_unreachable" });

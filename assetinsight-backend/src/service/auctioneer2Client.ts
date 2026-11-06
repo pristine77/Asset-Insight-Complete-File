@@ -277,6 +277,19 @@ function safeUpstreamValidation(
   }
 
   /*
+     Auctioneer 2.0 refuses new Proposal items once the office has approved
+     the Proposal's Schedule A (externalApi.ts, code PROPOSAL_SCHEDULE_A_APPROVED).
+     It reached the user as "rejected the request with status 409"; found
+     2026-11-05 checking the two systems' connections. Actionable by the office.
+  */
+  if (status === 409 && codes.has("PROPOSAL_SCHEDULE_A_APPROVED")) {
+    return new Auctioneer2ClientError(
+      "PROPOSAL_SCHEDULE_A_APPROVED: This Proposal's Schedule A has already been approved in Auctioneer 2.0, so it cannot take more items. Ask the office to reopen the Proposal, or start a new one.",
+      { statusCode: 409, code: "PROPOSAL_SCHEDULE_A_APPROVED", upstreamStatus: status }
+    );
+  }
+
+  /*
      Auctioneer refuses a contract close that does not name the user when more
      than one assigned user is still working, rather than guessing whose part
      to close. Asset Insight always names the user, so this should not occur;
