@@ -99,6 +99,7 @@ describe.sequential("superadmin feature access", () => {
       request(app).delete("/api/admin/preview-reports/drafts/000000000000000000000000").set(headers),
       request(app).get("/api/admin/stats/desktop-dashboard").set(headers),
       request(app).get(`${preview}/reminder`).set(headers),
+      request(app).post(`${preview}/reminder`).set(headers).send({}),
       request(app).post(`${preview}/resubmit`).set(headers),
       request(app).delete(preview).set(headers),
       request(app).get("/api/admin/admins").set(headers),

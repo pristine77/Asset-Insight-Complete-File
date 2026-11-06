@@ -8,7 +8,7 @@ import expo.modules.auctioncamera.R
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** Geometric acceptance for the owner's Oct25 image, not the superseded sidebar/disclosure UI. */
+/** Geometry for the Pristine landscape approved by the owner on Oct27. */
 object CameraLandscapeReferenceAssertions {
     fun assertLayout(root: ViewGroup, label: String) {
         val preview = root.findViewById<View>(R.id.previewView)
@@ -57,10 +57,14 @@ object CameraLandscapeReferenceAssertions {
         val lensCells = listOf(R.id.zoom06, R.id.zoom1, R.id.zoom2, R.id.zoom4).map { bounds(it) }
         check(lensCells.zipWithNext().all { (a,b) -> a.right <= b.left && a.top == b.top && a.bottom == b.bottom })
         check(lensCells.all { zoom.contains(it) }) { "$label cropped lenses" }
-        val actions = listOf(R.id.textViewBundle, R.id.textViewItem, R.id.textViewPhoto, R.id.textViewBundleExtra)
+        check(root.findViewById<View>(R.id.textViewBundleExtra).visibility == View.GONE) { "$label Extra must be hidden in the approved landscape" }
+        val actions = listOf(R.id.textViewBundle, R.id.textViewItem, R.id.textViewPhoto)
         val actionRects = actions.map { rectangles.getValue(it) }
         check(actionRects.zipWithNext().all { (a,b) -> a.bottom < b.top }) { "$label changed reference vertical modes" }
-        check(actionRects.all { it.centerX() == rail.left + rail.width / 2 || abs(it.centerX() - (rail.left + rail.width / 2)) <= 1 })
+        check(actionRects.all { abs(it.centerX() - (rail.left + rail.width / 2 + u(7f))) <= 1 })
+        for ((index, y) in listOf(54f, 115f, 176f).withIndex()) {
+            check(abs(actionRects[index].top - rail.top - u(y)) <= 2 && abs(actionRects[index].height() - u(55f)) <= 2) { "$label approved capture geometry changed" }
+        }
         val prev = rectangles.getValue(R.id.imageLeftArrow); val next = rectangles.getValue(R.id.imageRightArrow)
         val done = rectangles.getValue(R.id.textViewDone)
         check(prev.top == next.top && prev.bottom == next.bottom && prev.right < next.left && done.top > prev.bottom)

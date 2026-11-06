@@ -17,7 +17,8 @@ it('unlocks only after private frame fsync and durable metadata, never publishin
 it('bounds capture backlog, serializes encodes and keeps each tap owner, lot, slot and settings', () => {
   expect(activity).toContain('PhotoWorkQueue.activeCount() >= 3');
   const controls = activity.slice(activity.indexOf('private fun onCaptureModeButtonTapped('), activity.indexOf('private fun fireCapture('));
-  expect(controls.indexOf('if (captureInFlight.get()) return')).toBeLessThan(controls.indexOf('viewModel.setCaptureMode(mode)'));
+  expect(controls).toContain('if (captureInFlight.get() || PhotoWorkQueue.activeCount() >= 3)');
+  expect(controls.indexOf('if (captureInFlight.get() || PhotoWorkQueue.activeCount() >= 3)')).toBeLessThan(controls.indexOf('viewModel.setCaptureMode(mode)'));
   expect(engine).not.toContain('newFixedThreadPool(3)');
   expect(pending).toContain('Executors.newSingleThreadExecutor()');
   expect(activity).toContain('ticketMode = ticket.mode, ticketExtra = ticket.isExtra');
@@ -30,6 +31,13 @@ it('bounds capture backlog, serializes encodes and keeps each tap owner, lot, sl
   expect(pending).toContain('data.optInt("pid") == android.os.Process.myPid()');
   expect(engine).toContain('fun hasPendingPhotos() = captureIdentity?.let { PendingPhotoStore.pending(context, it, includeFailed = true).isNotEmpty() }');
   expect(engine).toContain('frame.data.has("result") || frame.data.optBoolean("failed")');
+});
+it('keeps waiting shutter taps inside the leave-lot and Done safety gate', () => {
+  const wait = activity.slice(activity.indexOf('private fun waitForCapture()'), activity.indexOf('private fun setupCaptureModeButtons()'));
+  expect(activity).toContain('private const val MAX_QUEUED_TAPS = 5');
+  expect(wait).toContain('if (queuedTaps.isNotEmpty())');
+  expect(wait.indexOf('if (queuedTaps.isNotEmpty())')).toBeLessThan(wait.indexOf('return false'));
+  expect(wait).toContain('drainQueuedTaps()');
 });
 it('keeps standard quality bounds, performs at most two MozJPEG passes and preserves the high-resolution path', () => {
   const jpeg = engine.slice(engine.indexOf('// Preserve the high-resolution encoder'), engine.indexOf('ImageFormatStore.Format.WEBP -> {', engine.indexOf('// Preserve the high-resolution encoder')));

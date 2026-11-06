@@ -86,6 +86,24 @@ object CameraLayoutAssertions {
                             }
                             continue
                         }
+                        // Sub-320dp hosts exercise the compact header only. Full
+                        // capture controls are supported/tested from 320dp upward.
+                        if (width < 320) {
+                            val compact = root.findViewById<CameraHeaderLayout>(R.id.cameraHeader)
+                            check(compact.width > 0 && compact.height <= dp(72)) { "Narrow header expanded unexpectedly" }
+                            val row = listOf(R.id.btnProMode, R.id.galleryPreviewContainer, R.id.evToggle,
+                                R.id.linearLayoutLot, R.id.btnFlash, R.id.btnFocus).map { id ->
+                                val child = root.findViewById<View>(id)
+                                check(child.visibility == View.VISIBLE)
+                                Rect(0, 0, child.width, child.height).also { rect ->
+                                    compact.offsetDescendantRectToMyCoords(child, rect)
+                                    check(rect.left >= 0 && rect.top >= 0 && rect.right <= compact.width && rect.bottom <= compact.height) { "Narrow header clipped a control" }
+                                }
+                            }
+                            check(row.zipWithNext().all { (a, b) -> a.right <= b.left }) { "Narrow header wrapped or overlapped" }
+                            checked++
+                            continue
+                        }
                         val header = root.findViewById<CameraHeaderLayout>(R.id.cameraHeader)
                         val label = width.toString() + "x" + height + " font=" + font + " inset=" + inset
                         fun assertControls(label: String, w: Int, h: Int, exposureExpanded: Boolean = false) {

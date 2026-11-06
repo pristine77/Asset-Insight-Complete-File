@@ -9,7 +9,7 @@ import { formatDay, type ActivityBucket } from '@/lib/dashboardData';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
-/** One bounded canvas; no animation/re-creation when unrelated settings or credits change. */
+/** One bounded canvas; no animation/re-creation when unrelated settings change. */
 export default memo(function DashboardActivityChart({ points }: { points: ActivityBucket[] }) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('sm'));

@@ -1742,6 +1742,11 @@ class CameraViewActivity : BaseActivity() {
     }
 
     private fun waitForCapture(): Boolean {
+        if (queuedTaps.isNotEmpty()) {
+            binding.root.post { drainQueuedTaps() }
+            toast("Please wait for the queued photos to be taken.")
+            return true
+        }
         if (pendingStartRecording || isRecordButtonLocked || (::engine.isInitialized && engine.isRecording())) {
             toast(if (::engine.isInitialized && engine.isStopping()) "Please wait for the video to finish saving." else "Stop recording before leaving this lot.")
             return true

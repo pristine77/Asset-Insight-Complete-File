@@ -24,6 +24,7 @@ object CameraBurstAssertions {
         val context = test.targetContext
         val restore = phase == "restore"
         val seed = phase == "seed"
+        val expectedPhotos = if (!restore && !seed) 4 else 3
         val marker = File(context.filesDir, "isolated-burst-tickets.json")
         val replay = if (restore) JSONObject(marker.readText()) else null
         val identity = replay?.getJSONObject("identity") ?: JSONObject().put("ownerId", "isolated-burst-20261023")
@@ -88,6 +89,10 @@ object CameraBurstAssertions {
                     check(pulse?.isStarted == true) { "Supplied component thumbnail feedback did not start" }
                     activity.findViewById<View>(R.id.textViewBundle).performClick()
                     check(pending().size == 3) { "Backlog allowed a fourth frame" }
+                    @Suppress("UNCHECKED_CAST")
+                    val taps = CameraViewActivity::class.java.getDeclaredField("queuedTaps").apply { isAccessible = true }.get(activity) as MutableCollection<Any>
+                    check(taps.size == 1) { "Fourth busy shutter tap was dropped" }
+                    if (seed) taps.clear() // Only three durable raw frames belong in the force-stop fixture.
                     activity.findViewById<View>(R.id.imageRightArrow).performClick()
                     check(activity.findViewById<android.widget.TextView>(R.id.textViewLot).text.toString() == "Lot 77")
                     activity.findViewById<View>(R.id.textViewDone).performClick()
@@ -109,19 +114,31 @@ object CameraBurstAssertions {
                 ticketIds = (0 until ids.length()).map { ids.getString(it) }
             }
             waitUntil("Queued photos did not commit and release their raw records", 25) {
-                repository.getEffectiveLots().sumOf { it.files.size + it.extraFiles.size } == 3 && pending().isEmpty() && PhotoWorkQueue.activeCount() == 0
+                repository.getEffectiveLots().sumOf { it.files.size + it.extraFiles.size } == expectedPhotos && pending().isEmpty() && PhotoWorkQueue.activeCount() == 0
             }
             onMain {
                 check(CameraViewActivity::class.java.getDeclaredField("pulseAnimator").apply { isAccessible = true }.get(activity) == null) { "Processing feedback never stopped" }
                 check(activity.findViewById<View>(R.id.galleryPreview).alpha == 1f) { "Finished thumbnail stayed dimmed" }
                 val row = repository.getEffectiveLots().single()
-                check(row.files.size == 2 && row.extraFiles.size == 1) { "Second tap overwrote first tap's main/extra slot" }
+                check(row.files.size == expectedPhotos - 1 && row.extraFiles.size == 1) { "Queued taps changed the original main/extra slots" }
                 check(row.files[0].uri.contains(ticketIds[0]) && row.files[1].uri.contains(ticketIds[2]))
                 check(row.extraFiles[0].uri.contains(ticketIds[1]))
                 for (photo in row.files + row.extraFiles) {
                     val original = File(checkNotNull(Uri.parse(photo.uri).path))
                     check(original.isFile && PhotoWatermarkReceipt.has(original.readBytes()))
                     check(maxOf(photo.width, photo.height) <= 2400) { "Queued frame used later high-resolution settings" }
+                }
+                if (!restore) {
+                    val capture = CameraViewActivity::class.java.getDeclaredField("captureInFlight").apply { isAccessible = true }.get(activity) as AtomicBoolean
+                    capture.set(true)
+                    activity.findViewById<View>(R.id.textViewBundle).performClick()
+                    capture.set(false)
+                    @Suppress("UNCHECKED_CAST")
+                    val taps = CameraViewActivity::class.java.getDeclaredField("queuedTaps").apply { isAccessible = true }.get(activity) as MutableCollection<Any>
+                    check(taps.size == 1)
+                    val wait = CameraViewActivity::class.java.getDeclaredMethod("waitForCapture").apply { isAccessible = true }
+                    check(wait.invoke(activity) == true) { "Done or Next ignored a waiting shutter tap" }
+                    taps.clear() // This synthetic intent exists only to check the navigation guard.
                 }
             }
             // A previously failed accepted shot must block partial Done and be

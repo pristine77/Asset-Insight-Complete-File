@@ -71,6 +71,12 @@ describe("AuctioneerDeliveryDialog", () => {
     });
     expect(checkbox).not.toBeChecked();
     expect(checkbox).toBeEnabled();
+    expect(screen.getByRole("option", { name: "Posting Board" })).toHaveValue(
+      "LottingBoard"
+    );
+    expect(
+      screen.queryByRole("option", { name: "Lotting Board" })
+    ).not.toBeInTheDocument();
     expect(checkbox).toHaveAccessibleDescription(
       /The contract itself closes when every person assigned to it has closed theirs\./
     );
