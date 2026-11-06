@@ -2029,6 +2029,8 @@ const LotListingFormSheet = ({
               hideSummary={true}
               embedded
               photosOnly={arrivalPhotos}
+              photoPickerContextKey={`${visible ? 'open' : 'closed'}:${draftIdToLoad || 'new'}:${arrivalPhotos ? arrivalRequestId : 'report'}`}
+              photoPickerDisabled={submitting || savingDraftPreview || savingLocal || awaitingDraft}
             />
           </View>
         </ScrollView>

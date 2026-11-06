@@ -3125,18 +3125,32 @@ const PreviewScreen = ({
             contentContainerStyle={styles.galleryThumbsContent}
           >
             {galleryEntries.map((entry, idx) => (
-              <TouchableOpacity
+              <View
                 key={`${entry.context}-${entry.lotIndex ?? "report"}-${entry.globalIndex ?? "url"}-${entry.url}`}
-                onPress={() => setGalleryIndex(idx)}
-                accessibilityRole="button"
-                accessibilityLabel={`View gallery photo ${idx + 1}`}
-                style={[
-                  styles.galleryThumb,
-                  idx === galleryIndex && styles.galleryThumbActive,
-                ]}
+                style={styles.galleryThumbWrap}
               >
-                <Image source={{ uri: entry.url }} style={styles.galleryThumbImage} />
-              </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setGalleryIndex(idx)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View gallery photo ${idx + 1}`}
+                  style={[styles.galleryThumb, idx === galleryIndex && styles.galleryThumbActive]}
+                >
+                  <Image source={{ uri: entry.url }} style={styles.galleryThumbImage} />
+                </TouchableOpacity>
+                {(isAsset || isLotListing) && entry.context === "lot" && entry.lotIndex !== null && (
+                  <TouchableOpacity
+                    onPress={() => { if (entry.lotIndex !== null) deleteLotImage(entry.lotIndex, entry); }}
+                    disabled={previewBusyRef.current}
+                    style={[styles.galleryThumbRemove, previewBusyRef.current && { opacity: 0.4 }]}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove gallery photo ${idx + 1}`}
+                    accessibilityState={{ disabled: previewBusyRef.current }}
+                  >
+                    <Feather name="x" size={16} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+              </View>
             ))}
           </ScrollView>
         </View>
@@ -4208,6 +4222,11 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: "center",
   },
+  galleryThumbWrap: {
+    width: 60,
+    height: 60,
+    marginRight: 8,
+  },
   galleryThumb: {
     width: 60,
     height: 60,
@@ -4215,7 +4234,17 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 2,
     borderColor: "transparent",
-    marginRight: 8,
+  },
+  galleryThumbRemove: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#EF4444",
+    alignItems: "center",
+    justifyContent: "center",
   },
   galleryThumbActive: {
     borderColor: "#fff",

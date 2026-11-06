@@ -55,8 +55,10 @@ jest.mock('../camera/NativeAuctionCameraScreen', () => ({ __esModule: true, defa
 jest.mock('./LotManager', () => {
   const React = require('react');
   const { View, Text } = require('react-native');
-  return { __esModule: true, default: ({ lots }: any) => <View>
+  return { __esModule: true, default: ({ lots, photoPickerContextKey, photoPickerDisabled }: any) => <View>
     <Text testID="mock-photo-count">{lots.reduce((sum: number, lot: any) => sum + lot.files.length, 0)}</Text>
+    <Text testID="mock-picker-context">{photoPickerContextKey}</Text>
+    <Text testID="mock-picker-disabled">{String(Boolean(photoPickerDisabled))}</Text>
   </View> };
 });
 jest.mock('../../services/api', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn() } }));
@@ -586,7 +588,9 @@ describe('Arrival Photos Submit', () => {
   it('changes the locked contract and saved destination together when choosing another request', async () => {
     const next = { ...request, requestId: 'request-2', lotId: 'lot-2', lotNumber: '401', contractNumber: '  95065-1  ', description: 'Trailer' };
     await mountArrival(undefined, false, [request, next]);
+    expect(screen.getByTestId('mock-picker-context').props.children).toBe('open:local-parent:request-1');
     await fireEvent.press(await screen.findByRole('radio', { name: 'Lot 401, Trailer' }));
+    expect(screen.getByTestId('mock-picker-context').props.children).toBe('open:local-parent:request-2');
     expect(screen.getByLabelText('Contract number, from the arrival photo request').props.value).toBe('95065-1');
     await fireEvent.press(screen.getByRole('radio', { name: 'Offline capture' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Save on device' }));
@@ -655,6 +659,21 @@ describe('Arrival Photos Submit', () => {
     expect(lotListingService.createLotListing).not.toHaveBeenCalled();
     expect(backgroundUploadManager.getSnapshot().active).toBeNull();
     expect(Alert.alert).toHaveBeenCalledWith('Arrival photos sent', expect.stringContaining('Office Only'));
+  });
+
+  it('fences the photo picker throughout an in-flight Arrival send without clearing photos on refusal', async () => {
+    let refuse!: (error: Error) => void;
+    jest.mocked(auctioneerService.sendArrivalPhotos).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject; }));
+    await mountArrival();
+    expect(screen.getByTestId('mock-picker-disabled').props.children).toBe('false');
+    const pressed = fireEvent.press(screen.getByRole('button', { name: 'Send arrival photos' }));
+    await waitFor(() => expect(auctioneerService.sendArrivalPhotos).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('mock-picker-disabled').props.children).toBe('true');
+    await act(async () => { refuse(new Error('Send refused')); });
+    await pressed;
+    expect(screen.getByTestId('mock-picker-disabled').props.children).toBe('false');
+    expect(screen.getByTestId('mock-photo-count').props.children).toBe(2);
+    expect(AutoSaveService.removeDraftRecordOnly).not.toHaveBeenCalled();
   });
 
   it('notifies Incoming of confirmed Send through success only after receipt and cleanup', async () => {

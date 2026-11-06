@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { ImageAdjustments, MixedLot, CaptureMode, PhotoFile } from './CameraCapture';
 import LotImageEditor from './LotImageEditor';
 import { ImageEditService } from '../../services/imageEditService';
+import { getAuthOperationEpoch } from '../../services/authSessionOperation';
 import {
   getPhotoDisplayUri,
   normalizePhotoFile,
@@ -55,13 +56,45 @@ interface LotManagerProps {
   /**
    * Arrival Photos (owner, 2026-11-04, as on the website: "no need to create
    * more lot. Just A camera option needed", then "Show the three options").
-   * The form holds one lot of its own; this shows its three mode options, a
-   * Camera button and the photos taken. No Add Lot, no Gallery, no cover.
+   * The form holds one lot of its own; this shows its three mode options, the
+   * Camera and Upload photos buttons and the photos taken. No Add Lot or cover.
    */
   photosOnly?: boolean;
+  /** Invalidates an open picker when the form or Arrival request changes. */
+  photoPickerContextKey?: string;
+  photoPickerDisabled?: boolean;
 }
 
 const MAX_ASSET_LOT_PHOTOS = 200;
+const MAX_ARRIVAL_PHOTOS = 60;
+const MAX_ARRIVAL_PHOTO_BYTES = 20 * 1024 * 1024;
+const MAX_ARRIVAL_TOTAL_BYTES = 120 * 1024 * 1024;
+const knownPhotoSize = (size?: number | null) =>
+  typeof size === 'number' && Number.isFinite(size) && size > 0 ? size : 0;
+
+const photoCapacity = (lots: MixedLot[], lot: MixedLot, photosOnly: boolean) => Math.max(0,
+  photosOnly
+    ? MAX_ARRIVAL_PHOTOS - lots.reduce((total, item) => total + item.files.length + item.extraFiles.length, 0)
+    : MAX_ASSET_LOT_PHOTOS - lot.files.length - lot.extraFiles.length
+);
+
+const allowedPickerPhotos = (lots: MixedLot[], lot: MixedLot, files: PhotoFile[], photosOnly: boolean) => {
+  const remaining = photoCapacity(lots, lot, photosOnly);
+  if (!photosOnly) return files.slice(0, remaining);
+  let bytes = lots.reduce((total, item) => total + [...item.files, ...item.extraFiles]
+    .reduce((sum, file) => sum + knownPhotoSize(file.size), 0), 0);
+  const accepted: PhotoFile[] = [];
+  for (const file of files) {
+    const size = knownPhotoSize(file.size);
+    if (accepted.length >= remaining || size > MAX_ARRIVAL_PHOTO_BYTES ||
+      (size > 0 && bytes + size > MAX_ARRIVAL_TOTAL_BYTES)) continue;
+    // Unknown picker metadata is not evidence of an oversized file. Keep it
+    // locally; the existing multipart send still validates the actual bytes.
+    accepted.push(file);
+    bytes += size;
+  }
+  return accepted;
+};
 
 const MODE_INFO = {
   single_lot: {
@@ -99,6 +132,8 @@ const LotManager = ({
   sourceDetails,
   listedItemLots,
   photosOnly = false,
+  photoPickerContextKey = '',
+  photoPickerDisabled = false,
 }: LotManagerProps) => {
   const [expandedLot, setExpandedLot] = useState<number | null>(
     activeLotIdx >= 0 ? activeLotIdx : null
@@ -110,6 +145,20 @@ const LotManager = ({
   const [viewerImgIdx, setViewerImgIdx] = useState(0);
   const [editorVisible, setEditorVisible] = useState(false);
   const editClipboardRef = useRef<ImageAdjustments | null>(null);
+  const lotsRef = useRef(lots);
+  lotsRef.current = lots;
+  const pickerMountedRef = useRef(true);
+  const pickerBusyRef = useRef(false);
+  const [pickingPhotos, setPickingPhotos] = useState(false);
+  const pickerContext = `${photoPickerContextKey}:${photosOnly}:${photoPickerDisabled}`;
+  const pickerContextRef = useRef({ key: pickerContext, epoch: 0 });
+  if (pickerContextRef.current.key !== pickerContext) {
+    pickerContextRef.current = { key: pickerContext, epoch: pickerContextRef.current.epoch + 1 };
+  }
+  useEffect(() => {
+    pickerMountedRef.current = true;
+    return () => { pickerMountedRef.current = false; pickerContextRef.current.epoch += 1; };
+  }, []);
 
   const viewerFiles = useMemo(() => {
     if (viewerLotIdx === null) return [];
@@ -358,20 +407,33 @@ const LotManager = ({
   };
 
   const pickImages = async (lotIdx: number) => {
+    if (photoPickerDisabled || pickerBusyRef.current || !pickerMountedRef.current) return;
     const lot = lots[lotIdx];
+    if (!lot || lotsRef.current[lotIdx] !== lot) return;
     if (!lot.mode) {
       Alert.alert('Select Mode', 'Please select a mode for this lot first');
       return;
     }
-    const remaining = MAX_ASSET_LOT_PHOTOS - (lot.files.length + lot.extraFiles.length);
+    const remaining = photoCapacity(lotsRef.current, lot, photosOnly);
     if (remaining <= 0) {
       Alert.alert(
         'Photo Limit Reached',
-        `Lot ${lotIdx + 1} already has ${MAX_ASSET_LOT_PHOTOS} photos. Delete photos before adding more.`
+        photosOnly ? 'Arrival Photos accepts up to 60 photos in one send. Remove photos before adding more.' :
+          `Lot ${lotIdx + 1} already has ${MAX_ASSET_LOT_PHOTOS} photos. Delete photos before adding more.`
       );
       return;
     }
-
+    const contextAtOpen = pickerContextRef.current.epoch;
+    const actorAtOpen = getAuthOperationEpoch();
+    const isCurrent = () => pickerMountedRef.current && pickerContextRef.current.epoch === contextAtOpen &&
+      getAuthOperationEpoch() === actorAtOpen;
+    // Appended camera photos are kept; removal/replacement of the original lot
+    // or its attachments makes a delayed picker result stale.
+    const matchesOriginal = (candidate: MixedLot) => candidate.id === lot.id && candidate.mode === lot.mode &&
+      lot.files.every((file, index) => candidate.files[index] === file) &&
+      lot.extraFiles.every((file, index) => candidate.extraFiles[index] === file);
+    pickerBusyRef.current = true;
+    setPickingPhotos(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -380,34 +442,47 @@ const LotManager = ({
         quality: 1,
       });
 
+      if (!isCurrent()) return;
       if (!result.canceled && result.assets.length > 0) {
-        const acceptedAssets = result.assets.slice(0, remaining);
-        if (result.assets.length > remaining) {
-          Alert.alert(
-            'Some Photos Skipped',
-            `Only ${remaining} more photo(s) can be added to Lot ${lotIdx + 1}.`
-          );
-        }
-        const newFiles = acceptedAssets.map((asset, idx) =>
+        const currentLot = lotsRef.current.find(matchesOriginal);
+        if (!currentLot) return;
+        const pickedFiles = result.assets.map((asset, idx) =>
           normalizePhotoFile({
             uri: asset.uri,
             originalUri: asset.uri,
             name: asset.fileName || `image-${Date.now()}-${idx}.jpg`,
             type: asset.mimeType || 'image/jpeg',
+            ...(photosOnly && knownPhotoSize(asset.fileSize) ? { size: asset.fileSize! } : {}),
           })
         );
+        const newFiles = allowedPickerPhotos(lotsRef.current, currentLot, pickedFiles, photosOnly);
+        if (newFiles.length < pickedFiles.length) {
+          Alert.alert('Some Photos Skipped', photosOnly
+            ? 'Arrival Photos allows 60 photos, up to 20 MiB each and 120 MiB total. Photos exceeding these limits were not added. Files with unknown sizes are checked when sending.'
+            : `Only ${photoCapacity(lotsRef.current, currentLot, false)} more photo(s) can be added to this capture.`);
+        }
+        if (!newFiles.length) return;
 
         setLots((prev) => {
+          if (!isCurrent()) return prev;
+          const currentIndex = prev.findIndex(matchesOriginal);
+          if (currentIndex < 0) return prev;
+          const current = prev[currentIndex];
+          const accepted = allowedPickerPhotos(prev, current, newFiles, photosOnly);
+          if (!accepted.length) return prev;
           const updated = [...prev];
-          updated[lotIdx] = {
-            ...updated[lotIdx],
-            files: [...updated[lotIdx].files, ...newFiles],
+          updated[currentIndex] = {
+            ...current,
+            files: [...current.files, ...accepted],
           };
           return updated;
         });
       }
     } catch (e) {
-      console.error('Image picker error:', e);
+      if (isCurrent()) console.error('Image picker error:', e);
+    } finally {
+      pickerBusyRef.current = false;
+      if (pickerMountedRef.current) setPickingPhotos(false);
     }
   };
 
@@ -563,12 +638,16 @@ const LotManager = ({
                 <Feather name="camera" size={20} color="#fff" />
                 <Text style={styles.actionBtnText}>Camera</Text>
               </TouchableOpacity>
-              {!photosOnly ? <TouchableOpacity
+              <TouchableOpacity
                 style={[styles.actionBtn, styles.galleryBtn]}
+                disabled={pickingPhotos || photoPickerDisabled}
+                accessibilityRole="button"
+                accessibilityLabel={photosOnly ? `Upload arrival photos to ${lotLabel}` : `Gallery for ${lotLabel}`}
+                accessibilityState={{ disabled: pickingPhotos || photoPickerDisabled }}
                 onPress={() => pickImages(idx)}>
                 <Feather name="image" size={20} color="#7C3AED" />
-                <Text style={[styles.actionBtnText, styles.galleryBtnText]}>Gallery</Text>
-              </TouchableOpacity> : null}
+                <Text numberOfLines={photosOnly ? 2 : undefined} style={[styles.actionBtnText, styles.galleryBtnText, photosOnly && styles.arrivalUploadText]}>{photosOnly ? 'Upload photos' : 'Gallery'}</Text>
+              </TouchableOpacity>
             </View>
 
             {lot.videoFile ? (
@@ -672,19 +751,31 @@ const LotManager = ({
           <Text style={styles.modeLabel}>Select Mode:</Text>
           {renderModeButtons(arrivalLot, 0, false)}
           {!arrivalLot.mode ? (
-            <Text style={styles.arrivalModeHint}>Select a mode to enable the camera.</Text>
+            <Text style={styles.arrivalModeHint}>Select a mode to enable Camera or Upload photos.</Text>
           ) : null}
-          <TouchableOpacity
-            testID="arrival-camera-button"
-            accessibilityRole="button"
-            accessibilityLabel="Open the camera for the arrival photos"
-            accessibilityState={{ disabled: !arrivalLot.mode }}
-            disabled={!arrivalLot.mode}
-            style={[styles.actionBtn, styles.cameraBtn, styles.arrivalCameraBtn, !arrivalLot.mode && styles.arrivalCameraBtnDisabled]}
-            onPress={() => handleOpenCamera(0)}>
-            <Feather name="camera" size={20} color="#fff" />
-            <Text style={styles.actionBtnText}>Camera</Text>
-          </TouchableOpacity>
+          <View style={styles.imageActions}>
+            <TouchableOpacity
+              testID="arrival-camera-button"
+              accessibilityRole="button"
+              accessibilityLabel="Open the camera for the arrival photos"
+              accessibilityState={{ disabled: !arrivalLot.mode }}
+              disabled={!arrivalLot.mode}
+              style={[styles.actionBtn, styles.cameraBtn, !arrivalLot.mode && styles.arrivalCameraBtnDisabled]}
+              onPress={() => handleOpenCamera(0)}>
+              <Feather name="camera" size={20} color="#fff" />
+              <Text style={styles.actionBtnText}>Camera</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Upload arrival photos"
+              accessibilityState={{ disabled: !arrivalLot.mode || pickingPhotos || photoPickerDisabled }}
+              disabled={!arrivalLot.mode || pickingPhotos || photoPickerDisabled}
+              style={[styles.actionBtn, styles.galleryBtn, (!arrivalLot.mode || pickingPhotos || photoPickerDisabled) && styles.arrivalCameraBtnDisabled]}
+              onPress={() => pickImages(0)}>
+              <Feather name="image" size={20} color="#7C3AED" />
+              <Text numberOfLines={2} style={[styles.actionBtnText, styles.galleryBtnText, styles.arrivalUploadText]}>Upload photos</Text>
+            </TouchableOpacity>
+          </View>
           {arrivalLot.videoFile ? (
             <View style={styles.videoAttachment} accessibilityRole="summary" accessibilityLabel={`Arrival capture, video not sent: ${arrivalLot.videoFile.name}`}>
               <Feather name="video" size={20} color="#374151" />
@@ -732,7 +823,7 @@ const LotManager = ({
             <View style={styles.emptyState}>
               <Feather name="camera" size={40} color="#C4B5FD" />
               <Text style={styles.emptyText}>No photos yet</Text>
-              <Text style={styles.emptySubtext}>Tap Camera to take the arrival photos.</Text>
+              <Text style={styles.emptySubtext}>Use Camera or Upload photos to add arrival photos.</Text>
             </View>
           ) : null}
         </>
@@ -980,8 +1071,8 @@ const styles = StyleSheet.create({
   arrivalCount: { marginLeft: 'auto', fontSize: 13, fontWeight: '700', color: '#6D28D9' },
   arrivalHelp: { fontSize: 12, lineHeight: 18, color: '#5B21B6' },
   arrivalModeHint: { fontSize: 12, fontWeight: '700', color: '#B45309' },
-  arrivalCameraBtn: { flex: 0, marginTop: 6 },
   arrivalCameraBtnDisabled: { opacity: 0.45, elevation: 0, shadowOpacity: 0 },
+  arrivalUploadText: { flexShrink: 1 },
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
