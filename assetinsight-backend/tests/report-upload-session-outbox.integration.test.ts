@@ -103,10 +103,43 @@ async function makeReceiptFixture(type: "asset" | "lotListing" = "lotListing") {
 }
 
 describe.sequential("upload completion status receipts", () => {
+  it.each((["asset", "lotListing"] as const).flatMap(type =>
+    ["empty-done", "failed-no-preview", "ready"].map(outcome => ({ type, outcome }))))(
+    "settles a late $type processed receipt from the actual $outcome preview", async ({ type, outcome }) => {
+      const { user, listing, session, Model, auth, url } = await makeReceiptFixture(type);
+      const ReportDraft = (await import("../src/models/reportDraft.model.js")).default;
+      const acceptedAt = new Date(Date.now() - 1000);
+      await ReportUploadSession.updateOne({ _id: session._id }, { $set: {
+        status: "processed", uploadCompletedAt: acceptedAt,
+      } });
+      await Model.updateOne({ _id: listing._id }, { $set: {
+        status: outcome === "failed-no-preview" ? "error" : "preview",
+        job_status: outcome === "failed-no-preview" ? "error" : "done",
+        preview_data: { lots: outcome === "ready" ? [{ lot_number: "1", title: "Saved loader" }] : [] },
+      } });
+      const draft = await ReportDraft.create({ user: user._id, type, clientDraftId: "receipt-submission",
+        revision: 1, formData: {}, lots: [{ lotNumber: "1" }] });
+      await ReportDraft.collection.updateOne({ _id: draft._id }, { $set: { updatedAt: new Date(acceptedAt.getTime() - 1000) } });
+      const complete = await request(app).post(url.replace("/status", "/complete")).set(auth);
+      expect(complete.status).toBe(200);
+      expect(complete.body.accepted).toBe(true);
+      await vi.waitFor(async () => {
+        const kept = await ReportDraft.findById(draft._id).lean();
+        if (outcome === "ready") expect(kept).toBeNull();
+        else expect(kept).toMatchObject({ revision: 1, submittedReportId: listing._id, submissionStatus: "failed" });
+      });
+      expect(mocks.deleteFromR2).not.toHaveBeenCalled();
+      expect(mocks.queueAssetPreviewJob).not.toHaveBeenCalled();
+      expect(mocks.queueLotListingJob).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not erase newer same-identity or superseded-alias drafts on an accepted retry", async () => {
     const { user, listing, session, jobId, auth, url } = await makeReceiptFixture();
     const ReportDraft = (await import("../src/models/reportDraft.model.js")).default;
     const cutoff = new Date(Date.now() - 60_000);
+    await LotListing.updateOne({ _id: listing._id }, { $set: { status: "preview", job_status: "done",
+      preview_data: { lots: [{ lot_number: "1", title: "Saved unit" }] } } });
     await ReportUploadSession.updateOne({ _id: session._id }, { $set: { status: "processed",
       uploadCompletedAt: cutoff, supersedesClientSubmissionIds: ["newer-alias", "old-alias"] } });
     await ReportJob.create({ type: "lot-listing-preview", reportId: String(listing._id), progressId: jobId,

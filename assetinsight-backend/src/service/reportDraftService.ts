@@ -16,7 +16,7 @@ import { resolveSmartUploadOrderReviewState } from "../utils/smartUploadReviewSt
 import { normalizeReportContractKey } from "../utils/reportContractIdentity.js";
 import { draftMediaClientValue, sortDraftMedia } from "./reportDraftMediaService.js";
 import { smartUploadGroupingMethod } from "./lotNumberUploadGrouping.js";
-import { submittedDraftClientValue } from "./submittedReportDraftService.js";
+import { submittedDraftClientValue, draftDiscardRevision } from "./submittedReportDraftService.js";
 
 export const normalizeDraftContract = normalizeReportContractKey;
 
@@ -107,7 +107,7 @@ export async function deleteReportDraftForSubmission(
 export async function toReportDraftClient(draft: any) {
   const raw = typeof draft?.toObject === "function" ? draft.toObject() : draft;
   if (!raw) return raw;
-  const result: Record<string, any> = { ...raw, id: String(raw._id) };
+  const result: Record<string, any> = { ...raw, id: String(raw._id), discardRevision: draftDiscardRevision(raw) };
   // Promotion claims are an internal lease/CAS mechanism. In particular,
   // stale claims can be listed for recovery, but their bearer-like token and
   // timing metadata must never be exposed to the browser.

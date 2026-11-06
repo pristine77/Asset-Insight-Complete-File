@@ -407,7 +407,7 @@ export async function queueReportDraftPreview(draftId: string, userId: string) {
     user: userId,
     promotedAt: null,
     promotionToken: null,
-  });
+  }).select("+mediaRevision");
   if (!draft) throw Object.assign(new Error("Draft not found."), { statusCode: 404 });
 
   const revision = Number(draft.revision || 0);
@@ -531,9 +531,9 @@ export async function queueReportDraftPreview(draftId: string, userId: string) {
       $unset: { previewError: 1, previewReadyAt: 1 },
     },
     { new: true }
-  );
+  ).select("+mediaRevision");
   if (!queuedDraft) {
-    queuedDraft = await ReportDraft.findOne({ _id: draft._id, user: userId });
+    queuedDraft = await ReportDraft.findOne({ _id: draft._id, user: userId }).select("+mediaRevision");
     if (
       !queuedDraft ||
       Number(queuedDraft.previewRequestedRevision) !== revision ||

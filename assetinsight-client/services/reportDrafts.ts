@@ -86,6 +86,8 @@ export type ReportDraftRecord = {
   storageMode: ReportDraftStorageMode;
   smartUploadSession?: string;
   revision: number;
+  /** Server snapshot token for an explicitly confirmed discard only. */
+  discardRevision?: string;
   deviceId?: string;
   contractNo: string;
   title?: string;
@@ -931,8 +933,21 @@ export const ReportDraftService = {
     return lots;
   },
 
-  async delete(id: string) {
-    await API.delete(`/report-drafts/${id}`);
+  async delete(id: string, discardRevision?: string) {
+    if (!id || !discardRevision || !/^[a-f0-9]{64}$/.test(discardRevision)) {
+      throw new Error("Reopen Drafts to refresh this draft before deleting it. Your saved draft and photos are unchanged.");
+    }
+    const session = captureAuthSession();
+    const response = await API.delete(`/report-drafts/${encodeURIComponent(id)}`, {
+      data: { intent: "discard", baseRevision: discardRevision },
+      timeout: 60_000,
+      _retry: true,
+      _authSession: session,
+    } as RetriableAxiosConfig);
+    assertAuthSessionCurrent(session);
+    if (response.status !== 200 || response.data?.deleted !== true || response.data?.retained === true || response.data?.draftId !== id) {
+      throw new Error("The server did not confirm this draft was deleted. Reopen Drafts to check its status; your local photos have been kept.");
+    }
   },
 
   async deleteByClientId(clientDraftId: string, kind: ReportDraftKind) {

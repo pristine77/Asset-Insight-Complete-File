@@ -23,6 +23,7 @@
  * Every write is best-effort for its caller: a draft problem must never fail
  * an accepted upload or a finished job.
  */
+import { createHash } from "node:crypto";
 import ReportDraft from "../models/reportDraft.model.js";
 import ReportUploadSession from "../models/reportUploadSession.model.js";
 import AssetReport from "../models/asset.model.js";
@@ -46,6 +47,15 @@ const text = (value: unknown) => String(value ?? "").trim();
 export function submittedDraftSnapshotFilter(draft: any) {
   return Object.fromEntries(["_id", "user", "revision", "mediaRevision", "contentHash", "updatedAt", "submittedReportId", "submissionStatus"]
     .map(key => [key, draft[key] === undefined ? { $exists: false } : draft[key]]));
+}
+
+/** Opaque version pin for the exact draft the user confirmed discarding. */
+export function draftDiscardRevision(draft: any): string {
+  // Missing legacy revision fields and Mongoose's default zero describe the
+  // same version. The final delete still compares their exact stored snapshot.
+  const snapshot = { ...submittedDraftSnapshotFilter(draft),
+    revision: Number(draft.revision) || 0, mediaRevision: Number(draft.mediaRevision) || 0 };
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 
 /** Marker fields, cleared together whenever a draft becomes ordinary work again. */
@@ -133,9 +143,15 @@ export async function markAcceptedReportDraftsSubmitted(input: {
  * is marked; true means "kept". The upload-session read also covers a delete
  * that overtakes the acceptance mark.
  */
-export async function keepDraftOfAcceptedUpload(draft: any): Promise<boolean> {
+export async function keepDraftOfAcceptedUpload(draft: any, options: { explicitDiscard?: boolean } = {}): Promise<boolean> {
   if (!draft) return false;
   if (draft.submittedReportId && draft.submissionStatus === "processing") return true;
+  if (draft.submittedReportId && draft.submissionStatus === "failed") {
+    const report = await modelFor(sessionTypeToDraftType(draft.type)).findOne({ _id: draft.submittedReportId, user: draft.user })
+      .select("status job_status preview_data lots").lean();
+    const outcome = reportOutcome(sessionTypeToDraftType(draft.type), report);
+    if (outcome === "processing" || (outcome !== "ready" && !options.explicitDiscard)) return true;
+  }
   const submissionIds = [...new Set([draft.clientDraftId, draft.formData?.clientSubmissionId]
     .map(normalizeDraftClientId).filter(Boolean))];
   if (!submissionIds.length) return false;
@@ -143,16 +159,28 @@ export async function keepDraftOfAcceptedUpload(draft: any): Promise<boolean> {
     user: draft.user,
     type: sessionTypeToDraftType(draft.type),
     clientSubmissionId: { $in: submissionIds },
-    status: { $in: ["completed", "queued"] },
+    $or: [
+      { status: { $in: ["completed", "queued", "processed"] } },
+      { status: "failed", uploadCompletedAt: { $type: "date" } },
+    ],
     reportId: { $type: "string", $ne: "" },
-    cleanupStartedAt: { $exists: false },
-  }).select("_id reportId uploadCompletedAt queuedAt").sort({ updatedAt: -1 }).lean();
+  }).select("_id reportId status uploadCompletedAt queuedAt").sort({ updatedAt: -1 }).lean();
   if (!session) return false;
+  const terminal = ["processed", "failed"].includes(session.status);
   const acceptedAt = session.uploadCompletedAt || session.queuedAt;
   // Missing historical receipt timing or newer work is retained, never
   // reattached to an old report which could delete it on completion.
   if (!acceptedAt || !Number.isFinite(new Date(acceptedAt).getTime()) ||
-      !draft.updatedAt || new Date(draft.updatedAt).getTime() >= new Date(acceptedAt).getTime()) return true;
+      !draft.updatedAt || new Date(draft.updatedAt).getTime() >= new Date(acceptedAt).getTime()) return !options.explicitDiscard;
+  if (terminal) {
+    const report = await modelFor(sessionTypeToDraftType(draft.type)).findOne({ _id: session.reportId, user: draft.user })
+      .select("status job_status preview_data lots").lean();
+    const outcome = reportOutcome(sessionTypeToDraftType(draft.type), report);
+    // Only a ready preview justifies an old client's automatic cleanup. Failed
+    // and missing previews require the user's exact confirmed discard intent;
+    // a failed marker alone cannot distinguish that from delayed cleanup.
+    if (outcome === "ready" || (outcome !== "processing" && options.explicitDiscard)) return false;
+  }
   await markAcceptedReportDraftsSubmitted({
     userId: draft.user,
     type: draft.type,
@@ -161,6 +189,7 @@ export async function keepDraftOfAcceptedUpload(draft: any): Promise<boolean> {
     notUpdatedAfter: new Date(acceptedAt),
     draftSnapshot: draft,
   });
+  if (terminal) await settleSubmittedReportDrafts({ reportId: session.reportId, reportType: draft.type, userId: draft.user });
   return true;
 }
 

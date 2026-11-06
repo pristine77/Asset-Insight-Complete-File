@@ -32,6 +32,7 @@ import {
   isRecoverableDraftCloudError,
 } from '../services/draftCloudSyncState';
 import api from '../services/api';
+import { getAuthOperationEpoch } from '../services/authSessionOperation';
 import { getSubmissionError, type ConnectivityStatus } from '../services/connectivityService';
 
 type LegacyFormType = 'asset' | 'realEstate';
@@ -234,6 +235,8 @@ const OfflineReportsScreen = ({
   const mounted = useRef(true);
   const loadRevision = useRef(0);
   const loadsInFlight = useRef(0);
+  const loadedActorEpoch = useRef<number | null>(null);
+  const deletingItems = useRef(new Set<string>());
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; loadRevision.current += 1; };
@@ -304,9 +307,10 @@ const OfflineReportsScreen = ({
 
   const loadData = useCallback(async (syncAfterLoad = true) => {
     const owner = OfflineCaptureStore.getOwnerId();
+    const actorEpoch = getAuthOperationEpoch();
     const revision = ++loadRevision.current;
     const isCurrent = () => mounted.current && !!owner &&
-      OfflineCaptureStore.getOwnerId() === owner && revision === loadRevision.current;
+      OfflineCaptureStore.getOwnerId() === owner && getAuthOperationEpoch() === actorEpoch && revision === loadRevision.current;
     loadsInFlight.current += 1;
     try {
     const [nextDrafts, nextJobs, connectivity] = await Promise.all([
@@ -342,6 +346,7 @@ const OfflineReportsScreen = ({
     }
 
     if (!isCurrent()) return;
+    loadedActorEpoch.current = actorEpoch;
     setDrafts(nextDrafts);
     setJobs(nextJobs);
     setSavedInputs(nextSavedInputs);
@@ -712,10 +717,28 @@ const OfflineReportsScreen = ({
   }, [onContinueDraft]);
 
   const deleteItem = useCallback((item: UnifiedDraftItem) => {
+    const owner = OfflineCaptureStore.getOwnerId();
+    const actorEpoch = getAuthOperationEpoch();
+    const isCurrent = () => mounted.current && !!owner && OfflineCaptureStore.getOwnerId() === owner &&
+      getAuthOperationEpoch() === actorEpoch && loadedActorEpoch.current === actorEpoch;
+    if (!isCurrent() || (item.source === 'local' && item.draft.ownerId !== owner)) return;
     if (item.source === 'local' && backgroundUploadManager.isBusy(item.draft.id)) {
       Alert.alert('Uploading in the background', 'This draft is uploading in the background. Pause it from the upload bar before deleting it.');
       return;
     }
+    const cloud = item.source === 'cloud' || item.source === 'local' ? item.cloud : undefined;
+    const cloudId = item.source === 'cloud' ? item.cloud.id || item.cloud._id || ''
+      : item.source === 'local' ? item.draft.cloudId || cloud?.id || cloud?._id || '' : '';
+    const cloudOwner = typeof cloud?.user === 'string' ? cloud.user : cloud?.user?._id;
+    if (cloudOwner && cloudOwner !== owner) return;
+    const discardRevision = cloud?.discardRevision;
+    if (cloudId && (!cloud || (cloud.id || cloud._id) !== cloudId || typeof discardRevision !== 'string' || !/^[a-f0-9]{64}$/.test(discardRevision))) {
+      Alert.alert('Refresh Drafts', 'Refresh Drafts before deleting this saved draft. Your photos are unchanged.');
+      return;
+    }
+    const localSnapshot = item.source === 'local' ? {
+      ownerId: item.draft.ownerId, localRevision: item.draft.localRevision, updatedAt: item.draft.updatedAt,
+    } : undefined;
     const title = item.title || 'draft';
     Alert.alert('Delete Draft', `Delete "${title}"?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -723,22 +746,41 @@ const OfflineReportsScreen = ({
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          if (item.source === 'local') {
-            if (backgroundUploadManager.isBusy(item.draft.id)) return;
-            // A paused background upload of this draft must not be resumable once it is gone.
-            backgroundUploadManager.forget(item.draft.id);
-            if (item.draft.cloudId) {
-              await reportDraftService.delete(item.draft.cloudId).catch(() => undefined);
+          if (!isCurrent() || deletingItems.current.has(item.id)) return;
+          deletingItems.current.add(item.id);
+          try {
+            if (item.source === 'local') {
+              if (backgroundUploadManager.isBusy(item.draft.id)) return;
+              const current = await AutoSaveService.getDraft(item.draft.id);
+              if (!isCurrent()) return;
+              if (!current || current.ownerId !== localSnapshot?.ownerId || current.localRevision !== localSnapshot?.localRevision || current.updatedAt !== localSnapshot?.updatedAt) {
+                throw new Error('This draft changed. Refresh Drafts and review it before deleting. Your photos are unchanged.');
+              }
             }
-            await AutoSaveService.deleteDraft(item.draft.id);
-          } else if (item.source === 'cloud') {
-            await reportDraftService.delete(item.cloud.id || item.cloud._id || '');
-          } else if (item.source === 'queue') {
-            await OfflineQueueService.deleteJob(item.job.id);
-          } else {
-            await api.delete(`/saved-inputs/${item.savedInput._id}`);
+            if (cloudId) {
+              await reportDraftService.delete(cloudId, { intent: 'discard', baseRevision: discardRevision! });
+              if (!isCurrent()) return;
+            }
+            if (item.source === 'local') {
+              if (backgroundUploadManager.isBusy(item.draft.id)) return;
+              await AutoSaveService.deleteDraft(item.draft.id, { snapshot: localSnapshot!, assertCurrent: () => {
+                if (!isCurrent()) throw new Error('The signed-in account changed. Your local draft is unchanged.');
+              } });
+              if (!isCurrent()) return;
+              // Forget a paused upload only after confirmed cloud deletion and
+              // the unchanged local snapshot has been marked discarded.
+              backgroundUploadManager.forget(item.draft.id);
+            } else if (item.source === 'queue') {
+              await OfflineQueueService.deleteJob(item.job.id);
+            } else if (item.source === 'legacySavedInput') {
+              await api.delete(`/saved-inputs/${item.savedInput._id}`);
+            }
+            if (isCurrent()) await loadData(false);
+          } catch (error: any) {
+            if (isCurrent()) Alert.alert('Draft could not be deleted', error?.response?.data?.message || error?.message || 'Refresh Drafts before trying again. Your local photos are unchanged.');
+          } finally {
+            deletingItems.current.delete(item.id);
           }
-          await loadData(false);
         },
       },
     ]);

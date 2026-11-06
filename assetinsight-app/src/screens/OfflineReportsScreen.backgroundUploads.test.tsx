@@ -14,6 +14,7 @@ import reportDraftService from '../services/reportDraftService';
 import DraftSyncService from '../services/draftSyncService';
 import backgroundUploadManager, { type BackgroundUploadRequest } from '../services/backgroundUploadManager';
 import { setUploadOwner } from '../services/uploadCancellation';
+import { invalidateAuthOperations } from '../services/authSessionOperation';
 
 jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 jest.mock('../components/CaptureBackupPanel', () => () => null);
@@ -71,7 +72,7 @@ function backgroundUpload(draftId: string) {
   return request;
 }
 const cloudCopy = (draftId: string) => ({
-  id: `cloud-${draftId}`, clientDraftId: draftId, type: 'asset', user: 'owner', revision: 4,
+  id: `cloud-${draftId}`, clientDraftId: draftId, type: 'asset', user: 'owner', revision: 4, discardRevision: 'a'.repeat(64),
   title: `Report ${draftId}`, contractNo: `QA-${draftId}`, updatedAt: UPDATED_AT,
   lots: [{ id: `${draftId}-lot`, mainImages: [], extraImages: [], videoFiles: [], coverIndex: 0 }],
   media: [{ clientFileId: 'photo-one', lotId: `${draftId}-lot`, slot: 'main', index: 0,
@@ -87,6 +88,8 @@ beforeEach(() => {
   backgroundUploadManager.resetForTests();
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   jest.mocked(reportDraftService.list).mockResolvedValue([]);
+  jest.mocked(reportDraftService.delete).mockReset().mockResolvedValue(undefined);
+  jest.mocked(AutoSaveService.deleteDraft).mockReset().mockResolvedValue(undefined);
   jest.mocked(AutoSaveService.saveCloudDraftSnapshot).mockImplementation(async (args: any) => ({ ...localDraft(args.id), ...args, cloudSyncedAt: UPDATED_AT }) as any);
   jest.mocked(DraftSyncService.syncDraft).mockResolvedValue({ status: 'skipped' } as any);
 });
@@ -162,7 +165,7 @@ it('shows the live state, and closes Delete while a draft uploads but not once i
   await fireEvent.press(screen.getAllByRole('button', { name: 'Delete' })[0]);
   const confirm = jest.mocked(Alert.alert).mock.calls.find(([title]) => title === 'Delete Draft')?.[2]?.find((button) => button.text === 'Delete');
   await act(async () => { await confirm?.onPress?.(); });
-  expect(AutoSaveService.deleteDraft).toHaveBeenCalledWith('draft-a');
+  expect(AutoSaveService.deleteDraft).toHaveBeenCalledWith('draft-a', expect.objectContaining({ snapshot: expect.objectContaining({ ownerId: 'owner', updatedAt: UPDATED_AT }), assertCurrent: expect.any(Function) }));
   expect(backgroundUploadManager.statusFor('draft-a')).toBeUndefined();
 });
 
@@ -300,4 +303,145 @@ it('shows a useful cloud fetch error without raw status codes or clearing anythi
   expect(AutoSaveService.saveCloudDraftSnapshot).not.toHaveBeenCalled();
   expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
   expect(onContinue).not.toHaveBeenCalled();
+});
+
+describe('confirmed cloud discard', () => {
+  const revision = 'a'.repeat(64);
+  async function openLocalAndCloud() {
+    showDrafts(localDraft('draft-a', { cloudSyncedAt: UPDATED_AT, cloudId: 'cloud-draft-a', localRevision: 4 }), localDraft('draft-b', { cloudSyncedAt: UPDATED_AT }));
+    jest.mocked(reportDraftService.list).mockResolvedValue([cloudCopy('draft-a')] as any);
+    await openDrafts();
+  }
+  async function confirmation(index = 0) {
+    await fireEvent.press(screen.getAllByRole('button', { name: 'Delete' })[index]);
+    const confirm = jest.mocked(Alert.alert).mock.calls.find(([title]) => title === 'Delete Draft')?.[2]?.find(button => button.text === 'Delete')?.onPress;
+    expect(confirm).toBeDefined();
+    return confirm!;
+  }
+
+  it('sends only the confirmed displayed cloud token and deletes local only after cloud success', async () => {
+    await openLocalAndCloud();
+    let finish!: () => void;
+    jest.mocked(reportDraftService.delete).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const confirm = await confirmation();
+    let deleting: unknown;
+    await act(async () => { deleting = confirm(); });
+    expect(reportDraftService.delete).toHaveBeenCalledWith('cloud-draft-a', { intent: 'discard', baseRevision: revision });
+    expect(AutoSaveService.deleteDraft).not.toHaveBeenCalled();
+    expect(reportDraftService.get).not.toHaveBeenCalled();
+    await act(async () => { finish(); await deleting; });
+    expect(AutoSaveService.deleteDraft).toHaveBeenCalledWith('draft-a', expect.objectContaining({ snapshot: { ownerId: 'owner', localRevision: 4, updatedAt: UPDATED_AT }, assertCurrent: expect.any(Function) }));
+    expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
+  });
+
+  it('deletes a cloud-only row with its displayed token without creating or deleting local data', async () => {
+    await openCloudOnly();
+    const confirm = await confirmation(1);
+    await act(async () => { await confirm(); });
+    expect(reportDraftService.delete).toHaveBeenCalledWith('cloud-draft-a', { intent: 'discard', baseRevision: revision });
+    expect(AutoSaveService.deleteDraft).not.toHaveBeenCalled();
+    expect(AutoSaveService.saveCloudDraftSnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each(['conflict', 'retained', 'uncertain'])('keeps local originals and a paused upload on %s cloud deletion', async (failure) => {
+    await act(async () => { backgroundUploadManager.enqueue(backgroundUpload('draft-a')); });
+    await act(async () => { backgroundUploadManager.pause(backgroundUploadManager.getSnapshot().active!.id); });
+    await openLocalAndCloud();
+    jest.mocked(reportDraftService.delete).mockRejectedValueOnce(new Error(`${failure}: keep this draft`));
+    const confirm = await confirmation();
+    await act(async () => { await confirm(); });
+    expect(AutoSaveService.deleteDraft).not.toHaveBeenCalled();
+    expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
+    expect(backgroundUploadManager.statusFor('draft-a')?.status).toBe('paused');
+    expect(Alert.alert).toHaveBeenCalledWith('Draft could not be deleted', expect.stringContaining(failure));
+  });
+
+  it('requires a refresh if a displayed cloud token is missing and does not fetch an unseen token', async () => {
+    const cloud = { ...cloudCopy('draft-a'), discardRevision: undefined };
+    await openCloudOnly(cloud as any);
+    await fireEvent.press(screen.getAllByRole('button', { name: 'Delete' })[1]);
+    expect(Alert.alert).toHaveBeenCalledWith('Refresh Drafts', expect.any(String));
+    expect(jest.mocked(Alert.alert).mock.calls.some(([title]) => title === 'Delete Draft')).toBe(false);
+    expect(reportDraftService.get).not.toHaveBeenCalled();
+    expect(reportDraftService.delete).not.toHaveBeenCalled();
+    expect(AutoSaveService.deleteDraft).not.toHaveBeenCalled();
+  });
+
+  it('preserves a newer local save made while the confirmation was open', async () => {
+    await openLocalAndCloud();
+    const confirm = await confirmation();
+    showDrafts(localDraft('draft-a', { cloudId: 'cloud-draft-a', localRevision: 5 }), localDraft('draft-b'));
+    await act(async () => { await confirm(); });
+    expect(reportDraftService.delete).not.toHaveBeenCalled();
+    expect(AutoSaveService.deleteDraft).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledWith('Draft could not be deleted', expect.stringContaining('draft changed'));
+  });
+
+  it('keeps a newer local save at the final conditional write after a held cloud acknowledgement', async () => {
+    await act(async () => { backgroundUploadManager.enqueue(backgroundUpload('draft-a')); });
+    await act(async () => { backgroundUploadManager.pause(backgroundUploadManager.getSnapshot().active!.id); });
+    await openLocalAndCloud();
+    let finish!: () => void;
+    jest.mocked(reportDraftService.delete).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    jest.mocked(AutoSaveService.deleteDraft).mockRejectedValueOnce(new Error('This draft changed. Your photos are unchanged.'));
+    const confirm = await confirmation();
+    let deleting: unknown;
+    await act(async () => { deleting = confirm(); });
+    await act(async () => { finish(); await deleting; });
+    expect(AutoSaveService.deleteDraft).toHaveBeenCalledWith('draft-a', expect.objectContaining({ snapshot: expect.objectContaining({ localRevision: 4 }) }));
+    expect(backgroundUploadManager.statusFor('draft-a')?.status).toBe('paused');
+    expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
+  });
+
+  it.each(['owner', 'epoch'])('ignores confirmation held across an account %s change', async (change) => {
+    await openLocalAndCloud();
+    const confirm = await confirmation();
+    if (change === 'owner') jest.mocked(OfflineCaptureStore.getOwnerId).mockReturnValue('another-owner');
+    else invalidateAuthOperations();
+    await act(async () => { await confirm(); });
+    expect(reportDraftService.delete).not.toHaveBeenCalled();
+    expect(AutoSaveService.deleteDraft).not.toHaveBeenCalled();
+  });
+
+  it.each(['owner', 'epoch', 'unmount'])('ignores a held cloud response after %s', async (change) => {
+    await act(async () => { backgroundUploadManager.enqueue(backgroundUpload('draft-a')); });
+    await act(async () => { backgroundUploadManager.pause(backgroundUploadManager.getSnapshot().active!.id); });
+    await openLocalAndCloud();
+    let finish!: () => void;
+    jest.mocked(reportDraftService.delete).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const confirm = await confirmation();
+    let deleting: unknown;
+    await act(async () => { deleting = confirm(); });
+    const loads = jest.mocked(reportDraftService.list).mock.calls.length;
+    if (change === 'owner') jest.mocked(OfflineCaptureStore.getOwnerId).mockReturnValue('another-owner');
+    else if (change === 'epoch') invalidateAuthOperations();
+    else await cleanup();
+    await act(async () => { finish(); await deleting; });
+    expect(AutoSaveService.deleteDraft).not.toHaveBeenCalled();
+    expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
+    expect(backgroundUploadManager.statusFor('draft-a')?.status).toBe('paused');
+    expect(reportDraftService.list).toHaveBeenCalledTimes(loads);
+  });
+
+  it('holds duplicate confirmations to one request', async () => {
+    await openLocalAndCloud();
+    let finish!: () => void;
+    jest.mocked(reportDraftService.delete).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const confirm = await confirmation();
+    let deleting: unknown;
+    await act(async () => { deleting = confirm(); await confirm(); });
+    expect(reportDraftService.delete).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(); await deleting; });
+    expect(AutoSaveService.deleteDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards a local-only draft without a cloud request', async () => {
+    showDrafts(localDraft('draft-a'), localDraft('draft-b'));
+    await openDrafts();
+    const confirm = await confirmation();
+    await act(async () => { await confirm(); });
+    expect(reportDraftService.delete).not.toHaveBeenCalled();
+    expect(reportDraftService.get).not.toHaveBeenCalled();
+    expect(AutoSaveService.deleteDraft).toHaveBeenCalledWith('draft-a', expect.objectContaining({ snapshot: expect.objectContaining({ ownerId: 'owner' }) }));
+  });
 });

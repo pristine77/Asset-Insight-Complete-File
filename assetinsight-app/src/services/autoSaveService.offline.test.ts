@@ -297,3 +297,44 @@ test.each([true, false])('a saved capture cannot change Arrival purpose (initial
   await AutoSaveService.saveDraft({ ...input, formData: { ...input.formData, ...(arrival ? { capturePurpose: 'arrivalPhotos' as const } : {}) } });
   await expect(AutoSaveService.saveDraft({ ...input, formData: { ...input.formData, ...(!arrival ? { capturePurpose: 'arrivalPhotos' as const } : {}) } })).rejects.toThrow('different purpose');
 });
+
+describe('confirmed discard snapshot', () => {
+  it('marks the unchanged local-only draft discarded without touching its originals', async () => {
+    const draft = await AutoSaveService.saveDraft(form());
+    const photos = JSON.stringify(draft.lots);
+    await AutoSaveService.deleteDraft(draft.id, { snapshot: draft, assertCurrent: () => undefined });
+    expect(saved.get(draft.id)?.submissionState).toBe('discarded');
+    expect(JSON.stringify(saved.get(draft.id)?.lots)).toBe(photos);
+    expect(OfflineCaptureStore.setSubmissionState).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing automatic cleanup behavior when no explicit snapshot was provided', async () => {
+    await AutoSaveService.saveDraft(form());
+    await AutoSaveService.deleteDraft('draft');
+    expect(OfflineCaptureStore.setSubmissionState).toHaveBeenCalledWith('draft', 'discarded');
+  });
+
+  it.each(['localRevision', 'updatedAt', 'ownerId'] as const)('preserves a newer %s at the final serialized write boundary', async (field) => {
+    const draft = await AutoSaveService.saveDraft(form());
+    const snapshot = { ...draft };
+    jest.mocked(OfflineCaptureStore.updateDraft).mockImplementationOnce(async (id, change) => {
+      const current = { ...saved.get(id)!, [field]: field === 'localRevision' ? (draft.localRevision || 0) + 1 : 'newer-value' };
+      saved.set(id, current);
+      const next = change(current);
+      saved.set(id, next);
+      return next;
+    });
+    await expect(AutoSaveService.deleteDraft(draft.id, { snapshot, assertCurrent: () => undefined })).rejects.toThrow('draft changed');
+    expect(saved.get(draft.id)?.submissionState).not.toBe('discarded');
+    expect(saved.get(draft.id)?.lots).toEqual(draft.lots);
+    expect(OfflineCaptureStore.setSubmissionState).not.toHaveBeenCalled();
+  });
+
+  it('checks the account again inside the serialized write before deleting', async () => {
+    const draft = await AutoSaveService.saveDraft(form());
+    const assertCurrent = jest.fn().mockImplementationOnce(() => undefined).mockImplementation(() => { throw new Error('Account changed'); });
+    await expect(AutoSaveService.deleteDraft(draft.id, { snapshot: draft, assertCurrent })).rejects.toThrow('Account changed');
+    expect(saved.get(draft.id)?.submissionState).not.toBe('discarded');
+    expect(saved.get(draft.id)?.lots).toEqual(draft.lots);
+  });
+});

@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   upsertWithMedia: vi.fn(),
   deleteDraftByClientId: vi.fn(),
+  discardDraft: vi.fn(),
   createAsset: vi.fn(),
   deleteScopedDraft: vi.fn(),
   deleteSmartUploadDraft: vi.fn(),
@@ -186,6 +187,7 @@ vi.mock("@/services/reportDrafts", () => ({
   ReportDraftService: {
     upsertWithMedia: mocks.upsertWithMedia,
     deleteByClientId: mocks.deleteDraftByClientId,
+    delete: mocks.discardDraft,
     restoreLots: mocks.restoreLots,
     get: mocks.getDraft,
   },
@@ -1285,6 +1287,49 @@ describe("AssetForm manual save and submission workflow", () => {
     expect(
       screen.queryByRole("dialog", { name: "Uploading your report" })
     ).not.toBeInTheDocument();
+  });
+
+  it.each(["success", "conflict", "missing-token"])("keeps cloud and local asset discard ordered for %s", async (outcome) => {
+    const draft = { ...makeAssetResumeDraft(RESOLVED_ASSET_LOCATION), discardRevision: outcome === "missing-token" ? undefined : "b".repeat(64) };
+    const status = vi.fn();
+    let resolveDelete!: () => void;
+    const pending = new Promise<void>((resolve, reject) => {
+      resolveDelete = () => outcome === "conflict" ? reject(Object.assign(new Error("Request failed with status code 409"), { response: { status: 409, data: { message: "Draft changed. Reopen Drafts." } } })) : resolve();
+    });
+    mocks.discardDraft.mockImplementation((_id, token) => token ? pending : Promise.reject(new Error("Reopen Drafts before deleting.")));
+    render(<AssetForm resumeDraft={draft} onDraftStatusChange={status} />);
+    await waitFor(() => expect(status).toHaveBeenCalledWith("saved", "Draft and photos restored"));
+    mocks.deleteScopedDraft.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "More asset form actions" }));
+    fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Discard draft and clear form" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: "Discard this asset draft?" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Discard draft" }));
+    await waitFor(() => expect(mocks.discardDraft).toHaveBeenCalledExactlyOnceWith(draft._id, draft.discardRevision));
+    expect(mocks.deleteScopedDraft).not.toHaveBeenCalled();
+    expect(mocks.deleteSmartUploadDraft).not.toHaveBeenCalled();
+    resolveDelete();
+    if (outcome === "success") {
+      await waitFor(() => expect(mocks.deleteScopedDraft).toHaveBeenCalled());
+      expect(mocks.deleteSmartUploadDraft).toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(status).toHaveBeenCalledWith("error", "Draft was not discarded"));
+      expect(screen.queryByText("Request failed with status code 409")).not.toBeInTheDocument();
+      expect(mocks.deleteScopedDraft).not.toHaveBeenCalled();
+      expect(mocks.deleteSmartUploadDraft).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/contract number/i)).toHaveValue(draft.contractNo);
+    }
+    expect(mocks.deleteDraftByClientId).not.toHaveBeenCalled();
+    expect(mocks.getDraft).not.toHaveBeenCalled();
+  });
+
+  it("clears a never-cloud-saved asset form locally without authorizing server deletion", async () => {
+    render(<AssetForm />);
+    fireEvent.click(screen.getByRole("button", { name: "More asset form actions" }));
+    fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Discard draft and clear form" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: "Discard this asset draft?" })).getByRole("button", { name: "Discard draft" }));
+    await waitFor(() => expect(mocks.deleteScopedDraft).toHaveBeenCalled());
+    expect(mocks.discardDraft).not.toHaveBeenCalled();
+    expect(mocks.deleteDraftByClientId).not.toHaveBeenCalled();
   });
 
   it("opens the real more-actions menu and wires discard to confirmation", async () => {

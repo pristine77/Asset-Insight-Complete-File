@@ -1,4 +1,5 @@
 import { assertOrdinaryReport } from './arrivalPhotoDraft';
+import { captureAuthOperation } from './authSessionOperation';
 import api from './api';
 import { allowsCloudDraft } from './offlineDraftPolicy';
 import OfflineCaptureStore from './offlineCaptureStore';
@@ -56,6 +57,8 @@ export type ReportDraft = {
   type: OfflineDraftType;
   storageMode?: 'local_media' | 'r2_media' | 'smart_upload';
   revision?: number;
+  /** Exact displayed snapshot required only for a confirmed user discard. */
+  discardRevision?: string;
   contractNo: string;
   normalizedContractNo: string;
   title: string;
@@ -529,8 +532,30 @@ const reportDraftService = {
     return cloud;
   },
 
-  async delete(id: string): Promise<void> {
-    await api.delete(`/report-drafts/${id}`);
+  async delete(id: string, discard?: { intent: 'discard'; baseRevision: string }): Promise<void> {
+    if (!discard) {
+      await api.delete(`/report-drafts/${id}`);
+      return;
+    }
+    if (!/^[a-f0-9]{64}$/.test(discard.baseRevision)) {
+      throw new Error('Refresh Drafts before deleting this saved draft. Your photos are unchanged.');
+    }
+    const assertSession = captureAuthOperation();
+    const owner = OfflineCaptureStore.getOwnerId();
+    const assertCurrent = () => {
+      assertSession();
+      if (!owner || OfflineCaptureStore.getOwnerId() !== owner) throw new Error('The signed-in account changed. Your local draft is unchanged.');
+    };
+    assertCurrent();
+    const response = await api.delete(`/report-drafts/${encodeURIComponent(id)}`, {
+      data: discard, timeout: 30_000, skipAuthRefreshReplay: true,
+    });
+    assertCurrent();
+    if (response.status !== 200 || response.data?.retained === true || response.data?.deleted !== true || response.data?.draftId !== id) {
+      throw new Error(response.data?.retained === true
+        ? 'This draft is still needed for report processing. Keep it and refresh Drafts before trying again.'
+        : 'Deletion could not be confirmed. Refresh Drafts to check; your local photos are unchanged.');
+    }
   },
 };
 

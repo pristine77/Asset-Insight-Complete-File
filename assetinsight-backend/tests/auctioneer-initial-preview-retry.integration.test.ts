@@ -20,6 +20,7 @@ vi.mock("../src/utils/reportJobMongoQueue.js", async (importOriginal) => {
 import Asset from "../src/models/asset.model.js";
 import LotListing from "../src/models/lotListing.model.js";
 import ReportJob from "../src/models/reportJob.model.js";
+import WorkItem from "../src/models/auctioneerWorkItem.model.js";
 import { AUCTIONEER_EVENT_REQUIRED_MESSAGE } from "../src/service/auctioneerEventResolutionService.js";
 import { retryInitialAuctioneerPreview as retry, verifyInitialAuctioneerRetrySources as verifySources } from "../src/service/auctioneerInitialPreviewRetryService.js";
 import { createMongoReportJob } from "../src/utils/reportJobMongoQueue.js";
@@ -62,6 +63,66 @@ async function seed(kind: Kind = "asset", overrides: any = {}) {
 const run = (fixture: Awaited<ReturnType<typeof seed>>, options: any = {}) => retry({ reportType: fixture.kind,
   reportId: fixture.reportId, userId: fixture.userId, hasIncomingEdits: false, ...options });
 const read = (fixture: Awaited<ReturnType<typeof seed>>) => fixture.Model.findById(fixture.reportId).select("+report_job_outbox +report_recovery +report_recovery_history").lean();
+
+async function pendingFixture(kind: Kind = "asset") {
+  const fixture = await seed(kind);
+  await WorkItem.collection.insertOne({ _id: fixture.workId, source: "auctioneer2", kind: "scheduleA",
+    claimedBy: fixture.userId, assignmentUserId: fixture.userId, linkedReportId: fixture.reportId,
+    linkedReportModel: kind === "asset" ? "AssetReport" : "LotListing", status: "report_created",
+    contract: { id: "contract-bank", eventId: "" }, delivery: { status: "not_ready" },
+    snapshot: { tasks: [{ id: "task-bank", assignedTo: String(fixture.userId), saleEventPending: true,
+      contractId: "contract-bank", lot: { id: "bank-lot", saleEventPending: true } }] } });
+  return fixture;
+}
+
+describe.sequential("sale-pending retry authority", () => {
+  it.each(["asset", "lotListing"] as const)("allows a current %s pending task without recovering an event", async kind => {
+    const fixture = await pendingFixture(kind);
+    expect((await run(fixture))?.data.job_status).toBe("queued");
+    const job = await ReportJob.findOne({ status: "queued" });
+    await verifySources(job!, { assertOwned: async () => undefined } as any);
+    expect(mocks.event).not.toHaveBeenCalled();
+    expect(mocks.head).toHaveBeenCalledTimes(2);
+  });
+  it.each(["assignment", "claim", "report", "model", "abandoned", "delivery"])("refuses changed saved work %s before queueing", async change => {
+    const fixture = await pendingFixture();
+    const updates: Record<string, any> = {
+      assignment: { assignmentUserId: new mongoose.Types.ObjectId() },
+      claim: { claimedBy: new mongoose.Types.ObjectId() },
+      report: { linkedReportId: new mongoose.Types.ObjectId() },
+      model: { linkedReportModel: "LotListing" },
+      abandoned: { status: "abandoned" },
+      delivery: { "delivery.status": "ready" },
+    };
+    await WorkItem.collection.updateOne({ _id: fixture.workId }, { $set: updates[change] });
+    await expect(run(fixture)).rejects.toMatchObject({ statusCode: 409 });
+    expect(await ReportJob.countDocuments()).toBe(1);
+  });
+  it.each(["assignment", "flag"])("rechecks pending %s before storage reads", async change => {
+    const fixture = await pendingFixture(); await run(fixture);
+    const job = await ReportJob.findOne({ status: "queued" });
+    await WorkItem.collection.updateOne({ _id: fixture.workId }, { $set: change === "assignment"
+      ? { assignmentUserId: new mongoose.Types.ObjectId() } : { "snapshot.tasks": [] } });
+    await expect(verifySources(job!, { assertOwned: async () => undefined } as any)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mocks.head).not.toHaveBeenCalled();
+  });
+  it("rechecks pending authority after retained source checks", async () => {
+    const fixture = await pendingFixture(); await run(fixture);
+    const job = await ReportJob.findOne({ status: "queued" });
+    mocks.head.mockImplementation(async () => {
+      await WorkItem.collection.updateOne({ _id: fixture.workId }, { $set: { status: "abandoned" } });
+      return { size: 100 };
+    });
+    await expect(verifySources(job!, { assertOwned: async () => undefined } as any)).rejects.toMatchObject({ statusCode: 409 });
+  });
+  it("refuses a queued pending exception without its exact work binding", async () => {
+    const fixture = await pendingFixture(); await run(fixture);
+    const job = await ReportJob.findOne({ status: "queued" });
+    delete job!.payload.eventIdentityRetry.workItemId;
+    await expect(verifySources(job!, { assertOwned: async () => undefined } as any)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mocks.head).not.toHaveBeenCalled();
+  });
+});
 
 describe.sequential("manual Auctioneer missing-event initial preview retry", () => {
   it.each(["asset", "lotListing"] as const)("requeues %s original source on the same report, without files, submission or numbering changes", async (kind) => {

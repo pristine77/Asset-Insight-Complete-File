@@ -427,6 +427,42 @@ describe("Auctioneer CR lot numbers", () => {
     expect(upstream.completeConditionReport).toHaveBeenCalledWith("upstream-1", expect.objectContaining({ lotNumber: "012A", estimatedValue: "18500", destination: "LottingBoard" }));
   });
 
+  it.each(["asset", "lotListing"] as const)("keeps Auctioneer's number when completing a sale-pending %s lot", async reportType => {
+    const { workItem } = await queued(reportType, "012A");
+    await AuctioneerWorkItem.collection.updateOne({ _id: workItem._id }, {
+      $unset: { "contract.eventId": "" },
+      $set: { "snapshot.tasks": [{ saleEventPending: true }] },
+    });
+    upstream.getLot.mockResolvedValue({ status: "OpToDo", lotNumber: "BANK-42", photos: [] });
+
+    await runAuctioneerDeliveryJob(String(workItem._id));
+
+    expect(upstream.completeConditionReport).toHaveBeenCalledExactlyOnceWith("upstream-1", expect.objectContaining({
+      estimatedValue: "18500", destination: "LottingBoard",
+    }));
+    expect(upstream.completeConditionReport.mock.calls[0][1]).not.toHaveProperty("lotNumber");
+    for (const [, body] of upstream.patchLot.mock.calls) expect(body).not.toHaveProperty("lotNumber");
+    expect(upstream.submitLot).not.toHaveBeenCalled();
+    expect((await AuctioneerWorkItem.findById(workItem._id))?.delivery.status).toBe("sent");
+  });
+
+  it.each(["asset", "lotListing"] as const)("does not reconcile the number of an already completed sale-pending %s lot", async reportType => {
+    const { workItem } = await queued(reportType, "12");
+    await AuctioneerWorkItem.collection.updateOne({ _id: workItem._id }, {
+      $unset: { "contract.eventId": "" },
+      $set: { "snapshot.tasks": [{ lot: { saleEventPending: true } }] },
+    });
+    upstream.getLot.mockResolvedValue({ status: "Lotting", lotNumber: "LOT-4321" });
+
+    await runAuctioneerDeliveryJob(String(workItem._id));
+
+    expect(upstream.patchLot).not.toHaveBeenCalled();
+    expect(upstream.completeConditionReport).not.toHaveBeenCalled();
+    expect(upstream.uploadLotPhotos).not.toHaveBeenCalled();
+    expect(upstream.submitLot).not.toHaveBeenCalled();
+    expect((await AuctioneerWorkItem.findById(workItem._id))?.delivery.status).toBe("sent");
+  });
+
   it.each([12, "12"])("sends %s as a string", async value => {
     const { workItem } = await queued("asset", value);
     await runAuctioneerDeliveryJob(String(workItem._id));

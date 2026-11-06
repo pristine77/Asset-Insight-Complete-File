@@ -1035,8 +1035,26 @@ export const AutoSaveService = {
     return normalized;
   },
 
-  async deleteDraft(id: string): Promise<void> {
-    await OfflineCaptureStore.setSubmissionState(id, 'discarded');
+  async deleteDraft(id: string, expected?: {
+    snapshot: Pick<OfflineReportDraft, 'ownerId' | 'localRevision' | 'updatedAt'>;
+    assertCurrent: () => void;
+  }): Promise<void> {
+    if (!expected) {
+      await OfflineCaptureStore.setSubmissionState(id, 'discarded');
+      return;
+    }
+    expected.assertCurrent();
+    // Compare inside the existing serialized store writer. A newer autosave
+    // must survive even if it lands after the cloud confirms the discard.
+    await OfflineCaptureStore.updateDraft(id, (current) => {
+      expected.assertCurrent();
+      const snapshot = expected.snapshot;
+      if (current.ownerId !== snapshot.ownerId || current.localRevision !== snapshot.localRevision || current.updatedAt !== snapshot.updatedAt) {
+        throw new Error('This draft changed. Refresh Drafts and review it before deleting. Your photos are unchanged.');
+      }
+      return { ...current, submissionState: 'discarded' };
+    });
+    expected.assertCurrent();
   },
 
   async removeDraftRecordOnly(id: string): Promise<void> {

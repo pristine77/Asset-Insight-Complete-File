@@ -31,7 +31,7 @@ import {
 } from "../src/service/submittedReportDraftService.js";
 import { toReportDraftClient } from "../src/service/reportDraftService.js";
 import { findContractLotConflicts } from "../src/service/contractLotUniquenessService.js";
-import { deleteReportDraftByClientId, listReportDrafts } from "../src/controller/reportDraft.controller.js";
+import { deleteReportDraft, deleteReportDraftByClientId, listReportDrafts } from "../src/controller/reportDraft.controller.js";
 
 let mongo: MongoMemoryServer;
 beforeAll(async () => { mongo = await MongoMemoryServer.create(); await mongoose.connect(mongo.getUri()); });
@@ -178,6 +178,49 @@ describe.sequential("the Drafts list", () => {
 });
 
 describe.sequential("a delete that arrives right after sending", () => {
+  it.each((["asset", "lotListing"] as const).flatMap(type =>
+    ["id", "client"].flatMap(endpoint =>
+      ["processed", "failed"].flatMap(sessionStatus =>
+        ["unmarked-empty", "cleanup-started", "known-failed", "ready", "newer-save"].map(scenario => ({ type, endpoint, sessionStatus, scenario }))))))(
+    "$type $endpoint DELETE handles $sessionStatus / $scenario without overtaking the acceptance mark", async ({ type, endpoint, sessionStatus, scenario }) => {
+      const user = userId();
+      const reportId = await report(user, { status: scenario === "ready" ? "preview" : "error",
+        job_status: scenario === "ready" ? "done" : "error", preview_data: { lots: scenario === "ready" ? [{ title: "Ready" }] : [] } },
+        type === "asset" ? AssetReport : LotListing);
+      const saved = await draft(user, { type, revision: 3, ...(scenario === "known-failed" ? {
+        submittedReportId: reportId, submittedReportType: type, submissionStatus: "failed",
+      } : {}) });
+      const acceptedAt = new Date(Date.now() - 1000);
+      const updatedAt = new Date(acceptedAt.getTime() + (scenario === "newer-save" ? 500 : -500));
+      await ReportDraft.collection.updateOne({ _id: saved._id }, { $set: { updatedAt } });
+      await ReportUploadSession.collection.insertOne({ user, type, clientSubmissionId: "submission-1",
+        reportId: String(reportId), jobId: "accepted-job", status: sessionStatus, files: [], uploadCompletedAt: acceptedAt,
+        ...(scenario === "cleanup-started" ? { cleanupStartedAt: new Date() } : {}) });
+      const app = express(); app.use((req: any, _res, next) => { req.userId = String(user); next(); });
+      app.delete("/report-drafts/client/:clientDraftId", deleteReportDraftByClientId);
+      app.delete("/report-drafts/:id", deleteReportDraft);
+      const response = await request(app).delete(endpoint === "id" ? `/report-drafts/${saved._id}` : `/report-drafts/client/draft-1?type=${type}`);
+      expect(response.status).toBe(200);
+      const after = await read(saved._id);
+      if (scenario === "ready") {
+        expect(response.body.retained).toBeUndefined();
+        expect(after).toBeNull();
+      } else {
+        expect(response.body.retained).toBe(true);
+        expect(after).toMatchObject({ revision: 3, updatedAt });
+        if (["unmarked-empty", "cleanup-started", "known-failed"].includes(scenario)) expect(after).toMatchObject({ submittedReportId: reportId, submissionStatus: "failed" });
+        else expect(after.submittedReportId).toBeFalsy();
+      }
+    },
+  );
+
+  it("does not classify a failed preaccept session as an accepted upload", async () => {
+    const user = userId(); const saved = await draft(user);
+    await ReportUploadSession.collection.insertOne({ user, type: "asset", clientSubmissionId: "submission-1",
+      reportId: String(new mongoose.Types.ObjectId()), status: "failed", files: [] });
+    expect(await keepDraftOfAcceptedUpload(await read(saved._id))).toBe(false);
+  });
+
   it("keeps the draft while its upload is accepted and processing; a user discard of an ordinary draft still deletes", async () => {
     const user = userId();
     const reportId = await report(user, { status: "processing", job_status: "queued" });
@@ -207,11 +250,13 @@ describe.sequential("a delete that arrives right after sending", () => {
   it("a failed kept draft can be discarded by its user", async () => {
     const user = userId();
     const reportId = await report(user, { status: "error", job_status: "error", job_error: "Stopped" });
-    await draft(user, { submittedReportId: reportId, submittedReportType: "asset", submissionStatus: "failed", submissionError: "Stopped" });
-    const app = express();
+    const saved = await draft(user, { submittedReportId: reportId, submittedReportType: "asset", submissionStatus: "failed", submissionError: "Stopped" });
+    const client = await toReportDraftClient(await read(saved._id));
+    const app = express(); app.use(express.json());
     app.use((req: any, _res, next) => { req.userId = String(user); next(); });
     app.delete("/report-drafts/client/:clientDraftId", deleteReportDraftByClientId);
-    const response = await request(app).delete("/report-drafts/client/draft-1?type=asset");
+    const response = await request(app).delete("/report-drafts/client/draft-1?type=asset")
+      .send({ intent: "discard", baseRevision: client.discardRevision });
     expect(response.status).toBe(200);
     expect(await ReportDraft.exists({ clientDraftId: "draft-1" })).toBeNull();
   });
@@ -256,4 +301,58 @@ describe.sequential("a delete that arrives right after sending", () => {
       expect(await read(existing._id)).toMatchObject({ title: "New work", revision: 2, mediaRevision: 2 });
     } finally { spy.mockRestore(); }
   });
+});
+
+
+describe.sequential("explicit draft discard confirmation", () => {
+  it.each((["asset", "lotListing"] as const).flatMap(type => ["id", "client"].flatMap(endpoint =>
+    ["exact", "legacy-zero", "missing-token", "revision", "media", "content", "submission", "other-account", "late-save", "processing"].map(change => ({type, endpoint, change})))))
+  ("$type $endpoint honors only the confirmed snapshot ($change)", async ({ type, endpoint, change }) => {
+    const user = userId(); const reportId = await report(user, { status: "error", job_status: "error" }, type === "asset" ? AssetReport : LotListing);
+    const saved = await draft(user, { type, revision: 7, mediaRevision: 3, contentHash: "snapshot-before", submittedReportId: reportId,
+      submittedReportType: type, submissionStatus: "failed" });
+    if (change === "legacy-zero") await ReportDraft.collection.updateOne({ _id: saved._id }, { $unset: { mediaRevision: 1 } });
+    const app = express(); app.use(express.json());
+    app.use((req: any, _res, next) => { req.userId = String(req.headers["x-test-user"] || user); next(); });
+    app.get("/report-drafts", listReportDrafts);
+    app.delete("/report-drafts/client/:clientDraftId", deleteReportDraftByClientId);
+    app.delete("/report-drafts/:id", deleteReportDraft);
+    const listed = await request(app).get(`/report-drafts?type=${type}`);
+    const token = listed.body.data[0].discardRevision;
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    expect(listed.body.data[0]).not.toHaveProperty("mediaRevision");
+    expect(listed.body.data[0]).not.toHaveProperty("contentHash");
+    const changes: Record<string, any> = { revision: { revision: 8 }, media: { mediaRevision: 4 },
+      content: { contentHash: "changed" }, submission: { submittedReportId: new mongoose.Types.ObjectId() },
+      processing: { submissionStatus: "processing" } };
+    if (changes[change]) await ReportDraft.collection.updateOne({ _id: saved._id }, { $set: changes[change] });
+    const realDelete = ReportDraft.findOneAndDelete.bind(ReportDraft);
+    const spy = change === "late-save" ? vi.spyOn(ReportDraft, "findOneAndDelete").mockImplementationOnce(((filter: any) =>
+      (async () => { await ReportDraft.updateOne({ _id: saved._id }, { $set: { revision: 8 } }); return realDelete(filter); })()) as any) : null;
+    try {
+      const response = await request(app).delete(endpoint === "id" ? `/report-drafts/${saved._id}` : `/report-drafts/client/draft-1?type=${type}`)
+        .set("x-test-user", String(change === "other-account" ? userId() : user))
+        .send({ intent: "discard", ...(change === "missing-token" ? {} : { baseRevision: token }) });
+      if (["exact", "legacy-zero"].includes(change)) {
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ deleted: true, draftId: String(saved._id) });
+        expect(await read(saved._id)).toBeNull();
+      } else {
+        expect(response.status).toBe(change === "other-account" ? 404 : 409);
+        if (change !== "other-account") expect(response.body.code).toBe("DRAFT_DISCARD_CONFLICT");
+        expect(response.body.deleted).not.toBe(true); expect(await read(saved._id)).not.toBeNull();
+      }
+    } finally { spy?.mockRestore(); }
+  });
+});
+
+
+it("keeps a currently processing submitted draft even with an exact confirmed token", async () => {
+  const user = userId(); const reportId = await report(user, { status: "processing", job_status: "processing" });
+  const saved = await draft(user, { submittedReportId: reportId, submittedReportType: "asset", submissionStatus: "processing" });
+  const client = await toReportDraftClient(await read(saved._id));
+  const app = express(); app.use(express.json()); app.use((req: any, _res, next) => { req.userId = String(user); next(); });
+  app.delete("/report-drafts/:id", deleteReportDraft);
+  const response = await request(app).delete(`/report-drafts/${saved._id}`).send({ intent: "discard", baseRevision: client.discardRevision });
+  expect(response.status).toBe(200); expect(response.body.retained).toBe(true); expect(response.body.deleted).not.toBe(true);
+  expect(await read(saved._id)).not.toBeNull();
 });

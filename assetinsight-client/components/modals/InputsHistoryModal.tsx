@@ -52,6 +52,9 @@ export default function InputsHistoryModal({
   const router = useRouter();
   const { user } = useAuthContext();
   const userId = user?._id || user?.id || null;
+  const currentUserIdRef = useRef(userId);
+  currentUserIdRef.current = userId;
+  const reportDeleteFlightRef = useRef(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [localDrafts, setLocalDrafts] = useState<ScopedDraftSummary[]>([]);
   const [reportDrafts, setReportDrafts] = useState<ReportDraftRecord[]>([]);
@@ -202,13 +205,16 @@ export default function InputsHistoryModal({
   };
 
   const handleDeleteReportDraft = async (draft: ReportDraftRecord) => {
+    if (reportDeleteFlightRef.current || !userId || draft.user !== userId) return;
     const kind = draftKindForRecord(draft);
     const label = draft.contractNo || draft.title || "Untitled draft";
     if (!confirm(`Delete "${label}"?`)) return;
     const deleteKey = `report:${draft._id}`;
+    reportDeleteFlightRef.current = true;
     try {
       setDeleting(deleteKey);
-      await ReportDraftService.delete(draft._id);
+      await ReportDraftService.delete(draft._id, draft.discardRevision);
+      if (currentUserIdRef.current !== userId) return;
       if (userId) {
         await Promise.allSettled([
           deleteScopedDraft(userId, kind, draft.clientDraftId),
@@ -220,8 +226,11 @@ export default function InputsHistoryModal({
       );
       toast.success("Draft deleted");
     } catch (error: any) {
-      toast.error(error?.response?.data?.message || "Failed to delete draft");
+      if (currentUserIdRef.current === userId) {
+        toast.error(error?.response?.data?.message || error?.message || "Failed to delete draft");
+      }
     } finally {
+      reportDeleteFlightRef.current = false;
       setDeleting(null);
     }
   };

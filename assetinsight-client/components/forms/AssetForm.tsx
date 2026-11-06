@@ -522,6 +522,8 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
   const saveInFlightRef = useRef<Promise<void> | null>(null);
   const lastFingerprintRef = useRef<string | null>(null);
   const accountSyncPendingRef = useRef(false);
+  const savedServerDraftRef = useRef<ReportDraftRecord | null>(null);
+  const serverDraftMayExistRef = useRef(Boolean(resumeDraft));
   const draftSaveAbortRef = useRef<AbortController | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
   const locationRequestGenerationRef = useRef(0);
@@ -738,6 +740,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     for (let attempt = 0; attempt < 2; attempt += 1) {
       signal?.throwIfAborted();
       try {
+        serverDraftMayExistRef.current = true;
         return await ReportDraftService.upsertWithMedia(
           {
             clientDraftId: draftScopeId,
@@ -775,6 +778,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     publishDraftStatus("saving", "Saving draft…");
     try {
       const savedDraft = await saveServerTier(snapshot, signal);
+      savedServerDraftRef.current = savedDraft;
       const duplicateWarning = getDuplicateLotWarning(savedDraft);
       syncDuplicateDraftDialog(duplicateWarning);
       accountSyncPendingRef.current = false;
@@ -1139,6 +1143,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       throw new Error("Return to Drafts and open a draft belonging to the signed-in account.");
     }
     const formData = record.formData || {};
+    savedServerDraftRef.current = record;
     const value = (...keys: string[]) => {
       for (const key of keys) {
         const candidate = formData[key];
@@ -1565,7 +1570,21 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     supersededSubmissionIdRef.current = null;
   };
 
-  const clearDraftStorage = async () => {
+  const clearDraftStorage = async (discard?: { snapshot: ReportDraftRecord | null; localRevision: number }) => {
+    if (discard) {
+      const record = discard.snapshot;
+      const session = captureAuthSession();
+      if ((!record && serverDraftMayExistRef.current) || (record && (record.user !== userId || record.clientDraftId !== draftScopeId || record.type !== "asset"))) {
+        throw new Error("Reopen Drafts to refresh this draft before discarding it. Your fields and photos have been kept.");
+      }
+      if (record) await ReportDraftService.delete(record._id, record.discardRevision);
+      assertAuthSessionCurrent(session);
+      if (saveRevisionRef.current !== discard.localRevision) {
+        throw new Error("This draft changed while deleting. Your current fields and photos have been kept; reopen Drafts to check its status.");
+      }
+      savedServerDraftRef.current = null;
+      serverDraftMayExistRef.current = false;
+    }
     let deleteError: unknown;
     const localResults = await Promise.allSettled([
       deleteScopedDraft(userId, "asset", draftScopeId),
@@ -1577,7 +1596,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
     if (localFailure) deleteError = localFailure.reason;
     if (draftStorageKey) localStorage.removeItem(draftStorageKey);
     try {
-      await ReportDraftService.deleteByClientId(draftScopeId, "asset");
+      if (!discard) await ReportDraftService.deleteByClientId(draftScopeId, "asset");
       accountSyncPendingRef.current = false;
     } catch (serverDeleteError: any) {
       if (serverDeleteError?.response?.status !== 404) {
@@ -1589,12 +1608,15 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
 
   const discardDraft = async () => {
     if (restoreBlockedRef.current) return;
+    const snapshot = savedServerDraftRef.current;
+    const session = captureAuthSession();
     setDiscarding(true);
     autoSaveBlockedRef.current = true;
     if (saveInFlightRef.current) await saveInFlightRef.current;
     try {
+      assertAuthSessionCurrent(session);
       saveRevisionRef.current += 1;
-      await clearDraftStorage();
+      await clearDraftStorage({ snapshot, localRevision: saveRevisionRef.current });
       resetForm();
       setDraftGuidance(null);
       setDiscardOpen(false);
@@ -1611,10 +1633,7 @@ const AssetForm = forwardRef<AssetFormHandle, Props>(function AssetForm(
       autoSaveBlockedRef.current = false;
       setDraftGuidance({
         tone: "error",
-        message:
-          discardError instanceof Error
-            ? discardError.message
-            : "The draft could not be discarded.",
+        message: safeReportOperationError(discardError, "The draft could not be discarded. Reopen Drafts to check its status; your fields and photos have been kept."),
       });
       publishDraftStatus("error", "Draft was not discarded");
     } finally {

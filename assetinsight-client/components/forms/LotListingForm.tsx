@@ -537,6 +537,8 @@ export default function LotListingForm({
   const requestedRevisionRef = useRef(0);
   const committedRevisionRef = useRef(0);
   const saveFlightRef = useRef<Promise<boolean> | null>(null);
+  const savedServerDraftRef = useRef<ReportDraftRecord | null>(null);
+  const serverDraftMayExistRef = useRef(Boolean(resumeDraft));
   const snapshotRef = useRef<DraftSnapshot | null>(null);
   const accountSyncPendingRef = useRef(false);
   const draftSaveAbortRef = useRef<AbortController | null>(null);
@@ -822,6 +824,7 @@ export default function LotListingForm({
           for (let attempt = 0; attempt < 2; attempt += 1) {
             signal?.throwIfAborted();
             try {
+              serverDraftMayExistRef.current = true;
               const savedDraft = await ReportDraftService.upsertWithMedia(
                 {
                   clientDraftId: draftScopeId,
@@ -842,6 +845,7 @@ export default function LotListingForm({
                 signal
               );
               const duplicateWarning = getDuplicateLotWarning(savedDraft);
+              savedServerDraftRef.current = savedDraft;
               savedDuplicateWarning = duplicateWarning;
               syncDuplicateDraftDialog(duplicateWarning);
               setDraftIssue(
@@ -1269,6 +1273,7 @@ export default function LotListingForm({
         throw new Error("Return to Drafts and open a draft belonging to the signed-in account.");
       }
       if (record !== resumeDraft) applyMetadata(record);
+      savedServerDraftRef.current = record;
       if (record.storageMode === "smart_upload") {
         setSmartUploadOpen(true);
       } else {
@@ -1312,7 +1317,21 @@ export default function LotListingForm({
     void restoreDraft();
   }, [hasDraft, restoreDraft, restoreDraftOnMount, resumeDraft]);
 
-  const deleteDraftStorage = useCallback(async () => {
+  const deleteDraftStorage = useCallback(async (discard?: { snapshot: ReportDraftRecord | null; localRevision: number }) => {
+    if (discard) {
+      const record = discard.snapshot;
+      const session = captureAuthSession();
+      if ((!record && serverDraftMayExistRef.current) || (record && (record.user !== userId || record.clientDraftId !== draftScopeId || record.type !== "lotListing"))) {
+        throw new Error("Reopen Drafts to refresh this draft before discarding it. Your fields and photos have been kept.");
+      }
+      if (record) await ReportDraftService.delete(record._id, record.discardRevision);
+      assertAuthSessionCurrent(session);
+      if (requestedRevisionRef.current !== discard.localRevision) {
+        throw new Error("This draft changed while deleting. Your current fields and photos have been kept; reopen Drafts to check its status.");
+      }
+      savedServerDraftRef.current = null;
+      serverDraftMayExistRef.current = false;
+    }
     let durableDeleteError: unknown;
     if (userId) {
       const localDeletes = await Promise.allSettled([
@@ -1324,7 +1343,7 @@ export default function LotListingForm({
       )?.reason;
     }
     try {
-      await ReportDraftService.deleteByClientId(
+      if (!discard) await ReportDraftService.deleteByClientId(
         draftScopeId,
         "lot-listing"
       );
@@ -1339,9 +1358,12 @@ export default function LotListingForm({
   }, [draftKey, draftScopeId, userId]);
 
   const deleteStoredDraft = useCallback(async () => {
+    const snapshot = savedServerDraftRef.current;
+    const session = captureAuthSession();
     autosaveBlockedRef.current = true;
     await saveFlightRef.current;
-    await deleteDraftStorage();
+    assertAuthSessionCurrent(session);
+    await deleteDraftStorage({ snapshot, localRevision: requestedRevisionRef.current });
     requestedRevisionRef.current = 0;
     committedRevisionRef.current = 0;
     setHasDraft(false);

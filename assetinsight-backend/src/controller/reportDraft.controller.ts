@@ -23,6 +23,7 @@ import {
 } from "../service/reportDraftService.js";
 import {
   keepDraftOfAcceptedUpload,
+  draftDiscardRevision,
   SUBMITTED_DRAFT_MARKERS_CLEARED,
   visibleReportDrafts,
   submittedDraftSnapshotFilter,
@@ -218,8 +219,8 @@ export const listReportDrafts = async (req: AuthRequest, res: Response) => {
     // A draft kept after its upload was accepted is hidden while its report
     // is processing, and shown again with a note if processing stopped.
     const drafts = await visibleReportDrafts(
-      await ReportDraft.find(filter).sort({ updatedAt: -1 }).select("-__v"),
-      (ids) => ReportDraft.find({ ...filter, _id: { $in: ids } }).select("-__v"),
+      await ReportDraft.find(filter).sort({ updatedAt: -1 }).select("-__v +mediaRevision"),
+      (ids) => ReportDraft.find({ ...filter, _id: { $in: ids } }).select("-__v +mediaRevision"),
     );
     res.status(200).json({
       message: "Drafts fetched successfully",
@@ -444,7 +445,7 @@ export const upsertReportDraft = async (req: AuthRequest, res: Response) => {
     }
 
     if (!draft) {
-      const current = await ReportDraft.findOne(identity).select("-__v");
+      const current = await ReportDraft.findOne(identity).select("-__v +mediaRevision");
       return res.status(409).json({
         code: "DRAFT_MEDIA_CONFLICT",
         message:
@@ -473,7 +474,7 @@ export const upsertReportDraft = async (req: AuthRequest, res: Response) => {
       { $set: { duplicateLotConflicts } }
     );
     if (conflictWrite.matchedCount !== 1) {
-      const current = await ReportDraft.findOne(identity).select("-__v");
+      const current = await ReportDraft.findOne(identity).select("-__v +mediaRevision");
       return res.status(409).json({
         code: "STALE_DRAFT_REVISION",
         message: "A newer draft revision already exists.",
@@ -505,7 +506,7 @@ export const getReportDraft = async (req: AuthRequest, res: Response) => {
       _id: req.params.id,
       user: req.userId as any,
       ...recoverableUnpromotedDraftFilter(),
-    }).select("-__v");
+    }).select("-__v +mediaRevision");
     if (!draft) return res.status(404).json({ message: "Draft not found" });
     res.status(200).json({ message: "Draft fetched successfully", data: await toReportDraftClient(draft) });
   } catch (error: any) {
@@ -522,7 +523,7 @@ export const getReportDraftByClientId = async (req: AuthRequest, res: Response) 
       clientDraftId: normalizeDraftClientId(req.params.clientDraftId),
       ...recoverableUnpromotedDraftFilter(),
       ...(["asset", "lotListing"].includes(type) ? { type } : {}),
-    }).select("-__v");
+    }).select("-__v +mediaRevision");
     if (!draft) return res.status(404).json({ message: "Draft not found" });
     res.status(200).json({ message: "Draft fetched successfully", data: await toReportDraftClient(draft) });
   } catch (error: any) {
@@ -1145,15 +1146,23 @@ export const streamReportDraftMedia = async (req: AuthRequest, res: Response) =>
 };
 
 /**
- * Deletes one draft, except a draft whose upload was accepted and is still
- * being processed: that is kept (200 with retained: true) until the preview is
- * ready, so a processing failure never loses the only copy (owner, 2026-11-05).
+ * Automatic sending cleanup keeps an accepted draft until a usable preview
+ * exists. A confirmed Discard carries the displayed snapshot's opaque version;
+ * it cannot delete a newer save or a currently processing submission.
  */
-async function deleteDraftUnlessSent(identity: Record<string, unknown>) {
+const draftDiscardConflict = () => Object.assign(
+  new Error("This draft changed. Refresh and confirm Discard again."),
+  { statusCode: 409, code: "DRAFT_DISCARD_CONFLICT" },
+);
+
+async function deleteDraftUnlessSent(identity: Record<string, unknown>, body: any) {
+  const explicitDiscard = body?.intent === "discard";
+  if (explicitDiscard && !/^[a-f0-9]{64}$/.test(String(body?.baseRevision || ""))) throw draftDiscardConflict();
   const existing = await ReportDraft.findOne({ ...identity, promotedAt: null, promotionToken: null })
     .select("_id user type clientDraftId formData.clientSubmissionId revision mediaRevision contentHash updatedAt submittedReportId submissionStatus").lean();
   if (!existing) return { draft: null, retained: false };
-  if (await keepDraftOfAcceptedUpload(existing)) return { draft: null, retained: true };
+  if (explicitDiscard && body.baseRevision !== draftDiscardRevision(existing)) throw draftDiscardConflict();
+  if (await keepDraftOfAcceptedUpload(existing, { explicitDiscard })) return { draft: null, retained: true };
   const draft = await ReportDraft.findOneAndDelete({
     ...submittedDraftSnapshotFilter(existing),
     promotedAt: null,
@@ -1161,6 +1170,7 @@ async function deleteDraftUnlessSent(identity: Record<string, unknown>) {
     $and: [{ submissionStatus: { $ne: "processing" } }],
   });
   const changed = !draft && await ReportDraft.exists(identity);
+  if (explicitDiscard && changed) throw draftDiscardConflict();
   return { draft, retained: Boolean(changed) };
 }
 
@@ -1175,14 +1185,16 @@ export const deleteReportDraft = async (req: AuthRequest, res: Response) => {
     const { draft, retained } = await deleteDraftUnlessSent({
       _id: req.params.id,
       user: req.userId as any,
-    });
+    }, req.body);
     if (retained) return res.status(200).json(RETAINED_DRAFT_BODY);
     if (!draft) return res.status(404).json({ message: "Draft not found" });
     await deleteHiddenDraftPreview(draft._id, req.userId);
     await deleteDraftMediaObjects(draft.media || []);
-    res.status(200).json({ message: "Draft deleted successfully" });
+    res.status(200).json({ message: "Draft deleted successfully",
+      ...(req.body?.intent === "discard" && draft ? { deleted: true, draftId: String(draft._id) } : {}) });
   } catch (error: any) {
-    res.status(500).json({ message: error?.message || "Failed to delete draft" });
+    res.status(Number(error?.statusCode) || 500).json({ message: error?.message || "Failed to delete draft",
+      ...(error?.code ? { code: error.code } : {}) });
   }
 };
 
@@ -1194,14 +1206,16 @@ export const deleteReportDraftByClientId = async (req: AuthRequest, res: Respons
       user: req.userId as any,
       clientDraftId: normalizeDraftClientId(req.params.clientDraftId),
       ...(["asset", "lotListing"].includes(type) ? { type } : {}),
-    });
+    }, req.body);
     if (retained) return res.status(200).json(RETAINED_DRAFT_BODY);
     if (!draft) return res.status(404).json({ message: "Draft not found" });
     await deleteHiddenDraftPreview(draft._id, req.userId);
     await deleteDraftMediaObjects(draft.media || []);
-    res.status(200).json({ message: "Draft deleted successfully" });
+    res.status(200).json({ message: "Draft deleted successfully",
+      ...(req.body?.intent === "discard" && draft ? { deleted: true, draftId: String(draft._id) } : {}) });
   } catch (error: any) {
-    res.status(500).json({ message: error?.message || "Failed to delete draft" });
+    res.status(Number(error?.statusCode) || 500).json({ message: error?.message || "Failed to delete draft",
+      ...(error?.code ? { code: error.code } : {}) });
   }
 };
 

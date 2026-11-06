@@ -9,7 +9,6 @@
  * keeps the event check.
  */
 import mongoose from "mongoose";
-import { readFileSync } from "node:fs";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -112,22 +111,5 @@ describe.sequential("numbering a sale-pending lot", () => {
     const split = { ...capturedLot(), lot_id: "two", auctioneer_source_parent_key: "src-1" };
     await expect(allocate({ reportId, reportType: "asset", lots: [split], fallbackIndexes: [0] }))
       .rejects.toMatchObject({ code: "auctioneer_lot_event_required" });
-  });
-});
-
-describe("returning a sale-pending lot to Auctioneer", () => {
-  const delivery = readFileSync(new URL("../src/service/auctioneer2DeliveryService.ts", import.meta.url), "utf8");
-  const retry = readFileSync(new URL("../src/service/auctioneerInitialPreviewRetryService.ts", import.meta.url), "utf8");
-
-  it("sends no lot number with the condition report and never patches one", () => {
-    expect(delivery).toContain("const lotNumber = input.keepAuctioneerLotNumber ? undefined : resolveAuctioneerLotNumber(input.lot);");
-    expect(delivery).toContain("keepAuctioneerLotNumber: isSaleEventPendingWorkItem(workItem),");
-    expect(delivery).toContain("if (keepAuctioneerLotNumber) return;");
-    expect(delivery).toContain("await reconcileCompletedLotNumber(lotId, lot, remote, isSaleEventPendingWorkItem(workItem));");
-  });
-
-  it("a report that already stopped on 'needs an auction event' can be retried without the event", () => {
-    expect(retry).toContain("if (!saleEventPending) await recoverInitialAuctioneerEventIdentity({ reportId: report._id, reportType: kind, assertOwned });");
-    expect(retry).toContain("if (job.payload?.eventIdentityRetry?.saleEventPending === true) return;");
   });
 });

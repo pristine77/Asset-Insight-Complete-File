@@ -4,8 +4,9 @@ import OfflineCaptureStore from './offlineCaptureStore';
 import reportDraftService, { isVerifiedCloudBackupOfLocal, type CloudDraftMedia, type ReportDraft } from './reportDraftService';
 import { uploadLocalFileToPresignedUrl } from './directR2UploadService';
 import { pauseActiveUploads, setUploadOwner } from './uploadCancellation';
+import { invalidateAuthOperations } from './authSessionOperation';
 
-jest.mock('./api', () => ({ __esModule: true, default: { post: jest.fn(), get: jest.fn() } }));
+jest.mock('./api', () => ({ __esModule: true, default: { post: jest.fn(), get: jest.fn(), delete: jest.fn() } }));
 jest.mock('./offlineCaptureStore', () => ({ __esModule: true, default: { getOwnerId: jest.fn() } }));
 jest.mock('./directR2UploadService', () => ({ uploadLocalFileToPresignedUrl: jest.fn() }));
 jest.mock('@react-native-community/netinfo', () => ({ __esModule: true, default: { fetch: jest.fn() } }));
@@ -432,4 +433,57 @@ test('arrival recovery drafts cannot create a cloud report preview', async () =>
   await expect(reportDraftService.upsertFromLocalDraft(draftWith({ type: 'lotListing', formData: { capturePurpose: 'arrivalPhotos', arrivalPhotoRequestId: 'request' } }))).rejects.toThrow('Arrival Photos');
   expect(api.post).not.toHaveBeenCalled();
   expect(uploadLocalFileToPresignedUrl).not.toHaveBeenCalled();
+});
+
+describe('confirmed user draft discard', () => {
+  const discard = { intent: 'discard' as const, baseRevision: 'a'.repeat(64) };
+  const receipt = { status: 200, data: { deleted: true, draftId: 'cloud-draft' } };
+
+  it('requires the displayed revision and an exact deletion receipt without auth replay', async () => {
+    jest.mocked(api.delete).mockResolvedValue(receipt);
+    await reportDraftService.delete('cloud-draft', discard);
+    expect(api.delete).toHaveBeenCalledWith('/report-drafts/cloud-draft', {
+      data: discard, timeout: 30_000, skipAuthRefreshReplay: true,
+    });
+  });
+
+  it('leaves automatic cleanup on the original no-intent route', async () => {
+    jest.mocked(api.delete).mockResolvedValue({ status: 200, data: { retained: true } });
+    await reportDraftService.delete('cloud-draft');
+    expect(api.delete).toHaveBeenCalledWith('/report-drafts/cloud-draft');
+  });
+
+  it.each(['', 'old', 'A'.repeat(64)])('refuses a missing or malformed displayed token (%s)', async (baseRevision) => {
+    await expect(reportDraftService.delete('cloud-draft', { ...discard, baseRevision })).rejects.toThrow('Refresh Drafts');
+    expect(api.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 200, data: { retained: true, deleted: true, draftId: 'cloud-draft' } },
+    { status: 200, data: {} },
+    { status: 200, data: { deleted: true, draftId: 'other-draft' } },
+    { status: 202, data: { deleted: true, draftId: 'cloud-draft' } },
+  ])('refuses uncertain or retained receipts %j', async (response) => {
+    jest.mocked(api.delete).mockResolvedValue(response);
+    await expect(reportDraftService.delete('cloud-draft', discard)).rejects.toThrow();
+  });
+
+  it.each(['conflict', 'network'])('does not retry a %s failure', async (kind) => {
+    const error = kind === 'conflict' ? { response: { status: 409, data: { code: 'DRAFT_DISCARD_CONFLICT' } } } : new Error('Network error');
+    jest.mocked(api.delete).mockRejectedValue(error);
+    await expect(reportDraftService.delete('cloud-draft', discard)).rejects.toBe(error);
+    expect(api.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['owner', 'epoch'])('rejects a held receipt after the %s changes', async (change) => {
+    const held = deferred<typeof receipt>();
+    jest.mocked(api.delete).mockReturnValue(held.promise);
+    const deleting = reportDraftService.delete('cloud-draft', discard);
+    const rejected = expect(deleting).rejects.toThrow();
+    if (change === 'owner') jest.mocked(OfflineCaptureStore.getOwnerId).mockReturnValue('owner-b');
+    else invalidateAuthOperations();
+    held.resolve(receipt);
+    await rejected;
+    expect(api.delete).toHaveBeenCalledTimes(1);
+  });
 });

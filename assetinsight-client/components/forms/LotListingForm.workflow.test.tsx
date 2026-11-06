@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   apiPost: vi.fn(),
   apiGet: vi.fn().mockResolvedValue({ data: { success: true, data: [] } }),
   deleteByClientId: vi.fn(),
+  discardDraft: vi.fn(),
   deleteScopedDraft: vi.fn(),
   deleteSmartUploadDraft: vi.fn(),
   getCurrentPosition: vi.fn(),
@@ -190,6 +191,7 @@ vi.mock("@/services/browserLocation", () => ({
 vi.mock("@/services/reportDrafts", () => ({
   ReportDraftService: {
     deleteByClientId: mocks.deleteByClientId,
+    delete: mocks.discardDraft,
     restoreLots: mocks.restoreLots,
     get: mocks.getDraft,
     upsertWithMedia: mocks.upsertWithMedia,
@@ -327,6 +329,7 @@ describe("LotListingForm explicit save and upload workflow", () => {
     vi.useRealTimers();
     mocks.apiPost.mockReset();
     mocks.deleteByClientId.mockReset().mockResolvedValue(undefined);
+    mocks.discardDraft.mockReset();
     mocks.deleteScopedDraft.mockReset().mockResolvedValue(undefined);
     mocks.deleteSmartUploadDraft.mockReset().mockResolvedValue(undefined);
     mocks.getCurrentPosition.mockReset().mockImplementation((success) => {
@@ -1118,6 +1121,36 @@ describe("LotListingForm explicit save and upload workflow", () => {
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /Apply watermark/i })).toHaveProperty("checked", watermarkImages === true));
   });
 
+  it.each(["success", "conflict", "missing-token"])("keeps cloud and local listing discard ordered for %s", async (outcome) => {
+    const draft = { ...makeLotResumeDraft(), discardRevision: outcome === "missing-token" ? undefined : "c".repeat(64) };
+    const status = vi.fn();
+    let resolveDelete!: () => void;
+    const pending = new Promise<void>((resolve, reject) => {
+      resolveDelete = () => outcome === "conflict" ? reject(new Error("Draft changed. Reopen Drafts.")) : resolve();
+    });
+    mocks.discardDraft.mockImplementation((_id, token) => token ? pending : Promise.reject(new Error("Reopen Drafts before deleting.")));
+    render(<LotListingForm resumeDraft={draft} onDraftStatusChange={status} />);
+    await waitFor(() => expect(status).toHaveBeenCalledWith("saved", "Draft and photos restored"));
+    mocks.deleteScopedDraft.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: "Clear this lot listing?" })).getByRole("button", { name: "Clear listing" }));
+    await waitFor(() => expect(mocks.discardDraft).toHaveBeenCalledExactlyOnceWith(draft._id, draft.discardRevision));
+    expect(mocks.deleteScopedDraft).not.toHaveBeenCalled();
+    expect(mocks.deleteSmartUploadDraft).not.toHaveBeenCalled();
+    resolveDelete();
+    if (outcome === "success") {
+      await waitFor(() => expect(mocks.deleteScopedDraft).toHaveBeenCalled());
+      expect(mocks.deleteSmartUploadDraft).toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(status).toHaveBeenCalledWith("error", "Draft could not be removed"));
+      expect(mocks.deleteScopedDraft).not.toHaveBeenCalled();
+      expect(mocks.deleteSmartUploadDraft).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox", { name: /contract number/i })).toHaveValue(draft.contractNo);
+    }
+    expect(mocks.deleteByClientId).not.toHaveBeenCalled();
+    expect(mocks.getDraft).not.toHaveBeenCalled();
+  });
+
   it("resets the watermark opt-in when clearing a Lot Listing", async () => {
     render(<LotListingForm />);
     await waitForResolvedLotLocation();
@@ -1127,6 +1160,8 @@ describe("LotListingForm explicit save and upload workflow", () => {
     const confirmation = await screen.findByRole("alertdialog", { name: "Clear this lot listing?" });
     fireEvent.click(within(confirmation).getByRole("button", { name: "Clear listing" }));
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /Apply watermark/i })).not.toBeChecked());
+    expect(mocks.discardDraft).not.toHaveBeenCalled();
+    expect(mocks.deleteByClientId).not.toHaveBeenCalled();
   });
 
   it("keeps form and media changes local until Save Draft is explicitly selected", async () => {

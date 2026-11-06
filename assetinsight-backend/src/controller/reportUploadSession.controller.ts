@@ -60,10 +60,9 @@ import {
   resolveAuctioneerReportContext,
 } from "../service/auctioneerReportLinkService.js";
 import {
-  deleteReportDraftForSubmission,
   syncSmartUploadReportDraft,
 } from "../service/reportDraftService.js";
-import { markAcceptedReportDraftsSubmitted } from "../service/submittedReportDraftService.js";
+import { markAcceptedReportDraftsSubmitted, settleSubmittedReportDraftsBestEffort } from "../service/submittedReportDraftService.js";
 import { getSmartUploadLimitViolation } from "../utils/smartUploadLimits.js";
 import { applyReviewedGroupNumbers, isLotNumberUpload, lotNumberUploadWarnings, smartUploadGroupingMethod } from "../service/lotNumberUploadGrouping.js";
 import { resolveSmartUploadOrderReviewState } from "../utils/smartUploadReviewState.js";
@@ -151,33 +150,22 @@ const keepOrDeleteAcceptedDraftBestEffort = (session: any): void => {
         .filter(Boolean),
     ),
   );
-  // The draft is kept until the report's preview is ready, not deleted here
-  // (owner, 2026-11-05): processing runs after acceptance, and a failure then
-  // left no preview and no draft. It is hidden from Drafts meanwhile and
-  // removed by settleSubmittedReportDrafts once the preview exists. A session
-  // that is already processed, or that has no report id to watch, keeps the
-  // old immediate delete.
+  // A completed worker/session is not proof of an editable preview: legacy
+  // initial jobs can finish with no lots. Always settle against the report,
+  // retaining failed/empty results and applying the same snapshot/CAS guards.
   const reportId = String(session.reportId || "");
-  const keep = session.status !== "processed" && /^[a-f\d]{24}$/i.test(reportId);
-  void (keep
-    ? markAcceptedReportDraftsSubmitted({
-        userId: session.user,
-        type: session.type,
-        clientSubmissionIds,
-        reportId,
-        notUpdatedAfter,
-      })
-    : Promise.all(
-        clientSubmissionIds.map((clientSubmissionId) =>
-          deleteReportDraftForSubmission(
-            session.user,
-            session.type,
-            clientSubmissionId,
-            { notUpdatedAfter },
-          ),
-        ),
-      )
-  ).catch((error) => {
+  if (!/^[a-f\d]{24}$/i.test(reportId)) return;
+  void markAcceptedReportDraftsSubmitted({
+    userId: session.user,
+    type: session.type,
+    clientSubmissionIds,
+    reportId,
+    notUpdatedAfter,
+  }).then(() => settleSubmittedReportDraftsBestEffort({
+    reportId,
+    reportType: session.type,
+    userId: session.user,
+  })).catch((error) => {
     console.error("[UploadSession] accepted-session draft cleanup failed", {
       sessionId: String(session._id),
       error: error instanceof Error ? error.message : String(error),
