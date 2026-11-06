@@ -132,10 +132,13 @@ export const removeGalleryPhotoEntry = <
         entry.globalIndex === target.globalIndex
       )
   );
+  const retainedCurrentIdx = nextEntries.indexOf(entries[currentIdx]);
   return {
     entries: nextEntries,
     currentIdx: nextEntries.length
-      ? Math.min(currentIdx, nextEntries.length - 1)
+      ? retainedCurrentIdx >= 0
+        ? retainedCurrentIdx
+        : Math.max(0, Math.min(currentIdx, nextEntries.length - 1))
       : 0,
   };
 };

@@ -111,6 +111,25 @@ describe("FloatingPhotoViewer", () => {
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
+  it("removes the exact thumbnail without selecting it and disables every removal during Save", () => {
+    const remove = vi.fn(), navigate = vi.fn();
+    const props = { title: "Lot #10051", entries: photos, index: 2, onIndexChange: navigate, onClose: vi.fn(), onRemove: remove };
+    const view = render(<FloatingPhotoViewer {...props} />);
+    expect(screen.getAllByRole("button", { name: /^Remove thumbnail photo \d+$/ })).toHaveLength(3);
+    expect(viewer().querySelector("button button")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove thumbnail photo 1" }));
+    expect(remove).toHaveBeenCalledExactlyOnceWith(0);
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Show photo 2" }));
+    expect(navigate).toHaveBeenCalledExactlyOnceWith(1);
+    view.rerender(<FloatingPhotoViewer {...props} removeDisabled />);
+    for (const button of screen.getAllByRole("button", { name: /^Remove/ })) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
   it("never exposes Remove or Delete in either window state", () => {
     render(<Harness />);
     expect(screen.queryByRole("button", { name: /Remove|Delete/i })).not.toBeInTheDocument();

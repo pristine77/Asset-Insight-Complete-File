@@ -6,6 +6,23 @@ import {
 } from "./previewPhotoDeletion";
 
 describe("preview photo deletion", () => {
+  it.each([0, 1, 3])("keeps the displayed photo when unselected thumbnail %s is removed", (targetIndex) => {
+    const entries = Array.from({ length: 4 }, (_, globalIndex) => ({
+      url: `photo-${globalIndex}.jpg`, globalIndex, lotIndex: 0,
+    }));
+    const result = removeGalleryPhotoEntry(entries, 2, entries[targetIndex]);
+    expect(result.entries[result.currentIdx]).toBe(entries[2]);
+    expect(result.entries).not.toContain(entries[targetIndex]);
+  });
+
+  it("moves to the previous photo after removing the last selected thumbnail and empties safely", () => {
+    const entries = [0, 1].map(globalIndex => ({ url: `photo-${globalIndex}.jpg`, globalIndex, lotIndex: 0 }));
+    const last = removeGalleryPhotoEntry(entries, 1, entries[1]);
+    expect(last.currentIdx).toBe(0);
+    expect(last.entries).toEqual([entries[0]]);
+    expect(removeGalleryPhotoEntry(last.entries, 0, entries[0])).toEqual({ entries: [], currentIdx: 0 });
+  });
+
   it("removes photo 11 from an 82-photo expanded gallery", () => {
     const entries = Array.from({ length: 82 }, (_, globalIndex) => ({
       url: `https://images.sellsnap.store/uploads/${globalIndex}.jpg`,

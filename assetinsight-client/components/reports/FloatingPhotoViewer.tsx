@@ -403,24 +403,40 @@ export default function FloatingPhotoViewer({
       {count > 1 ? (
         <div className="flex flex-shrink-0 gap-1.5 overflow-x-auto border-t border-[var(--app-border)] bg-[var(--app-panel)] p-2">
           {entries.map((entry, entryIndex) => (
-            <button
-              type="button"
+            <div
               key={entry.key ?? `${entryIndex}-${entry.url}`}
-              ref={(node) => {
-                thumbnailRefs.current[entryIndex] = node;
-              }}
-              onClick={() => goTo(entryIndex)}
-              aria-label={`Show photo ${entryIndex + 1}`}
-              aria-current={entryIndex === position ? "true" : undefined}
-              className={`h-14 w-14 flex-shrink-0 overflow-hidden rounded-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
-                entryIndex === position
-                  ? "ring-2 ring-[var(--app-accent)] ring-offset-1 ring-offset-[var(--app-panel)]"
-                  : "opacity-60 hover:opacity-100"
-              }`}
+              className="relative h-14 w-14 flex-shrink-0"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={entry.url} alt="" className="h-full w-full object-cover" loading="lazy" draggable={false} />
-            </button>
+              <button
+                type="button"
+                ref={(node) => {
+                  thumbnailRefs.current[entryIndex] = node;
+                }}
+                onClick={() => goTo(entryIndex)}
+                aria-label={`Show photo ${entryIndex + 1}`}
+                aria-current={entryIndex === position ? "true" : undefined}
+                className={`h-full w-full overflow-hidden rounded-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
+                  entryIndex === position
+                    ? "ring-2 ring-[var(--app-accent)] ring-offset-1 ring-offset-[var(--app-panel)]"
+                    : "opacity-60 hover:opacity-100"
+                }`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={entry.url} alt="" className="h-full w-full object-cover" loading="lazy" draggable={false} />
+              </button>
+              {onRemove ? (
+                <button
+                  type="button"
+                  onClick={() => onRemove(entryIndex)}
+                  disabled={removeDisabled}
+                  aria-label={`Remove thumbnail photo ${entryIndex + 1}`}
+                  title={`Remove thumbnail photo ${entryIndex + 1}`}
+                  className="absolute -right-1 -top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--app-danger)] text-[var(--app-on-accent)] shadow-sm hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <X className="h-3 w-3" aria-hidden />
+                </button>
+              ) : null}
+            </div>
           ))}
         </div>
       ) : null}
