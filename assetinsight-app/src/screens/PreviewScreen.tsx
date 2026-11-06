@@ -34,6 +34,7 @@ import {
   Skia,
 } from "@shopify/react-native-skia";
 import api from "../services/api";
+import { getAuthOperationEpoch } from "../services/authSessionOperation";
 import { API_ENDPOINTS } from "../config/api";
 import assetService from "../services/assetService";
 import lotListingService from "../services/lotListingService";
@@ -462,6 +463,8 @@ const PreviewScreen = ({
   const [galleryVisible, setGalleryVisible] = useState(false);
   const [galleryEntries, setGalleryEntries] = useState<GalleryEntry[]>([]);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const galleryStateRef = useRef({ entries: galleryEntries, index: galleryIndex });
+  galleryStateRef.current = { entries: galleryEntries, index: galleryIndex };
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [specFieldEditor, setSpecFieldEditor] = useState<SpecFieldEditorState | null>(null);
   const [uploadingLotKey, setUploadingLotKey] = useState<string | null>(null);
@@ -564,6 +567,9 @@ const PreviewScreen = ({
       reportContextRef.current === reportContextKey &&
       previewRequestRevisionRef.current === requestRevision;
     resetAssetLotSelection();
+    setGalleryVisible(false);
+    setGalleryEntries([]);
+    setGalleryIndex(0);
     try {
       setLoading(true);
       setSaving(false);
@@ -773,6 +779,15 @@ const PreviewScreen = ({
     lotIndex: number,
     entry: Pick<GalleryEntry, "globalIndex" | "url">
   ) => {
+    const lotAtOpen = previewData?.lots?.[lotIndex];
+    const contextAtOpen = reportContextKey;
+    const revisionAtOpen = previewRequestRevisionRef.current;
+    const actorAtOpen = getAuthOperationEpoch();
+    const canRemove = () => (isAsset || isLotListing) && !previewBusyRef.current &&
+      reportContextRef.current === contextAtOpen && previewRequestRevisionRef.current === revisionAtOpen &&
+      getAuthOperationEpoch() === actorAtOpen && !!lotAtOpen && previewDataRef.current?.lots?.[lotIndex] === lotAtOpen &&
+      getLotPhotoEntries(lotAtOpen).some(photo => photo.url === entry.url && photo.globalIndex === entry.globalIndex);
+    if (!canRemove()) return;
     Alert.alert(
       "Remove photo?",
       "The photo will be removed from this lot now and permanently deleted from storage after you Save or Submit. Closing without saving leaves storage unchanged.",
@@ -782,14 +797,16 @@ const PreviewScreen = ({
           text: "Remove",
           style: "destructive",
           onPress: () => {
-            setPreviewData((prev: any) =>
-              removeLotPhotoReference(prev, lotIndex, entry)
-            );
+            if (!canRemove()) return;
+            const nextPreview = removeLotPhotoReference(previewDataRef.current, lotIndex, entry);
+            previewDataRef.current = nextPreview;
+            setPreviewData(nextPreview);
             const nextGallery = removeGalleryPhotoEntry(
-              galleryEntries,
-              galleryIndex,
+              galleryStateRef.current.entries,
+              galleryStateRef.current.index,
               { ...entry, lotIndex }
             );
+            galleryStateRef.current = { entries: nextGallery.entries, index: nextGallery.currentIdx };
             setGalleryEntries(nextGallery.entries);
             if (nextGallery.entries.length === 0) {
               setGalleryIndex(0);
@@ -3038,6 +3055,23 @@ const PreviewScreen = ({
               {galleryIndex + 1} / {galleryEntries.length}
             </Text>
             <View style={styles.galleryHeaderActions}>
+              {(isAsset || isLotListing) && galleryEntries[galleryIndex]?.context === "lot" &&
+                galleryEntries[galleryIndex]?.lotIndex !== null && (
+                <TouchableOpacity
+                  onPress={() => {
+                    const entry = galleryEntries[galleryIndex];
+                    if (entry?.context === "lot" && entry.lotIndex !== null) deleteLotImage(entry.lotIndex, entry);
+                  }}
+                  disabled={previewBusyRef.current}
+                  style={[styles.galleryCloseBtn, styles.galleryRemoveBtn, previewBusyRef.current && { opacity: 0.4 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove current photo"
+                  accessibilityState={{ disabled: previewBusyRef.current }}
+                >
+                  <Feather name="trash-2" size={20} color="#F87171" />
+                  <Text style={styles.galleryRemoveText}>Remove</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 onPress={() => setGalleryVisible(false)}
                 style={styles.galleryCloseBtn}
@@ -3064,6 +3098,7 @@ const PreviewScreen = ({
             
             {galleryEntries[galleryIndex]?.url && (
               <Image
+                testID="preview-gallery-current-photo"
                 source={{ uri: galleryEntries[galleryIndex].url }}
                 style={styles.galleryImage}
                 resizeMode="contain"
@@ -3093,6 +3128,8 @@ const PreviewScreen = ({
               <TouchableOpacity
                 key={`${entry.context}-${entry.lotIndex ?? "report"}-${entry.globalIndex ?? "url"}-${entry.url}`}
                 onPress={() => setGalleryIndex(idx)}
+                accessibilityRole="button"
+                accessibilityLabel={`View gallery photo ${idx + 1}`}
                 style={[
                   styles.galleryThumb,
                   idx === galleryIndex && styles.galleryThumbActive,
@@ -4126,6 +4163,16 @@ const styles = StyleSheet.create({
   },
   galleryCloseBtn: {
     padding: 8,
+  },
+  galleryRemoveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  galleryRemoveText: {
+    color: "#F87171",
+    fontSize: 14,
+    fontWeight: "600",
   },
   galleryMain: {
     flex: 1,

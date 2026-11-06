@@ -55,3 +55,10 @@ describe("preview photo deletion", () => {
     expect(result.deleted_image_urls).toEqual([]);
   });
 });
+
+test('keeps the current photo selected when a different earlier photo is removed', () => {
+  const entries = Array.from({ length: 20 }, (_, globalIndex) => ({ url: `https://images.test/${globalIndex}.jpg`, globalIndex, lotIndex: 0 }));
+  const result = removeGalleryPhotoEntry(entries, 15, entries[10]);
+  expect(result.currentIdx).toBe(14);
+  expect(result.entries[result.currentIdx]).toBe(entries[15]);
+});

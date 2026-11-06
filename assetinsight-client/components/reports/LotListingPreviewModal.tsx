@@ -214,6 +214,7 @@ export default function LotListingPreviewModal({
   };
 
   const loadPreviewData = async () => {
+    setGalleryLotImages(null);
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
     try {
@@ -377,6 +378,9 @@ export default function LotListingPreviewModal({
     lotIndex: number,
     entry: Pick<LotGalleryEntry, "globalIndex" | "url">
   ) => {
+    if (isMutationLocked() || filesGenerating || filesRegenerating) return;
+    if (!getPreviewLotPhotoEntries(previewDataRef.current?.lots?.[lotIndex], imageUrls)
+      .some((photo) => photo.url === entry.url && photo.globalIndex === entry.globalIndex)) return;
     if (
       !window.confirm(
         "Remove this photo from the lot? It will be permanently deleted from storage after you save and generate files. Closing without saving leaves storage unchanged."
@@ -484,6 +488,7 @@ export default function LotListingPreviewModal({
   );
 
   const deleteLot = (index: number) => {
+    setGalleryLotImages(null);
     setPreviewData((prev: any) => {
       const lots = Array.isArray(prev?.lots) ? [...prev.lots] : [];
       lots.splice(index, 1);
@@ -845,6 +850,11 @@ export default function LotListingPreviewModal({
                 setGalleryLotImages((prev) => (prev ? { ...prev, currentIdx } : null))
               }
               onClose={() => setGalleryLotImages(null)}
+              onRemove={(index) => {
+                const entry = galleryLotImages.entries[index];
+                if (entry) deleteLotImage(entry.lotIndex, entry);
+              }}
+              removeDisabled={editorLocked || filesGenerating || filesRegenerating}
             />
           )}
 

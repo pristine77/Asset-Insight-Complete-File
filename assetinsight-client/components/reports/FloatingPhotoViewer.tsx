@@ -33,6 +33,7 @@ import {
   ExternalLink,
   Maximize2,
   Minus,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -45,6 +46,9 @@ type FloatingPhotoViewerProps = {
   onClose: () => void;
   /** Shown in the title bar, e.g. "Lot #10051". */
   title?: string;
+  /** Editable preview callers opt in; ordinary viewers remain read-only. */
+  onRemove?: (index: number) => void;
+  removeDisabled?: boolean;
 };
 
 type Geometry = { x: number; y: number; width: number; height: number };
@@ -103,6 +107,8 @@ export default function FloatingPhotoViewer({
   onIndexChange,
   onClose,
   title,
+  onRemove,
+  removeDisabled = false,
 }: FloatingPhotoViewerProps) {
   const [mounted, setMounted] = useState(false);
   const [mode, setMode] = useState<WindowMode>("normal");
@@ -313,6 +319,18 @@ export default function FloatingPhotoViewer({
             {counter}
           </span>
         </div>
+        {onRemove ? (
+          <button
+            type="button"
+            onClick={() => onRemove(position)}
+            disabled={removeDisabled}
+            className={`${iconButton} hover:!bg-[var(--app-danger-soft)] hover:!text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-40`}
+            aria-label="Remove current photo"
+            title="Remove current photo"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ) : null}
         <a
           href={current.url}
           target="_blank"

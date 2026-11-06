@@ -132,10 +132,13 @@ export const removeGalleryPhotoEntry = <
         entry.globalIndex === target.globalIndex
       )
   );
+  // A confirmation may be open while navigation changes the viewed photo.
+  // Keep that exact photo selected unless it was the one removed.
+  const retainedCurrentIdx = nextEntries.indexOf(entries[currentIdx]);
   return {
     entries: nextEntries,
     currentIdx: nextEntries.length
-      ? Math.min(currentIdx, nextEntries.length - 1)
+      ? retainedCurrentIdx >= 0 ? retainedCurrentIdx : Math.min(currentIdx, nextEntries.length - 1)
       : 0,
   };
 };

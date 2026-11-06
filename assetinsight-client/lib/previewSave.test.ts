@@ -16,6 +16,5 @@ describe("preview Save policy", () => {
     }
     expect(existsSync(resolve(root, "components/reports/useLotRegeneration.ts"))).toBe(false);
     expect(existsSync(resolve(root, "lib/lotRegeneration.ts"))).toBe(false);
-    expect(readFileSync(resolve(root, "components/reports/FloatingPhotoViewer.tsx"), "utf8")).not.toMatch(/onRemove|Trash2|Remove photo|Delete photo/);
   });
 });

@@ -99,6 +99,18 @@ describe("FloatingPhotoViewer", () => {
     expect(screen.queryByRole("button", { name: /Remove|Delete/i })).not.toBeInTheDocument();
   });
 
+  it("offers removal only to an opted-in editable caller and targets the displayed photo", () => {
+    const remove = vi.fn();
+    const props = { title: "Lot #10051", entries: photos, index: 2, onIndexChange: vi.fn(), onClose: vi.fn(), onRemove: remove };
+    const view = render(<FloatingPhotoViewer {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove current photo" }));
+    expect(remove).toHaveBeenCalledExactlyOnceWith(2);
+    view.rerender(<FloatingPhotoViewer {...props} removeDisabled />);
+    expect(screen.getByRole("button", { name: "Remove current photo" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove current photo" }));
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
   it("never exposes Remove or Delete in either window state", () => {
     render(<Harness />);
     expect(screen.queryByRole("button", { name: /Remove|Delete/i })).not.toBeInTheDocument();

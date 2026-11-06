@@ -71,7 +71,7 @@ describe.each(["asset", "lotListing"] as const)("%s preview integrity", (type) =
     expect(screen.getByDisplayValue("Saved title 2")).toBeInTheDocument();
   });
 
-  it("keeps one atomic Save and a read-only photo viewer even while saving", async () => {
+  it("keeps one atomic Save and locks photo removal while saving", async () => {
     const photos = ["https://images.test/front.jpg", "https://images.test/rear.jpg"];
     const preview = {
       contract_no: "READ-ONLY-VIEWER", client_name: "Fixture client", currency: "CAD",
@@ -90,17 +90,17 @@ describe.each(["asset", "lotListing"] as const)("%s preview integrity", (type) =
     expect(saveButton).toHaveAttribute("title", expect.stringContaining("Photos are not re-read by the AI"));
     expect(screen.queryByRole("button", { name: /Re-Generate/i })).toBeNull();
     expect(screen.getAllByRole("button", { name: "Save preview" })).toHaveLength(1);
-    // Real photo editing stays in the underlying form, not the portalled viewer.
+    // Both photo removal entry points use the same existing Save operation.
     expect(screen.getAllByRole("button", { name: "Remove photo 1" }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByRole("img", { name: "Photo 1" })[0]);
     const viewer = await screen.findByRole("dialog", { name: /Lot #?222 photos/ });
-    expect(within(viewer).queryByRole("button", { name: /Remove|Delete/i })).toBeNull();
+    expect(within(viewer).getByRole("button", { name: "Remove current photo" })).toBeEnabled();
     fireEvent.click(within(viewer).getByRole("button", { name: "Next photo (Right arrow)" }));
     expect(within(viewer).getByText("Photo 2 of 2")).toBeInTheDocument();
     fireEvent.click(saveButton);
     expect(save).toHaveBeenCalledTimes(1);
     expect(saveButton).toBeDisabled();
-    expect(within(viewer).queryByRole("button", { name: /Remove|Delete/i })).toBeNull();
+    expect(within(viewer).getByRole("button", { name: "Remove current photo" })).toBeDisabled();
     fireEvent.click(saveButton);
     expect(save).toHaveBeenCalledTimes(1);
     expect(save.mock.calls[0][1].lots[0]).toMatchObject(preview.lots[0]);

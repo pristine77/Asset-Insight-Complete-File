@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import PreviewScreen from './PreviewScreen';
 import api from '../services/api';
+import { invalidateAuthOperations } from '../services/authSessionOperation';
 
 jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 jest.mock('react-native-safe-area-context', () => ({ SafeAreaView: require('react-native').View }));
@@ -221,7 +222,7 @@ it('ignores an old lot jump measurement after switching report context', async (
   expect(api.post).not.toHaveBeenCalled();
 });
 
-it.each(['Asset', 'LotListing'] as const)('%s exposes Save without per-lot AI controls and keeps the photo viewer read-only', async reportType => {
+it.each(['Asset', 'LotListing'] as const)('%s exposes Save without per-lot AI controls and leaves photos unchanged when browsing', async reportType => {
   saved = fixture(1);
   saved.lots[0].image_urls.push('https://assetinsight.pro/second-photo.jpg');
   const retained = structuredClone(saved);
@@ -234,7 +235,7 @@ it.each(['Asset', 'LotListing'] as const)('%s exposes Save without per-lot AI co
   expect(api.post).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByRole('button', { name: 'View lot 1 photo 1' }));
   const viewer = within(screen.getByTestId('preview-photo-viewer'));
-  expect(viewer.queryByRole('button', { name: /remove|delete/i })).toBeNull();
+  expect(viewer.getByRole('button', { name: 'Remove current photo' })).toBeEnabled();
   expect(viewer.getByText('1 / 2')).toBeTruthy();
   await fireEvent.press(viewer.getByRole('button', { name: 'Next photo' }));
   expect(viewer.getByText('2 / 2')).toBeTruthy();
@@ -648,4 +649,134 @@ it('ignores an old delete confirmation after refreshed lot order replaces its ta
   await act(() => confirm.onPress?.());
   expect(screen.getByText('0 of 10 lots selected')).toBeTruthy();
   expect(screen.getByRole('checkbox', { name: 'Select lot 4 for bulk update' })).toBeTruthy();
+});
+
+describe('expanded lot photo removal', () => {
+  const url = (index: number) => `https://assetinsight.pro/expanded-${index}.jpg`;
+  const setupPhotos = (filesGenerating = false) => {
+    saved = fixture(2);
+    Object.assign(saved.lots[0], { image_indexes: Array.from({ length: 12 }, (_, i) => i),
+      image_urls: Array.from({ length: 12 }, (_, i) => url(i)), extra_image_indexes: [12, 13],
+      extra_image_urls: [url(12), url(13)], cover_index: 0 });
+    Object.assign(saved.lots[1], { image_indexes: [14, 15], image_urls: [url(14), url(15)], cover_index: 14 });
+    jest.mocked(api.get).mockImplementation(async path => String(path).includes('category-specs')
+      ? { data: { data: { specs: [] } } }
+      : { data: { data: { ...wrapPreview(saved).data.data, files_generating: filesGenerating,
+        imageUrls: Array.from({ length: 16 }, (_, i) => url(i)) } } });
+  };
+  const viewer = () => within(screen.getByTestId('preview-photo-viewer'));
+  const currentUrl = () => screen.getByTestId('preview-gallery-current-photo').props.source.uri;
+  const removalConfirmation = () => jest.mocked(Alert.alert).mock.calls
+    .filter(([title]) => title === 'Remove photo?').at(-1)![2]!;
+  const remove = async () => {
+    await fireEvent.press(viewer().getByRole('button', { name: 'Remove current photo' }));
+    const confirm = removalConfirmation().find(button => button.text === 'Remove')!;
+    await act(() => { confirm.onPress?.(); confirm.onPress?.(); });
+  };
+
+  it.each(['Asset', 'LotListing'] as const)('removes %s main and extra photos beyond +N through the existing saved-preview payload', async reportType => {
+    setupPhotos(); const original = structuredClone(saved);
+    await render(<PreviewScreen reportId="expanded" reportType={reportType} mode="pending" onBack={onBack} />);
+    await screen.findByLabelText('Lot 1 title');
+    await fireEvent.press(screen.getByRole('button', { name: 'Open 4 more photos' }));
+    expect(currentUrl()).toBe(url(10)); expect(viewer().getByText('11 / 14')).toBeTruthy();
+    await remove();
+    expect(currentUrl()).toBe(url(11)); expect(viewer().getByText('11 / 13')).toBeTruthy();
+    await fireEvent.press(viewer().getByRole('button', { name: 'Next photo' }));
+    expect(currentUrl()).toBe(url(12)); await remove();
+    expect(currentUrl()).toBe(url(13)); expect(viewer().getByText('12 / 12')).toBeTruthy();
+    expect(saved).toEqual(original); expect(api.post).not.toHaveBeenCalled(); expect(api.put).not.toHaveBeenCalled();
+    await fireEvent.press(viewer().getByRole('button', { name: 'Close photo gallery' }));
+    await save();
+    expect(saved.lots[0].image_indexes).toEqual(original.lots[0].image_indexes.filter(i => i !== 10));
+    expect(saved.lots[0].image_urls).toEqual(original.lots[0].image_urls.filter(u => u !== url(10)));
+    expect((saved.lots[0] as any).extra_image_indexes).toEqual([13]);
+    expect((saved.lots[0] as any).extra_image_urls).toEqual([url(13)]);
+    expect((saved as any).deleted_image_indexes).toEqual([10, 12]);
+    expect((saved as any).deleted_image_urls).toEqual([url(10), url(12)]);
+    expect(saved.lots[1]).toEqual(original.lots[1]);
+  });
+
+  it('keeps the exact newly viewed photo selected if navigation changes during confirmation', async () => {
+    setupPhotos();
+    await render(<PreviewScreen reportId="navigation" reportType="LotListing" mode="pending" onBack={onBack} />);
+    await screen.findByLabelText('Lot 1 title');
+    await fireEvent.press(screen.getByRole('button', { name: 'Open 4 more photos' }));
+    await fireEvent.press(viewer().getByRole('button', { name: 'Remove current photo' }));
+    const confirm = removalConfirmation().find(button => button.text === 'Remove')!;
+    await fireEvent.press(viewer().getByRole('button', { name: 'View gallery photo 13' }));
+    expect(currentUrl()).toBe(url(12));
+    await act(() => confirm.onPress?.());
+    expect(currentUrl()).toBe(url(12)); expect(viewer().getByText('12 / 13')).toBeTruthy();
+    await fireEvent.press(viewer().getByRole('button', { name: 'Close photo gallery' })); await save();
+    expect((saved as any).deleted_image_indexes).toEqual([10]);
+  });
+
+  it('keeps cancellation and leaving without Save non-destructive', async () => {
+    setupPhotos(); const original = structuredClone(saved);
+    const view = await render(<PreviewScreen reportId="cancel" reportType="Asset" mode="pending" onBack={onBack} />);
+    await screen.findByLabelText('Lot 1 title');
+    await fireEvent.press(screen.getByRole('button', { name: 'Open 4 more photos' }));
+    await fireEvent.press(viewer().getByRole('button', { name: 'Remove current photo' }));
+    await act(() => removalConfirmation().find(button => button.text === 'Cancel')!.onPress?.());
+    expect(currentUrl()).toBe(url(10)); expect(viewer().getByText('11 / 14')).toBeTruthy();
+    await remove(); await view.unmount();
+    expect(api.post).not.toHaveBeenCalled(); expect(api.put).not.toHaveBeenCalled(); expect(saved).toEqual(original);
+    await render(<PreviewScreen reportId="cancel" reportType="Asset" mode="pending" onBack={onBack} />);
+    await screen.findByLabelText('Lot 1 title'); await fireEvent.press(screen.getByRole('button', { name: 'Open 4 more photos' }));
+    expect(currentUrl()).toBe(url(10)); expect(viewer().getByText('11 / 14')).toBeTruthy();
+  });
+
+  it.each(['Asset', 'LotListing'] as const)('closes the %s gallery after deleting its last photo without changing another lot', async reportType => {
+    saved = fixture(2); const original = structuredClone(saved.lots[1]);
+    await render(<PreviewScreen reportId="last-photo" reportType={reportType} mode="pending" onBack={onBack} />);
+    await screen.findByLabelText('Lot 1 title');
+    await fireEvent.press(screen.getByRole('button', { name: 'View lot 1 photo 1' })); await remove();
+    expect(screen.queryByTestId('preview-photo-viewer')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'View lot 1 photo 1' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'View lot 2 photo 1' }));
+    expect(currentUrl()).toBe(original.image_urls[0]); expect(viewer().getByText('1 / 1')).toBeTruthy();
+  });
+
+  it.each(['Asset', 'LotListing'] as const)('blocks %s photo removal while files are generating', async reportType => {
+    setupPhotos(true);
+    await render(<PreviewScreen reportId="locked" reportType={reportType} mode="pending" onBack={onBack} />);
+    await screen.findByLabelText('Lot 1 title'); await fireEvent.press(screen.getByRole('button', { name: 'Open 4 more photos' }));
+    expect(viewer().getByRole('button', { name: 'Remove current photo' })).toBeDisabled();
+    await fireEvent.press(viewer().getByRole('button', { name: 'Remove current photo' }));
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(currentUrl()).toBe(url(10));
+  });
+
+  it.each(['refresh', 'report', 'account', 'unmount'])('ignores a held removal confirmation after %s invalidates it', async change => {
+    setupPhotos(); const original = structuredClone(saved);
+    const view = await render(<PreviewScreen reportId="stale" reportType="Asset" mode="pending" onBack={onBack} />);
+    await screen.findByLabelText('Lot 1 title'); await fireEvent.press(screen.getByRole('button', { name: 'Open 4 more photos' }));
+    await fireEvent.press(viewer().getByRole('button', { name: 'Remove current photo' }));
+    const confirm = removalConfirmation().find(button => button.text === 'Remove')!;
+    if (change === 'refresh') {
+      await fireEvent.press(viewer().getByRole('button', { name: 'Close photo gallery' }));
+      saved = { ...saved, lots: [...saved.lots].reverse() };
+      await fireEvent(screen.getByTestId('preview-refresh'), 'refresh');
+      await screen.findByLabelText('Lot 1 title');
+    } else if (change === 'report') {
+      await view.rerender(<PreviewScreen reportId="another-report" reportType="Asset" mode="pending" onBack={onBack} />);
+      await screen.findByLabelText('Lot 1 title');
+    } else if (change === 'account') invalidateAuthOperations();
+    else await view.unmount();
+    await act(() => confirm.onPress?.());
+    expect(api.post).not.toHaveBeenCalled(); expect(api.put).not.toHaveBeenCalled();
+    expect((saved as any).deleted_image_urls).toBeUndefined();
+    expect(saved.lots.flatMap(lot => lot.image_urls).sort()).toEqual(original.lots.flatMap(lot => lot.image_urls).sort());
+    if (change === 'account') expect(viewer().getByText('11 / 14')).toBeTruthy();
+  });
+
+  it('keeps the Real Estate report gallery read-only', async () => {
+    saved = fixture(1);
+    await render(<PreviewScreen reportId="property" reportType="RealEstate" mode="pending" onBack={onBack} />);
+    await screen.findByText('Property Photos (1)');
+    const photosSection = screen.getByText('Property Photos (1)').parent!.parent!;
+    await fireEvent.press(within(photosSection).getByText('1'));
+    expect(viewer().queryByRole('button', { name: 'Remove current photo' })).toBeNull();
+  });
 });
