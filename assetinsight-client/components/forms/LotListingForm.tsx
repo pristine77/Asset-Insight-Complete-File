@@ -2565,7 +2565,7 @@ export default function LotListingForm({
             title={arrivalPhotos ? "Arrival Photos" : "Lots & Media"}
             description={
               arrivalPhotos
-                ? "Choose a mode, then take the arrival photos or choose ones already taken. They are copied to Auctioneer, not analysed."
+                ? "Choose a mode, then take arrival photos or use Upload photos to select existing images from your device. They are copied to Auctioneer, not analysed."
                 : "Create each lot, choose how its photos should be interpreted, and then add main or report-only images."
             }
             open={openSections.media}

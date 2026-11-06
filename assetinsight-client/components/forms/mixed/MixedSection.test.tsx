@@ -23,6 +23,7 @@ function Harness({
   analysisImageLimit,
   sourceMappedLots,
   photosOnly,
+  onChange,
 }: {
   initial?: MixedLot[];
   allowVideo?: boolean;
@@ -30,6 +31,7 @@ function Harness({
   analysisImageLimit?: number;
   sourceMappedLots?: boolean;
   photosOnly?: boolean;
+  onChange?: (lots: MixedLot[]) => void;
 }) {
   const [lots, setLots] = useState(initial);
   return (
@@ -44,7 +46,7 @@ function Harness({
       <output data-testid="lot-metadata">{JSON.stringify(lots.map(({id, source, mode}) => ({id, source, mode})))}</output>
       <MixedSection
         value={lots}
-        onChange={setLots}
+        onChange={(next) => { setLots(next); onChange?.(next); }}
         allowVideo={allowVideo}
         maxTotalImages={maxTotalImages}
         analysisImageLimit={analysisImageLimit}
@@ -345,25 +347,57 @@ describe("Arrival Photos (photos only)", () => {
     expect(JSON.parse(screen.getByTestId("lot-metadata").textContent || "[]")[0].mode).toBe("single_lot");
   });
 
-  // Owner 2026-11-05: "Open folder option to select images already taken
-  // rather than camera". From folder sits beside Camera, same mode rule.
-  it("adds photos chosen from a folder beside the camera's, after a mode is chosen", async () => {
+  it("uploads existing photos beside the camera's, after a mode is chosen", async () => {
     render(<Harness photosOnly allowVideo={false} />);
     await waitFor(() => expect(screen.getByTestId("lot-count")).toHaveTextContent("1"));
-    const folder = screen.getByRole("button", { name: "From folder" });
+    const folder = screen.getByRole("button", { name: "Upload photos" });
     expect(folder).toBeDisabled();
-    expect(screen.getByTestId("arrival-empty-choices")).toHaveTextContent("Choose from folder");
+    expect(screen.getByTestId("arrival-empty-choices")).toHaveTextContent("Choose photos");
     fireEvent.click(screen.getByRole("radio", { name: /Bundle/ }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "From folder" })).toBeEnabled());
-    const input = screen.getByLabelText("Choose arrival photos from a folder") as HTMLInputElement;
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upload photos" })).toBeEnabled());
+    const input = screen.getByLabelText("Choose arrival photos from your device") as HTMLInputElement;
     expect(input.accept).toBe("image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp");
     expect(input.multiple).toBe(true);
+    expect(input.hasAttribute("webkitdirectory")).toBe(false);
+    const pick = vi.spyOn(input, "click");
+    fireEvent.click(folder);
+    expect(pick).toHaveBeenCalledOnce();
+    fireEvent.change(input, { target: { files: [] } });
+    expect(screen.getByText("0 photos added")).toBeInTheDocument();
     const big = new File(["x"], "huge.jpg", { type: "image/jpeg" });
     Object.defineProperty(big, "size", { value: 21 * 1024 * 1024 });
     fireEvent.change(input, { target: { files: [photo("yard-1.jpg", 1), photo("yard-2.jpg", 2), big,
       new File(["x"], "scan.pdf", { type: "application/pdf" })] } });
     await waitFor(() => expect(screen.getByText("2 photos added")).toBeInTheDocument());
     expect(screen.queryByText("huge.jpg")).not.toBeInTheDocument();
+  });
+
+  it("restores missing MIME metadata for accepted manual photos without changing their bytes", async () => {
+    const changed = vi.fn();
+    render(<Harness photosOnly allowVideo={false} onChange={changed} />);
+    await waitFor(() => expect(screen.getByTestId("lot-count")).toHaveTextContent("1"));
+    fireEvent.click(screen.getByRole("radio", { name: /Bundle/ }));
+    const original = [
+      new File(["original-jpeg"], "yard.JPEG", { lastModified: 42 }),
+      new File(["original-png"], "yard.PNG", { lastModified: 43 }),
+      new File(["original-webp"], "yard.webp", { lastModified: 44 }),
+      photo("already-typed.jpg", 8),
+    ];
+    fireEvent.change(screen.getByLabelText("Choose arrival photos from your device"), { target: { files: original } });
+    await waitFor(() => expect(screen.getByText("4 photos added")).toBeInTheDocument());
+    const files: File[] = changed.mock.lastCall![0][0].files;
+    expect(files.map(file => file.type)).toEqual(["image/jpeg", "image/png", "image/webp", "image/jpeg"]);
+    expect(files[3]).toBe(original[3]);
+    const bytes = (file: File) => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(Array.from(new Uint8Array(reader.result as ArrayBuffer)));
+      reader.readAsArrayBuffer(file);
+    });
+    for (let i = 0; i < original.length; i++) {
+      expect(files[i].name).toBe(original[i].name);
+      expect(files[i].lastModified).toBe(original[i].lastModified);
+      expect(await bytes(files[i])).toEqual(await bytes(original[i]));
+    }
   });
 
   it("shows every photo taken, main and extra, with Remove only", async () => {

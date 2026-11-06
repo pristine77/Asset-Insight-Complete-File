@@ -765,7 +765,15 @@ export default function MixedSection({
         `${skipped} ${skipped === 1 ? "file was" : "files were"} left out: arrival photos must be JPEG, PNG or WebP images up to 20 MB.`
       );
     }
-    if (usable.length) addFilesToLotWithMode(activeIdx, usable);
+    if (usable.length) {
+      // Some device file pickers omit MIME metadata. The accepted extension is
+      // sufficient to restore it without decoding or changing the photo bytes.
+      const normalized = usable.map((file) => file.type ? file : new File([file], file.name, {
+        type: /\.png$/i.test(file.name) ? "image/png" : /\.webp$/i.test(file.name) ? "image/webp" : "image/jpeg",
+        lastModified: file.lastModified,
+      }));
+      addFilesToLotWithMode(activeIdx, normalized);
+    }
   }
 
   // Manual upload for Extra images (report-only)
@@ -1857,7 +1865,7 @@ export default function MixedSection({
           {photosOnly ? "Capture mode" : "Analysis mode"} <span className="text-[var(--app-accent)]" aria-hidden="true">*</span>
         </legend>
         <p className="mt-1 text-xs leading-5 text-[var(--app-text-muted)]">
-          {photosOnly ? "Choose a capture mode, then take photos or choose them from a folder." : "Choose how the main photos in this lot should be interpreted."}
+          {photosOnly ? "Choose a capture mode, then take photos or upload existing photos from your device." : "Choose how the main photos in this lot should be interpreted."}
         </p>
         <div role="radiogroup" className="mt-3 grid gap-2 @min-[560px]:grid-cols-3">
           {MODE_OPTIONS.map((option) => {
@@ -1911,8 +1919,8 @@ export default function MixedSection({
   ) : null;
 
   /*
-    Arrival Photos' whole section: the three mode options, Camera and From
-    folder buttons, and the photos added. No lots, no New lot, no cover or
+    Arrival Photos' whole section: the three mode options, Camera and Upload
+    photos buttons, and the photos added. No lots, no New lot, no cover or
     focus areas. Every photo, taken now or chosen from a folder (owner,
     2026-11-05), is copied to the lot's Office Only section in Auctioneer with
     the watermark.
@@ -1936,7 +1944,7 @@ export default function MixedSection({
         multiple
         className="sr-only"
         tabIndex={-1}
-        aria-label="Choose arrival photos from a folder"
+        aria-label="Choose arrival photos from your device"
         onChange={(event) => onArrivalFolderPick(event.target.files)}
       />
       <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-violet-300 bg-violet-50 px-4 py-3 @min-[560px]:flex-row @min-[560px]:items-center @min-[560px]:justify-between">
@@ -1948,15 +1956,15 @@ export default function MixedSection({
             Copied to the lot&apos;s Office Only section in Auctioneer with the watermark. Nothing is analysed.
           </p>
         </div>
-        <div className="flex w-full shrink-0 gap-2 @min-[560px]:w-auto">
+        <div className="flex w-full flex-wrap shrink-0 gap-2 @min-[560px]:w-auto">
           <button
             type="button"
             onClick={openArrivalFolder}
             disabled={!activeLotHasMode}
-            title={activeLotHasMode ? "Choose photos already taken from this device" : "Select a mode first"}
+            title={activeLotHasMode ? "Upload existing photos from your device or gallery" : "Select a mode first"}
             className={arrivalSecondaryButton}
           >
-            <FolderOpen className="h-4 w-4" aria-hidden="true" /> From folder
+            <FolderOpen className="h-4 w-4" aria-hidden="true" /> Upload photos
           </button>
           <button
             type="button"
@@ -1980,7 +1988,7 @@ export default function MixedSection({
         <div className="grid min-h-40 grid-cols-1 gap-3 @min-[520px]:grid-cols-2" data-testid="arrival-empty-choices">
           {[
             { key: "camera", onClick: openCamera, Icon: Camera, title: "Take photos", hint: "Open the camera and take the arrival photos now." },
-            { key: "folder", onClick: openArrivalFolder, Icon: FolderOpen, title: "Choose from folder", hint: "Pick photos already taken. JPEG, PNG or WebP, up to 20 MB each." },
+            { key: "folder", onClick: openArrivalFolder, Icon: FolderOpen, title: "Choose photos", hint: "Upload existing photos from your device or gallery. JPEG, PNG or WebP, up to 20 MB each." },
           ].map(({ key, onClick, Icon, title, hint }) => (
             <button
               key={key}
