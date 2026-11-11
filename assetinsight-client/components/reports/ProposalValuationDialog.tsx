@@ -247,6 +247,33 @@ function ScheduleNumberField({
   );
 }
 
+function OfferPercentage({ label, ratio, disabled, onChange }: {
+  label: string;
+  ratio: number;
+  disabled: boolean;
+  onChange: (ratio: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        className={`${numericControlClass} h-8 max-w-16`}
+        type="number" min={0} max={100} step="any" inputMode="decimal"
+        aria-label={`${label} percentage`}
+        disabled={disabled}
+        value={draft ?? Number((ratio * 100).toFixed(10))}
+        onBlur={() => setDraft(null)}
+        onChange={(event) => {
+          const { value, valueAsNumber, validity } = event.currentTarget;
+          setDraft(value);
+          if (validity.valid && Number.isFinite(valueAsNumber)) onChange(valueAsNumber / 100);
+        }}
+      />
+      %
+    </span>
+  );
+}
+
 function ReadOnlyScheduleValue({
   value,
   accent = false,
@@ -1670,6 +1697,7 @@ function ProposalValuationEditor({
   ]);
 
   const calculationFor = (key: string) => calculationMap.get(key);
+  const capped = sheet?.file_summary.buyers_premium_basis === "capped";
   const metricRows: SummaryDisplayRow[] = sheet && summary
     ? [
         {
@@ -1709,18 +1737,41 @@ function ProposalValuationEditor({
         { label: "% High Risk Value", value: formatPercent(summary.high_risk_percent), calculation: calculationFor("high_risk_percent") },
         { label: "Weighted Average Risk Score", value: new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(summary.weighted_average_risk_score), calculation: calculationFor("weighted_average_risk_score") },
         { label: "Overall File Risk Rating", value: summary.overall_file_risk_rating, calculation: calculationFor("overall_file_risk_rating") },
-        { label: "NMG", value: formatMoney(summary.selected_nmg, currency), calculation: calculationFor("selected_nmg") },
-        { label: "Cash Purchase Price", value: formatMoney(summary.selected_cash_purchase_price, currency), calculation: calculationFor("selected_cash_purchase_price") },
-        { label: "Commission Basis Value", value: formatMoney(summary.selected_commission_basis_value, currency), calculation: calculationFor("selected_commission_basis_value") },
+        ...([
+          ["NMG", "selected_nmg", capped ? "capped_nmg_percent" : "auction_nmg_percent"],
+          ["Cash Purchase Price", "selected_cash_purchase_price", capped ? "capped_cash_purchase_percent" : "cash_purchase_percent"],
+          ["Commission Basis Value", "selected_commission_basis_value", "commission_basis_percent"],
+        ] as const).map(([label, outcome, rate]) => ({
+          label,
+          calculation: calculationFor(outcome),
+          value: (
+            <span className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+              <span>{formatMoney(summary[outcome], currency)}</span>
+              <OfferPercentage
+                key={rate}
+                label={label}
+                ratio={sheet.file_summary[rate] ?? (rate === "auction_nmg_percent" ? sheet.file_summary.offer2_nmg_percent : 0.9)}
+                disabled={!workspaceCanEditAll}
+                onChange={(ratio) => updateFileSummary(rate, ratio)}
+              />
+              {sheet.file_summary[rate] == null && (
+                <span className="w-full text-xs font-normal text-[var(--app-text-muted)]">
+                  Includes buyer’s premium. {workspaceCanEditAll && (
+                    <button type="button" className="underline" aria-label={`Use auction value for ${label}`}
+                      onClick={() => updateFileSummary(rate, rate === "auction_nmg_percent" ? sheet.file_summary.offer2_nmg_percent : 0.9)}>
+                      Use auction value
+                    </button>
+                  )}
+                </span>
+              )}
+            </span>
+          ),
+        })),
         { label: "Total Projected Costs", value: formatMoney(summary.total_projected_costs, currency), calculation: calculationFor("total_projected_costs") },
         {
           label: "Commission % No Guarantee",
           value: <ScheduleNumberField value={sheet.file_summary.commission_percent_no_guarantee} onChange={(value) => updateFileSummary("commission_percent_no_guarantee", value)} ariaLabel="Commission percent with no guarantee" disabled={!workspaceCanEditAll} />,
           note: "Reference only; not used in calculated totals.",
-        },
-        {
-          label: "Offer #2 NMG / Overage %",
-          value: <ScheduleNumberField value={sheet.file_summary.offer2_nmg_percent * 100} onChange={(value) => updateFileSummary("offer2_nmg_percent", Math.max(0, Math.min(100, value ?? 0)) / 100)} ariaLabel="Offer 2 NMG percent" disabled={!workspaceCanEditAll} />,
         },
         {
           label: "Capped Threshold %",
@@ -1730,7 +1781,7 @@ function ProposalValuationEditor({
     : [];
   const uncappedRows: SummaryDisplayRow[] = summary
     ? [
-        ["Get", "get"], ["Costs", "costs"], ["Get After Costs", "get_after_costs"], ["Adjusted Get", "adjusted_get"], ["15% B.P.", "bp_15"], ["Potential Get", "potential_get"], ["Adjusted Potential Get", "adjusted_potential_get"], ["Potential 15% B.P.", "potential_bp_15"], ["Offer #1 Cash Offer (90%)", "offer1_cash_offer"], ["Offer #1 Total Costs", "offer1_total_costs"], ["Offer #1 McD Take", "offer1_mcd_take"], ["Offer #1 ROI", "offer1_roi"], ["Offer #1 Risk", "offer1_risk"], ["Offer #2 NMG", "offer2_nmg"], ["Offer #2 Threshold", "offer2_threshold"], ["Offer #2 Upper Value", "offer2_upper_value"], ["Offer #2 Total Costs", "offer2_total_costs"], ["Offer #2 Aquajet's Take", "offer2_aquajets_take"], ["Offer #2 Overage", "offer2_overage"], ["Offer #2 McD Take", "offer2_mcd_take"], ["Offer #2 ROI", "offer2_roi"], ["Offer #2 Risk", "offer2_risk"], ["Aquajet's Potential Take", "aquajets_potential_take"], ["McD Potential Take", "mcd_potential_take"], ["Potential ROI", "potential_roi"], ["Offer #3 Commission", "offer3_mcd_take"],
+        ["Get", "get"], ["Costs", "costs"], ["Get After Costs", "get_after_costs"], ["Adjusted Get", "adjusted_get"], ["15% B.P.", "bp_15"], ["Potential Get", "potential_get"], ["Adjusted Potential Get", "adjusted_potential_get"], ["Potential 15% B.P.", "potential_bp_15"], ["Offer #1 Cash Offer", "offer1_cash_offer"], ["Offer #1 Total Costs", "offer1_total_costs"], ["Offer #1 McD Take", "offer1_mcd_take"], ["Offer #1 ROI", "offer1_roi"], ["Offer #1 Risk", "offer1_risk"], ["Offer #2 NMG", "offer2_nmg"], ["Offer #2 Threshold", "offer2_threshold"], ["Offer #2 Upper Value", "offer2_upper_value"], ["Offer #2 Total Costs", "offer2_total_costs"], ["Offer #2 Aquajet's Take", "offer2_aquajets_take"], ["Offer #2 Overage", "offer2_overage"], ["Offer #2 McD Take", "offer2_mcd_take"], ["Offer #2 ROI", "offer2_roi"], ["Offer #2 Risk", "offer2_risk"], ["Clients Potential Take", "aquajets_potential_take"], ["McD Potential Take", "mcd_potential_take"], ["Potential ROI", "potential_roi"], ["Offer #3 Commission", "offer3_mcd_take"],
       ].map(([label, key]) => ({
         label,
         value: key.endsWith("roi")

@@ -58,6 +58,7 @@ describe("canonical Proposal Valuation formulas", () => {
       lots: [{ lot_id: "lot-1", lot_number: "1" }],
       preview_data: {},
     } as any);
+    expect(fresh.file_summary).toMatchObject({ auction_nmg_percent: 0.785, cash_purchase_percent: 0.9 });
     expect(fresh.evaluator_columns).toEqual([]);
     expect(fresh.rows[0].evaluator_values).toEqual({});
 
@@ -114,6 +115,26 @@ describe("canonical Proposal Valuation formulas", () => {
       632.5 - 596.5 / 1.15,
       12
     );
+  });
+
+  it("removes the actual capped premium once and changes only the chosen legacy offer", () => {
+    const sheet = calculateAssetAdminScheduleSheet({
+      evaluator_columns: [{ id: "owner" }], rows: [{ lot_id: "truck", evaluator_values: { owner: 100_000 } }],
+      file_summary: { offer2_nmg_percent: 0.8 },
+    });
+    const legacy = deriveAssetScheduleSummary(sheet);
+    expect(legacy.uncapped.get).toBe(102_000);
+    expect(legacy.selected_nmg).toBe(81_600);
+    expect(legacy.selected_cash_purchase_price).toBe(91_800);
+    sheet.file_summary.auction_nmg_percent = 0.8;
+    const changed = deriveAssetScheduleSummary(sheet);
+    expect(changed.selected_nmg).toBe(80_000);
+    expect(changed.selected_cash_purchase_price).toBe(91_800);
+    sheet.file_summary.cash_purchase_percent = 0;
+    expect(deriveAssetScheduleSummary(sheet).selected_cash_purchase_price).toBe(0);
+    sheet.file_summary.cash_purchase_percent = 0.705;
+    expect(deriveAssetScheduleSummary(sheet).selected_cash_purchase_price).toBe(70_500);
+    expect(changed.selected_commission_basis_value).toBe(legacy.selected_commission_basis_value);
   });
 
   it("bases premium and gross on the entered evaluator average, retaining high-based costs", () => {

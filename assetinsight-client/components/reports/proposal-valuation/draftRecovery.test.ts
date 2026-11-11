@@ -15,7 +15,7 @@ function sheet(value: number | null = 100): ProposalValuationSheet {
       market_check:{comparable_count:"",avg_retail_asking_price:"",market_saturation:"",market_velocity:"",regional_demand:"",notes:"original market"},
       asset_insight:"CA$500",evaluator_values:{jay:value,chad:null},low_est_sale_value:null,high_est_sale_value:null,buyer_premium_percent:15,buyer_premium_amount:null,total_expected_gross:null,allocated_value:null,notes:"original",cleaning:null,lien_search:null,video_cost:null,lotting_fee:null,advertising:null,
     }],
-    file_summary:{buyers_premium_basis:"uncapped",total_risk_weighted_value:null,file_risk_multiplier:null,commission_percent_no_guarantee:null,offer2_nmg_percent:0.785,capped_threshold_percent:0.1},
+    file_summary:{buyers_premium_basis:"uncapped",total_risk_weighted_value:null,file_risk_multiplier:null,commission_percent_no_guarantee:null,offer2_nmg_percent:0.785, auction_nmg_percent: null, cash_purchase_percent: null, capped_cash_purchase_percent: 1, capped_nmg_percent: 1, commission_basis_percent: 1,capped_threshold_percent:0.1},
   };
 }
 const edit = (value: number | null = 500, from: number | null = 100): DraftEdit => ({lotId:"stable-lot",field:"evaluator_values.jay",value,from});

@@ -53,6 +53,11 @@ const parityFixture: ProposalValuationSheet = {
     file_risk_multiplier: 0.9,
     commission_percent_no_guarantee: 12,
     offer2_nmg_percent: 0.785,
+    auction_nmg_percent: null,
+    cash_purchase_percent: null,
+    capped_cash_purchase_percent: 1,
+    capped_nmg_percent: 1,
+    commission_basis_percent: 1,
     capped_threshold_percent: 0.1,
   },
 };

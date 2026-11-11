@@ -76,6 +76,12 @@ export type ProposalValuationFileSummary = {
   file_risk_multiplier: number | null;
   commission_percent_no_guarantee: number | null;
   offer2_nmg_percent: number;
+  // Null preserves the premium-inclusive quote on a previously saved proposal.
+  auction_nmg_percent: number | null;
+  cash_purchase_percent: number | null;
+  capped_cash_purchase_percent: number;
+  capped_nmg_percent: number;
+  commission_basis_percent: number;
   capped_threshold_percent: number;
 };
 

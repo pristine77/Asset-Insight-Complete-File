@@ -1943,6 +1943,44 @@ export default function AssetScheduleSheet({
       }),
     });
 
+    const capped = sheet.file_summary.buyers_premium_basis === "capped";
+    const nmgFormula = sheet.file_summary.auction_nmg_percent == null
+      ? "Get including buyer’s premium × saved NMG %"
+      : "Auction value excluding buyer’s premium × NMG %";
+    const cashFormula = sheet.file_summary.cash_purchase_percent == null
+      ? "Get including buyer’s premium × 90%"
+      : "Auction value excluding buyer’s premium × cash purchase %";
+    const offerRow = (
+      outcome: "selected_nmg" | "selected_cash_purchase_price" | "selected_commission_basis_value",
+      label: string,
+      rate: "auction_nmg_percent" | "capped_nmg_percent" | "cash_purchase_percent" | "capped_cash_purchase_percent" | "commission_basis_percent",
+      formula: string,
+    ): SummaryRow => calculated(outcome, label, derivedSummary[outcome], (
+      <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
+        <span>{formatCurrencyCell(derivedSummary[outcome])}</span>
+        <Box sx={{ width: 86 }}>
+          <SummaryInput
+            key={rate}
+            value={Number(((sheet.file_summary[rate] ?? (rate === "auction_nmg_percent" ? sheet.file_summary.offer2_nmg_percent : 0.9)) * 100).toFixed(10))}
+            onChange={(percent) => {
+              if (percent !== null) updateFileSummaryField(rate, Math.max(0, Math.min(100, percent)) / 100);
+            }}
+            ariaLabel={`${label} percentage`}
+            suffix="%"
+          />
+        </Box>
+        {sheet.file_summary[rate] == null && (
+          <Box sx={{ width: "100%", typography: "caption" }}>
+            Includes buyer’s premium.{" "}
+            <button type="button" style={{ textDecoration: "underline" }} aria-label={`Use auction value for ${label}`}
+              onClick={() => updateFileSummaryField(rate, rate === "auction_nmg_percent" ? sheet.file_summary.offer2_nmg_percent : 0.9)}>
+              Use auction value
+            </button>
+          </Box>
+        )}
+      </Box>
+    ), formula, { basis: sheet.file_summary.buyers_premium_basis, [rate]: sheet.file_summary[rate] });
+
     return [
       {
         key: "buyers_premium_basis",
@@ -2013,9 +2051,12 @@ export default function AssetScheduleSheet({
       calculated("high_risk_percent", "% High Risk Value", derivedSummary.high_risk_percent, formatPercentCell(derivedSummary.high_risk_percent) || "-", "High-risk asset value / total asset value", { high_risk_value: derivedSummary.high_risk_value, total_asset_value: derivedSummary.total_asset_value }),
       calculated("weighted_average_risk_score", "Weighted Average Risk Score", derivedSummary.weighted_average_risk_score, new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(derivedSummary.weighted_average_risk_score), "Sum of each asset average multiplied by its market-check risk score, divided by total asset value", { total_asset_value: derivedSummary.total_asset_value }),
       calculated("overall_file_risk_rating", "Overall File Risk Rating", derivedSummary.overall_file_risk_rating, derivedSummary.overall_file_risk_rating, "Risk bucket for the asset-value-weighted average market-check score", { weighted_average_risk_score: derivedSummary.weighted_average_risk_score }),
-      calculated("selected_nmg", "NMG", derivedSummary.selected_nmg, formatCurrencyCell(derivedSummary.selected_nmg) || "-", "Selected basis: capped NMG when capped; otherwise uncapped Offer #2 NMG", { buyers_premium_basis: sheet.file_summary.buyers_premium_basis, capped_nmg: derivedSummary.capped.nmg, uncapped_offer2_nmg: derivedSummary.uncapped.offer2_nmg }),
-      calculated("selected_cash_purchase_price", "Cash Purchase Price", derivedSummary.selected_cash_purchase_price, formatCurrencyCell(derivedSummary.selected_cash_purchase_price) || "-", "Selected basis: capped average when capped; otherwise uncapped Offer #1 cash offer", { buyers_premium_basis: sheet.file_summary.buyers_premium_basis, capped_average: derivedSummary.capped.avg, uncapped_offer1_cash_offer: derivedSummary.uncapped.offer1_cash_offer }),
-      calculated("selected_commission_basis_value", "Commission Basis Value", derivedSummary.selected_commission_basis_value, formatCurrencyCell(derivedSummary.selected_commission_basis_value) || "-", "Selected basis: capped buyer premium when capped; otherwise uncapped 15% buyer premium", { buyers_premium_basis: sheet.file_summary.buyers_premium_basis, capped_buyer_premium: derivedSummary.total_capped_bp, uncapped_bp_15: derivedSummary.uncapped.bp_15 }),
+      offerRow("selected_nmg", "NMG", capped ? "capped_nmg_percent" : "auction_nmg_percent",
+        capped ? "(Average - costs - threshold) × capped NMG %" : nmgFormula),
+      offerRow("selected_cash_purchase_price", "Cash Purchase Price", capped ? "capped_cash_purchase_percent" : "cash_purchase_percent",
+        capped ? "Average × capped cash purchase %" : cashFormula),
+      offerRow("selected_commission_basis_value", "Commission Basis Value", "commission_basis_percent",
+        capped ? "Capped buyer premium × commission basis %" : "(Get - adjusted Get) × commission basis %"),
       calculated("total_projected_costs", "Total Projected Costs", derivedSummary.total_projected_costs, formatCurrencyCell(derivedSummary.total_projected_costs) || "-", "Cleaning + lien search + video + lotting + advertising across all assets", { asset_count: sheet.rows.length }),
       {
         key: "commission_percent_no_guarantee",
@@ -2026,23 +2067,6 @@ export default function AssetScheduleSheet({
             value={sheet.file_summary.commission_percent_no_guarantee}
             onChange={(next) => updateFileSummaryField("commission_percent_no_guarantee", next)}
             ariaLabel="Commission percent with no guarantee"
-            suffix="%"
-          />
-        ),
-      },
-      {
-        key: "offer2_nmg_percent",
-        label: "Offer #2 NMG / Overage %",
-        value: (
-          <SummaryInput
-            value={sheet.file_summary.offer2_nmg_percent * 100}
-            onChange={(next) =>
-              updateFileSummaryField(
-                "offer2_nmg_percent",
-                Math.max(0, Math.min(100, next ?? 78.5)) / 100
-              )
-            }
-            ariaLabel="Offer 2 NMG percent"
             suffix="%"
           />
         ),
@@ -2069,9 +2093,11 @@ export default function AssetScheduleSheet({
 
   const uncappedRows = useMemo<SummaryRow[]>(() => {
     if (!sheet || !derivedSummary) return [];
+    const nmgFormula = sheet.file_summary.auction_nmg_percent == null ? "Get including buyer’s premium × saved NMG %" : "Auction value excluding buyer’s premium × NMG %";
+    const cashFormula = sheet.file_summary.cash_purchase_percent == null ? "Get including buyer’s premium × 90%" : "Auction value excluding buyer’s premium × cash purchase %";
     const offer2PercentLabel = new Intl.NumberFormat("en-CA", {
       maximumFractionDigits: 2,
-    }).format(sheet.file_summary.offer2_nmg_percent * 100);
+    }).format((sheet.file_summary.auction_nmg_percent ?? sheet.file_summary.offer2_nmg_percent) * 100);
     const calculated = (
       key: string,
       label: string,
@@ -2102,12 +2128,12 @@ export default function AssetScheduleSheet({
       calculated("potential_get", "Potential Get", u.potential_get, "Total high estimate + capped buyer premium", { total_high_est_value: derivedSummary.total_high_est_value, total_capped_bp: derivedSummary.total_capped_bp }),
       calculated("adjusted_potential_get", "Adjusted Potential Get", u.adjusted_potential_get, "Potential get / 1.15", { potential_get: u.potential_get }),
       calculated("potential_bp_15", "Potential 15% B.P.", u.potential_bp_15, "Potential get - adjusted potential get", { potential_get: u.potential_get, adjusted_potential_get: u.adjusted_potential_get }),
-      calculated("offer1_cash_offer", "Offer #1 Cash Offer (90%)", u.offer1_cash_offer, "Get x 90%", { get: u.get }),
+      calculated("offer1_cash_offer", "Offer #1 Cash Offer", u.offer1_cash_offer, cashFormula, { offer_base: sheet.file_summary.cash_purchase_percent == null ? u.get : derivedSummary.total_asset_value, cash_purchase_percent: sheet.file_summary.cash_purchase_percent ?? 0.9 }),
       calculated("offer1_total_costs", "Offer #1 Total Costs", u.offer1_total_costs, "Offer #1 cash offer + costs", { offer1_cash_offer: u.offer1_cash_offer, costs: u.costs }),
       calculated("offer1_mcd_take", "Offer #1 McD Take", u.offer1_mcd_take, "Get - Offer #1 total costs", { get: u.get, offer1_total_costs: u.offer1_total_costs }),
       calculated("offer1_roi", "Offer #1 ROI", u.offer1_roi, "Offer #1 McD take / Offer #1 total costs", { offer1_mcd_take: u.offer1_mcd_take, offer1_total_costs: u.offer1_total_costs }, true),
       calculated("offer1_risk", "Offer #1 Risk", u.offer1_risk, "Low estimate + capped buyer premium - Offer #1 total costs", { total_low_est_value: derivedSummary.total_low_est_value, total_capped_bp: derivedSummary.total_capped_bp, offer1_total_costs: u.offer1_total_costs }),
-      calculated("offer2_nmg", `Offer #2 NMG (${offer2PercentLabel}%)`, u.offer2_nmg, "Get x Offer #2 NMG percentage", { get: u.get, offer2_nmg_percent: sheet.file_summary.offer2_nmg_percent }),
+      calculated("offer2_nmg", `Offer #2 NMG (${offer2PercentLabel}%)`, u.offer2_nmg, nmgFormula, { offer_base: sheet.file_summary.auction_nmg_percent == null ? u.get : derivedSummary.total_asset_value, offer2_nmg_percent: sheet.file_summary.auction_nmg_percent ?? sheet.file_summary.offer2_nmg_percent }),
       calculated("offer2_threshold", "Offer #2 Threshold", u.offer2_threshold, "Offer #2 NMG x 15%", { offer2_nmg: u.offer2_nmg }),
       calculated("offer2_upper_value", "Offer #2 Upper Value", u.offer2_upper_value, "Offer #2 NMG + threshold", { offer2_nmg: u.offer2_nmg, offer2_threshold: u.offer2_threshold }),
       calculated("offer2_total_costs", "Offer #2 Total Costs", u.offer2_total_costs, "Offer #2 NMG + costs", { offer2_nmg: u.offer2_nmg, costs: u.costs }),
@@ -2116,10 +2142,10 @@ export default function AssetScheduleSheet({
       calculated("offer2_mcd_take", "Offer #2 McD Take", u.offer2_mcd_take, "15% buyer premium - costs", { bp_15: u.bp_15, costs: u.costs }),
       calculated("offer2_roi", "Offer #2 ROI", u.offer2_roi, "Offer #2 McD take / Offer #2 total costs", { offer2_mcd_take: u.offer2_mcd_take, offer2_total_costs: u.offer2_total_costs }, true),
       calculated("offer2_risk", "Offer #2 Risk", u.offer2_risk, "Low estimate + capped buyer premium - Offer #2 total costs", { total_low_est_value: derivedSummary.total_low_est_value, total_capped_bp: derivedSummary.total_capped_bp, offer2_total_costs: u.offer2_total_costs }),
-      calculated("aquajets_potential_take", "Aquajet's Potential Take", u.aquajets_potential_take, "NMG + 98% of adjusted potential value above the upper value", { offer2_nmg: u.offer2_nmg, adjusted_potential_get: u.adjusted_potential_get, offer2_upper_value: u.offer2_upper_value }),
+      calculated("aquajets_potential_take", "Clients Potential Take", u.aquajets_potential_take, "NMG + 98% of adjusted potential value above the upper value", { offer2_nmg: u.offer2_nmg, adjusted_potential_get: u.adjusted_potential_get, offer2_upper_value: u.offer2_upper_value }),
       calculated("mcd_potential_take", "McD Potential Take", u.mcd_potential_take, "Potential buyer premium - costs + threshold + 2% of potential overage", { potential_bp_15: u.potential_bp_15, costs: u.costs, offer2_threshold: u.offer2_threshold, adjusted_potential_get: u.adjusted_potential_get, offer2_upper_value: u.offer2_upper_value }),
       calculated("potential_roi", "Potential ROI", u.potential_roi, "McD potential take / Offer #2 total costs", { mcd_potential_take: u.mcd_potential_take, offer2_total_costs: u.offer2_total_costs }, true),
-      calculated("offer3_mcd_take", "Offer #3 Commission", u.offer3_mcd_take, "Uncapped 15% buyer premium", { bp_15: u.bp_15 }),
+      calculated("offer3_mcd_take", "Offer #3 Commission", u.offer3_mcd_take, "Uncapped buyer premium × commission basis %", { commission_basis_percent: sheet.file_summary.commission_basis_percent, bp_15: u.bp_15 }),
     ];
   }, [derivedSummary, serverCalculations, sheet]);
 
@@ -2155,7 +2181,7 @@ export default function AssetScheduleSheet({
       calculated("svr", "SVR", c.svr, "AVG x 1%", { avg: c.avg }),
       calculated("refurb", "Refurb", c.refurb, "AVG x 1%", { avg: c.avg }),
       calculated("total_cost", "Total Cost", c.total_cost, "Ads + SVR + refurb", { ads: c.ads, svr: c.svr, refurb: c.refurb }),
-      calculated("nmg", "NMG", c.nmg, "AVG - total cost - threshold", { avg: c.avg, total_cost: c.total_cost, threshold: c.threshold }),
+      calculated("nmg", "NMG", c.nmg, "(AVG - total cost - threshold) × capped NMG %", { capped_nmg_percent: sheet.file_summary.capped_nmg_percent, avg: c.avg, total_cost: c.total_cost, threshold: c.threshold }),
       calculated("threshold", "Threshold", c.threshold, "AVG x capped threshold percentage", { avg: c.avg, capped_threshold_percent: sheet.file_summary.capped_threshold_percent }),
       calculated("risk", "Risk", c.risk, "1 - ((total cost + NMG - BP) / AVG)", { total_cost: c.total_cost, nmg: c.nmg, bp: c.bp, avg: c.avg }, true),
     ];

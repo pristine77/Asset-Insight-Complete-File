@@ -187,6 +187,47 @@ afterAll(async () => {
 });
 
 describe.sequential("collaborative Proposal Valuation API", () => {
+  it("persists independent bid terms, validates the percentages, and preserves them on older admin saves", async () => {
+    const owner = await createAccount({ email: "bid-terms@example.test" });
+    const admin = await createAccount({ email: "bid-admin@example.test", role: "superadmin" });
+    const report = await createReport(owner._id);
+    const other = await createReport(owner._id);
+    const url = `/api/asset/${report._id}/proposal-valuation`;
+    const headers = authHeaders(String(owner._id));
+    const legacy = await request(app).get(url).set(headers);
+    expect(legacy.body.assetScheduleSheet.file_summary).toMatchObject({ auction_nmg_percent: null, cash_purchase_percent: null });
+    expect(legacy.body.summary.selected_nmg).toBeCloseTo(1150 * 0.785);
+    expect(legacy.body.summary.selected_cash_purchase_price).toBe(1035);
+    const rates = { auction_nmg_percent: 0.7, cash_purchase_percent: 0.805, commission_basis_percent: 0,
+      capped_nmg_percent: 0.6, capped_cash_purchase_percent: 0.75 };
+    const changes = Object.entries(rates).map(([key, value]) => ({ field: `file_summary.${key}`, value }));
+    for (const value of [-0.01, 1.01, null]) {
+      const invalid = await request(app).patch(url).set(headers).send({ baseRevision: 0,
+        clientMutationId: "invalid-rate", changes: [{ field: "file_summary.cash_purchase_percent", value }] });
+      expect(invalid.status).toBe(400);
+    }
+    const saved = await request(app).patch(url).set(headers).send({ baseRevision: 0, clientMutationId: "bid-rates", changes });
+    expect(saved.status).toBe(200);
+    expect(saved.body.summary.selected_nmg).toBeCloseTo(1000 * 0.7);
+    expect(saved.body.summary.selected_cash_purchase_price).toBeCloseTo(1000 * 0.805);
+    expect(saved.body.summary.selected_commission_basis_value).toBe(0);
+    const reopened = await request(app).get(url).set(headers);
+    expect(reopened.body.assetScheduleSheet.file_summary).toMatchObject(rates);
+    const legacySheet = reopened.body.assetScheduleSheet;
+    for (const key of ["auction_nmg_percent", "cash_purchase_percent", "commission_basis_percent", "capped_nmg_percent", "capped_cash_purchase_percent"]) delete legacySheet.file_summary[key];
+    await expect(saveAdminProposalValuationSheet({ reportId: String(report._id), adminUserId: String(admin._id),
+      rawSheet: { ...legacySheet, file_summary: { ...legacySheet.file_summary, cash_purchase_percent: 1.1 } }, baseRevision: 1 }))
+      .rejects.toMatchObject({ code: "PROPOSAL_VALUATION_VALUE_INVALID" });
+    legacySheet.file_summary.buyers_premium_basis = "capped";
+    const capped = await saveAdminProposalValuationSheet({ reportId: String(report._id), adminUserId: String(admin._id), rawSheet: legacySheet, baseRevision: 1 });
+    expect(capped.assetScheduleSheet.file_summary).toMatchObject(rates);
+    expect(capped.summary.selected_nmg).toBeCloseTo((1000 - 30 - 100) * 0.6);
+    expect(capped.summary.selected_cash_purchase_price).toBe(750);
+    expect(capped.summary.selected_commission_basis_value).toBe(0);
+    const separate = await request(app).get(`/api/asset/${other._id}/proposal-valuation`).set(headers);
+    expect(separate.body.assetScheduleSheet.file_summary).toMatchObject({ auction_nmg_percent: null, cash_purchase_percent: null, offer2_nmg_percent: 0.785, commission_basis_percent: 1 });
+  });
+
   it("projects average-based premiums without read writes and recalculates owner/admin saves and exports", async () => {
     const [owner, admin] = await Promise.all([
       createAccount({ email: "pv-average-owner@example.test" }),
@@ -202,7 +243,7 @@ describe.sequential("collaborative Proposal Valuation API", () => {
     const before = await AssetReport.findById(report._id).lean();
     const loaded = await request(app).get(`/api/asset/${report._id}/proposal-valuation`).set(authHeaders(String(owner._id)));
     expect(loaded.status).toBe(200);
-    expect(loaded.body.calculationVersion).toBe("asset-pv-v2-average-premium");
+    expect(loaded.body.calculationVersion).toBe("asset-pv-v3-proposal-percentages");
     expect(loaded.body.assetScheduleSheet.rows[0]).toMatchObject({
       buyer_premium_amount: 300, total_expected_gross: 2300, allocated_value: 2300,
       low_est_sale_value: 1000, high_est_sale_value: 3000, cleaning: 30,

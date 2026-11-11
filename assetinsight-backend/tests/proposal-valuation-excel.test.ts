@@ -138,6 +138,34 @@ function fractionalTotalsFixture(): ProposalValuationExcelData {
 }
 
 describe("Proposal Valuation Excel workbook", () => {
+  it("links both offer scenarios to saved bid terms and exports the client label", () => {
+    const data = fixture();
+    Object.assign(data.assetScheduleSheet.file_summary, { auction_nmg_percent: 0.8, cash_purchase_percent: 0.7,
+      capped_cash_purchase_percent: 0.81, capped_nmg_percent: 0.8, commission_basis_percent: 0.5 });
+    for (const basis of ["capped", "uncapped"] as const) {
+      data.assetScheduleSheet.file_summary.buyers_premium_basis = basis;
+      data.summary = deriveAssetScheduleSummary(data.assetScheduleSheet);
+      data.calculations = buildAssetScheduleCalculations(data.assetScheduleSheet, data.summary);
+      const sheet = buildProposalValuationWorkbook(data).getWorksheet("PV Summary")!;
+      expect(sheet.getCell("F14").value).toBe(0.7);
+      expect(sheet.getCell("H14").value).toBe(0.5);
+      expect(sheet.getCell("B15").value).toBe(0.8);
+      expect(sheet.getCell("D15").value).toBe(0.81);
+      expect(sheet.getCell("D31").formula).toBe("$D$7*$F$14");
+      expect(sheet.getCell("D36").formula).toBe("$D$7*$B$14");
+      expect(sheet.getCell("D36").result).toBe(88_000);
+      expect(sheet.getCell("D31").result).toBe(77_000);
+      expect(sheet.getCell("D48").formula).toBe("D27*$H$14");
+      expect(sheet.getCell("H32").formula).toBe("(H23-H31-H33)*$B$15");
+      expect(sheet.getCell("F13").formula).toContain("H23*$D$15");
+      expect(sheet.getCell("H13").formula).toContain("H26*$H$14,D48");
+      for (const [address, value] of [["D13", data.summary.selected_nmg], ["F13", data.summary.selected_cash_purchase_price], ["H13", data.summary.selected_commission_basis_value]] as const) {
+        expect(sheet.getCell(address).result).toBeCloseTo(value);
+      }
+      expect(sheet.getCell("A45").text).toBe("Clients Potential Take");
+    }
+  });
+
   it("totals monetary columns from all detail rows with the same dark workbook styling", () => {
     const data = fractionalTotalsFixture();
     const workbook = buildProposalValuationWorkbook(data);
@@ -331,7 +359,12 @@ describe("Proposal Valuation Excel workbook", () => {
     );
     expect(summary.getCell("D7").result).toBe(110_000);
     expect(summary.getCell("D7").numFmt).toContain('"CAD"');
-    expect(summary.getCell("B14").value).toBe(0.785);
+    expect(summary.getCell("B14").value).toBeNull();
+    expect(summary.getCell("F14").value).toBeNull();
+    expect(summary.getCell("F15").value).toBe(0.785);
+    expect(summary.getCell("H15").value).toBe(0.9);
+    expect(summary.getCell("D36").formula).toBe("IF(ISNUMBER($B$14),$D$7*$B$14,D23*$F$15)");
+    expect(summary.getCell("D31").formula).toBe("IF(ISNUMBER($F$14),$D$7*$F$14,D23*$H$15)");
     expect(summary.getCell("B14").numFmt).toBe("0.0%");
     expect(summary.views[0]).toMatchObject({ state: "frozen", ySplit: 5 });
 

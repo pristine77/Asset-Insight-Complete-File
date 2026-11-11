@@ -90,7 +90,9 @@ const MARKET_CHECK_SCORE_MAP: Record<
 };
 
 export function cloneAssetScheduleSheet(sheet: AssetAdminScheduleSheet): AssetAdminScheduleSheet {
-  return JSON.parse(JSON.stringify(sheet)) as AssetAdminScheduleSheet;
+  const copy = JSON.parse(JSON.stringify(sheet)) as AssetAdminScheduleSheet;
+  copy.file_summary = normalizeFileSummary(copy.file_summary);
+  return copy;
 }
 
 function toNumberOrNull(value: string | number | null | undefined) {
@@ -126,6 +128,11 @@ function normalizeFileSummary(fileSummary: AssetAdminScheduleFileSummary | undef
     file_risk_multiplier: toNumberOrNull(fileSummary?.file_risk_multiplier),
     commission_percent_no_guarantee: toNumberOrNull(fileSummary?.commission_percent_no_guarantee),
     offer2_nmg_percent: normalizeRatio(fileSummary?.offer2_nmg_percent, 0.785),
+    auction_nmg_percent: fileSummary?.auction_nmg_percent == null ? null : normalizeRatio(fileSummary?.auction_nmg_percent, 0.785),
+    cash_purchase_percent: fileSummary?.cash_purchase_percent == null ? null : normalizeRatio(fileSummary?.cash_purchase_percent, 0.9),
+    capped_cash_purchase_percent: normalizeRatio(fileSummary?.capped_cash_purchase_percent, 1),
+    capped_nmg_percent: normalizeRatio(fileSummary?.capped_nmg_percent, 1),
+    commission_basis_percent: normalizeRatio(fileSummary?.commission_basis_percent, 1),
     capped_threshold_percent: normalizeRatio(fileSummary?.capped_threshold_percent, 0.1),
   };
 }
@@ -278,10 +285,16 @@ export function deriveAssetScheduleSummary(sheet: AssetAdminScheduleSheet): Asse
   const uncappedPotentialGet = totalHighEstValue + totalCappedBp;
   const uncappedAdjustedPotentialGet = uncappedPotentialGet / 1.15;
   const uncappedPotentialBp15 = uncappedPotentialGet - uncappedAdjustedPotentialGet;
-  const uncappedOffer1CashOffer = uncappedGet * 0.9;
+  // Total asset value is already the hammer value. Get adds the actual lot premiums.
+  const { auction_nmg_percent, cash_purchase_percent } = sheet.file_summary;
+  const uncappedOffer1CashOffer = cash_purchase_percent == null
+    ? uncappedGet * 0.9
+    : totalAssetValue * cash_purchase_percent;
   const uncappedOffer1TotalCosts = uncappedOffer1CashOffer + uncappedCosts;
   const uncappedOffer1McdTake = uncappedGet - uncappedOffer1TotalCosts;
-  const uncappedOffer2Nmg = uncappedGet * sheet.file_summary.offer2_nmg_percent;
+  const uncappedOffer2Nmg = auction_nmg_percent == null
+    ? uncappedGet * sheet.file_summary.offer2_nmg_percent
+    : totalAssetValue * auction_nmg_percent;
   const uncappedOffer2Threshold = uncappedOffer2Nmg * 0.15;
   const uncappedOffer2UpperValue = uncappedOffer2Nmg + uncappedOffer2Threshold;
   const uncappedOffer2TotalCosts = uncappedOffer2Nmg + uncappedCosts;
@@ -300,7 +313,10 @@ export function deriveAssetScheduleSummary(sheet: AssetAdminScheduleSheet): Asse
   const cappedSvr = cappedAvg * 0.01;
   const cappedRefurb = cappedAvg * 0.01;
   const cappedTotalCost = cappedAds + cappedSvr + cappedRefurb;
-  const cappedNmg = cappedAvg - cappedTotalCost - cappedThreshold;
+  const cappedNmg = (cappedAvg - cappedTotalCost - cappedThreshold) * sheet.file_summary.capped_nmg_percent;
+  const cappedCashOffer = cappedAvg * sheet.file_summary.capped_cash_purchase_percent;
+  const uncappedCommission = uncappedBp15 * sheet.file_summary.commission_basis_percent;
+  const cappedCommission = totalCappedBp * sheet.file_summary.commission_basis_percent;
 
   return {
     evaluator_totals: evaluatorTotals,
@@ -328,9 +344,9 @@ export function deriveAssetScheduleSummary(sheet: AssetAdminScheduleSheet): Asse
     selected_nmg:
       sheet.file_summary.buyers_premium_basis === "capped" ? cappedNmg : uncappedOffer2Nmg,
     selected_cash_purchase_price:
-      sheet.file_summary.buyers_premium_basis === "capped" ? cappedAvg : uncappedOffer1CashOffer,
+      sheet.file_summary.buyers_premium_basis === "capped" ? cappedCashOffer : uncappedOffer1CashOffer,
     selected_commission_basis_value:
-      sheet.file_summary.buyers_premium_basis === "capped" ? totalCappedBp : uncappedBp15,
+      sheet.file_summary.buyers_premium_basis === "capped" ? cappedCommission : uncappedCommission,
     uncapped: {
       get: uncappedGet,
       costs: uncappedCosts,
@@ -357,7 +373,7 @@ export function deriveAssetScheduleSummary(sheet: AssetAdminScheduleSheet): Asse
       aquajets_potential_take: uncappedAquajetsPotentialTake,
       mcd_potential_take: uncappedMcdPotentialTake,
       potential_roi: divideOrNull(uncappedMcdPotentialTake, uncappedOffer2TotalCosts),
-      offer3_mcd_take: uncappedBp15,
+      offer3_mcd_take: uncappedCommission,
     },
     capped: {
       avg: cappedAvg,

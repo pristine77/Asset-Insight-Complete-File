@@ -637,18 +637,30 @@ function buildSummarySheet(
     data.assetScheduleSheet.file_summary.buyers_premium_basis === "capped"
       ? "Capped"
       : "Uncapped";
-  worksheet.getCell("A14").value = "OFFER #2 NMG %";
-  worksheet.getCell("B14").value = data.assetScheduleSheet.file_summary.offer2_nmg_percent;
-  worksheet.getCell("B14").numFmt = "0.0%";
-  worksheet.getCell("C14").value = "CAPPED THRESHOLD %";
-  worksheet.getCell("D14").value = data.assetScheduleSheet.file_summary.capped_threshold_percent;
-  worksheet.getCell("D14").numFmt = "0.0%";
-  for (const address of ["A13", "A14", "C14"]) {
-    worksheet.getCell(address).font = { name: BODY_FONT, bold: true, size: 8, color: { argb: COLORS.muted } };
+  const terms = data.assetScheduleSheet.file_summary;
+  const rateCells: Array<[string, string, string, number | null]> = [
+    ["A14", "B14", "NMG % excl. premium", terms.auction_nmg_percent],
+    ["C14", "D14", "Capped threshold %", terms.capped_threshold_percent],
+    ["E14", "F14", "Cash % excl. premium", terms.cash_purchase_percent],
+    ["G14", "H14", "Commission basis %", terms.commission_basis_percent],
+    ["A15", "B15", "Capped NMG %", terms.capped_nmg_percent],
+    ["C15", "D15", "Capped cash purchase %", terms.capped_cash_purchase_percent],
+  ];
+  if (terms.auction_nmg_percent == null) rateCells.push(["E15", "F15", "Saved NMG % incl. premium", terms.offer2_nmg_percent]);
+  if (terms.cash_purchase_percent == null) rateCells.push(["G15", "H15", "Saved cash % incl. premium", 0.9]);
+  for (const [labelAddress, valueAddress, label, rate] of rateCells) {
+    const labelCell = worksheet.getCell(labelAddress);
+    labelCell.value = label.toUpperCase();
+    labelCell.font = { name: BODY_FONT, bold: true, size: 8, color: { argb: COLORS.muted } };
+    const valueCell = worksheet.getCell(valueAddress);
+    valueCell.value = rate;
+    if (rate === null) valueCell.note = "Enter a percentage to bid on auction value excluding buyer’s premium. The saved quote applies while this cell is blank.";
+    valueCell.numFmt = "0.0%";
+    valueCell.font = { name: BODY_FONT, bold: true, size: 10, color: { argb: COLORS.ink } };
+    valueCell.dataValidation = { type: "decimal", operator: "between", formulae: [0, 1], showErrorMessage: true, error: "Enter a percentage between 0% and 100%." };
   }
+  worksheet.getCell("A13").font = { name: BODY_FONT, bold: true, size: 8, color: { argb: COLORS.muted } };
   worksheet.getCell("B13").font = { name: BODY_FONT, bold: true, size: 11, color: { argb: COLORS.teal } };
-  worksheet.getCell("B14").font = { name: BODY_FONT, bold: true, size: 10, color: { argb: COLORS.ink } };
-  worksheet.getCell("D14").font = { name: BODY_FONT, bold: true, size: 10, color: { argb: COLORS.ink } };
 
   styleSectionBand(worksheet, 16, 1, 8, "Risk profile", COLORS.ink);
   const riskRange = detailRange(layout, "riskBucket");
@@ -746,12 +758,16 @@ function buildSummarySheet(
     "uncapped.potential_get": "$H$7+$D$9",
     "uncapped.adjusted_potential_get": `${u("uncapped.potential_get")}/1.15`,
     "uncapped.potential_bp_15": `${u("uncapped.potential_get")}-${u("uncapped.adjusted_potential_get")}`,
-    "uncapped.offer1_cash_offer": `${u("uncapped.get")}*90%`,
+    "uncapped.offer1_cash_offer": terms.cash_purchase_percent == null
+      ? `IF(ISNUMBER($F$14),$D$7*$F$14,${u("uncapped.get")}*$H$15)`
+      : "$D$7*$F$14",
     "uncapped.offer1_total_costs": `${u("uncapped.offer1_cash_offer")}+${u("uncapped.costs")}`,
     "uncapped.offer1_mcd_take": `${u("uncapped.get")}-${u("uncapped.offer1_total_costs")}`,
     "uncapped.offer1_roi": `IFERROR(${u("uncapped.offer1_mcd_take")}/${u("uncapped.offer1_total_costs")},"")`,
     "uncapped.offer1_risk": `$F$7+$D$9-${u("uncapped.offer1_total_costs")}`,
-    "uncapped.offer2_nmg": `${u("uncapped.get")}*$B$14`,
+    "uncapped.offer2_nmg": terms.auction_nmg_percent == null
+      ? `IF(ISNUMBER($B$14),$D$7*$B$14,${u("uncapped.get")}*$F$15)`
+      : "$D$7*$B$14",
     "uncapped.offer2_threshold": `${u("uncapped.offer2_nmg")}*15%`,
     "uncapped.offer2_upper_value": `${u("uncapped.offer2_nmg")}+${u("uncapped.offer2_threshold")}`,
     "uncapped.offer2_total_costs": `${u("uncapped.offer2_nmg")}+${u("uncapped.costs")}`,
@@ -763,7 +779,7 @@ function buildSummarySheet(
     "uncapped.aquajets_potential_take": `${u("uncapped.offer2_nmg")}+(${u("uncapped.adjusted_potential_get")}-${u("uncapped.offer2_upper_value")})*98%`,
     "uncapped.mcd_potential_take": `${u("uncapped.potential_bp_15")}-${u("uncapped.costs")}+${u("uncapped.offer2_threshold")}+(${u("uncapped.adjusted_potential_get")}-${u("uncapped.offer2_upper_value")})*2%`,
     "uncapped.potential_roi": `IFERROR(${u("uncapped.mcd_potential_take")}/${u("uncapped.offer2_total_costs")},"")`,
-    "uncapped.offer3_mcd_take": u("uncapped.bp_15"),
+    "uncapped.offer3_mcd_take": `${u("uncapped.bp_15")}*$H$14`,
   };
   const cappedFormulas: Record<(typeof cappedKeys)[number], string> = {
     "capped.avg": "$D$7",
@@ -775,7 +791,7 @@ function buildSummarySheet(
     "capped.svr": `${c("capped.avg")}*1%`,
     "capped.refurb": `${c("capped.avg")}*1%`,
     "capped.total_cost": `${c("capped.ads")}+${c("capped.svr")}+${c("capped.refurb")}`,
-    "capped.nmg": `${c("capped.avg")}-${c("capped.total_cost")}-${c("capped.threshold")}`,
+    "capped.nmg": `(${c("capped.avg")}-${c("capped.total_cost")}-${c("capped.threshold")})*$B$15`,
     "capped.threshold": `${c("capped.avg")}*$D$14`,
     "capped.risk": `IFERROR(1-((${c("capped.total_cost")}+${c("capped.nmg")}-${c("capped.bp")})/${c("capped.avg")}),"")`,
   };
@@ -823,12 +839,12 @@ function buildSummarySheet(
     accent: "teal",
   });
   setKpiPair(worksheet, "E13", "F13", "Cash Purchase Price", data.summary.selected_cash_purchase_price, {
-    formula: `IF($B$13="Capped",${c("capped.avg")},${u("uncapped.offer1_cash_offer")})`,
+    formula: `IF($B$13="Capped",${c("capped.avg")}*$D$15,${u("uncapped.offer1_cash_offer")})`,
     numFmt: currency,
     accent: "teal",
   });
   setKpiPair(worksheet, "G13", "H13", "Commission Basis", data.summary.selected_commission_basis_value, {
-    formula: `IF($B$13="Capped",${c("capped.bp")},${u("uncapped.bp_15")})`,
+    formula: `IF($B$13="Capped",${c("capped.bp")}*$H$14,${u("uncapped.offer3_mcd_take")})`,
     numFmt: currency,
     accent: "teal",
   });

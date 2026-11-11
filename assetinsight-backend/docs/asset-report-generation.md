@@ -21,3 +21,16 @@ Increment inputs and links the corresponding Schedule A PDF. The separate Propos
 Valuation workbook continues to show the original AI and entered evaluator columns.
 This projection makes no image-analysis or currency-lookup requests. Existing
 files change only after the ordinary guarded file-generation workflow runs.
+
+## Proposal bid percentages
+
+The File Summary saves bid percentages on each proposal. New uncapped guarantees
+and cash offers default to 78.5% and 90% of auction value respectively. Auction
+value is the sum of the evaluator averages, equivalent to gross less the actual
+per-lot buyer premiums. Older saved offers retain their gross basis independently
+until the user enters a percentage or chooses Use auction value for that offer.
+Excel also preserves each saved gross quote until its net-rate cell is filled.
+In the capped scenario, NMG uses 100%
+of average less costs and threshold by default, and cash uses 100% of average.
+Commission defaults to 100% of the existing premium-based commission amount in
+either scenario. An explicit zero is valid. The workbook uses the same rates.

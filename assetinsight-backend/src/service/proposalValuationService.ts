@@ -923,9 +923,30 @@ export async function saveAdminProposalValuationSheet(input: {
     );
   }
 
-  let submittedSheet = calculateAssetAdminScheduleSheet(input.rawSheet, report);
   const ownerId = plainId(report.user);
   const existingSheet = reportSheet(report);
+  const rawSheet = input.rawSheet as { file_summary?: Partial<AssetAdminScheduleSheet["file_summary"]> };
+  const incomingTerms = rawSheet.file_summary;
+  for (const [field, value] of Object.entries(incomingTerms ?? {})) {
+    if ((field === "auction_nmg_percent" || field === "cash_purchase_percent") && value === null) continue;
+    if (FILE_SUMMARY_RATIO_FIELDS.has(field)) requireFileSummaryRatio(field, value);
+  }
+  const savedTerms = existingSheet.file_summary;
+  let auctionNmgPercent = incomingTerms?.auction_nmg_percent ?? savedTerms.auction_nmg_percent;
+  // Older editors only submit offer2_nmg_percent. Honor deliberate rate edits
+  // on the proposal's active basis, and retain the basis on unrelated saves.
+  if (savedTerms.auction_nmg_percent !== null && incomingTerms?.auction_nmg_percent === undefined &&
+      incomingTerms?.offer2_nmg_percent !== undefined) {
+    auctionNmgPercent = incomingTerms.offer2_nmg_percent;
+  }
+  let submittedSheet = calculateAssetAdminScheduleSheet({
+    ...rawSheet,
+    file_summary: {
+      ...savedTerms, ...incomingTerms,
+      auction_nmg_percent: auctionNmgPercent,
+      cash_purchase_percent: incomingTerms?.cash_purchase_percent ?? savedTerms.cash_purchase_percent,
+    },
+  }, report);
   const ownerColumn = existingSheet.evaluator_columns.find(column => column.user_id === ownerId);
   const submittedOwnerColumns = submittedSheet.evaluator_columns.filter(column => column.user_id === ownerId);
   if (ownerColumn && (submittedOwnerColumns.length > 1 ||
@@ -1085,6 +1106,11 @@ const FILE_SUMMARY_NUMBER_FIELDS = new Set([
 ]);
 const FILE_SUMMARY_RATIO_FIELDS = new Set([
   "offer2_nmg_percent",
+  "auction_nmg_percent",
+  "cash_purchase_percent",
+  "capped_cash_purchase_percent",
+  "capped_nmg_percent",
+  "commission_basis_percent",
   "capped_threshold_percent",
 ]);
 
@@ -1108,6 +1134,14 @@ function numberOrNull(
     );
   }
   return value;
+}
+
+function requireFileSummaryRatio(field: string, value: unknown) {
+  const ratio = numberOrNull(value, { max: 1 });
+  if (ratio === null) {
+    throw new ProposalValuationError(400, "PROPOSAL_VALUATION_VALUE_INVALID", `${field} cannot be null`);
+  }
+  return ratio;
 }
 
 function applyProposalValuationChanges(input: {
@@ -1161,15 +1195,11 @@ function applyProposalValuationChanges(input: {
           allowNegative: false,
         });
       } else if (FILE_SUMMARY_RATIO_FIELDS.has(key)) {
-        const value = numberOrNull(rawChange.value, { max: 1 });
-        if (value === null) {
-          throw new ProposalValuationError(
-            400,
-            "PROPOSAL_VALUATION_VALUE_INVALID",
-            `${key} cannot be null`
-          );
+        const ratio = requireFileSummaryRatio(key, rawChange.value);
+        (next.file_summary as any)[key] = ratio;
+        if (key === "offer2_nmg_percent" && next.file_summary.auction_nmg_percent !== null) {
+          next.file_summary.auction_nmg_percent = ratio;
         }
-        (next.file_summary as any)[key] = value;
       } else {
         throw new ProposalValuationError(
           400,

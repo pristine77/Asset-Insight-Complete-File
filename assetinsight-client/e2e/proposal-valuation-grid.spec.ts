@@ -19,7 +19,7 @@ function fixture(): ProposalValuationPayload {
         buyer_premium_amount: 75, total_expected_gross: 575, allocated_value: 575,
         notes: "", cleaning: 5, lien_search: null, video_cost: null, lotting_fee: 5, advertising: 5,
       })),
-      file_summary: { buyers_premium_basis: "uncapped", total_risk_weighted_value: null, file_risk_multiplier: null, commission_percent_no_guarantee: null, offer2_nmg_percent: 0.785, capped_threshold_percent: 0.1 },
+      file_summary: { buyers_premium_basis: "uncapped", total_risk_weighted_value: null, file_risk_multiplier: null, commission_percent_no_guarantee: null, offer2_nmg_percent: 0.785, auction_nmg_percent: null, cash_purchase_percent: null, capped_cash_purchase_percent: 1, capped_nmg_percent: 1, commission_basis_percent: 1, capped_threshold_percent: 0.1 },
     },
   };
 }
@@ -46,6 +46,10 @@ async function openWorkspace(page: Page, lostBatch = 0) {
       if (receipts.has(body.clientMutationId)) return json(receipts.get(body.clientMutationId));
       if (body.baseRevision !== persisted.revision) return json({ code: "PV_REVISION_CONFLICT", currentRevision: persisted.revision }, 409);
       for (const change of body.changes as ProposalValuationChange[]) {
+        if (change.lotId === null && change.field.startsWith("file_summary.")) {
+          Object.assign(persisted.assetScheduleSheet.file_summary, { [change.field.slice("file_summary.".length)]: change.value });
+          continue;
+        }
         const row = persisted.assetScheduleSheet.rows.find(row => row.lot_id === change.lotId)!;
         (row as unknown as Record<string, unknown>)[change.field] = change.value;
       }
@@ -132,4 +136,44 @@ test("mobile avoids hidden rows and resizing retains the active desktop edit", a
   await expect(page.getByPlaceholder("Search assets")).toBeVisible();
   expect(errors).toEqual([]);
   if (process.env.PV_QA_SCREENSHOTS) await page.screenshot({ path: `${process.env.PV_QA_SCREENSHOTS}/mobile-320.png` });
+});
+
+test("bid percentages save per proposal and reload on both premium bases", async ({ page }, testInfo) => {
+  const { persisted, errors } = await openWorkspace(page);
+  const summaryTab = page.getByRole("button", { name: "File summary", exact: true });
+  await summaryTab.click();
+  const nmg = page.getByLabel("NMG percentage", { exact: true });
+  const cash = page.getByLabel("Cash Purchase Price percentage");
+  const commission = page.getByLabel("Commission Basis Value percentage");
+  await expect(nmg).toHaveValue("78.5");
+  await expect(cash).toHaveValue("90");
+  await expect(commission).toHaveValue("100");
+  await page.getByRole("button", { name: "Use auction value for NMG", exact: true }).click();
+  await expect.poll(() => persisted.assetScheduleSheet.file_summary.auction_nmg_percent).toBe(0.785);
+  await expect(page.getByRole("button", { name: "Use auction value for Cash Purchase Price" })).toBeVisible();
+  await nmg.fill("70");
+  await cash.fill("80.5");
+  await commission.fill("0");
+  await expect.poll(() => persisted.assetScheduleSheet.file_summary.commission_basis_percent).toBe(0);
+  await page.reload();
+  await summaryTab.click();
+  await expect(nmg).toHaveValue("70");
+  await expect(cash).toHaveValue("80.5");
+  const metrics = page.locator("section").filter({ has: page.getByRole("heading", { name: "Metric", exact: true }) }).last();
+  await expect(metrics.getByText("$78,750", { exact: true })).toBeVisible();
+  await expect(metrics.getByText("$90,563", { exact: true })).toBeVisible();
+  await expect(commission).toHaveValue("0");
+  await expect(page.getByText("Clients Potential Take", { exact: true })).toBeVisible();
+  if (process.env.PV_QA_SCREENSHOTS) {
+    await cash.evaluate(input => input.scrollIntoView({ block: "center" }));
+    await page.screenshot({ path: `${process.env.PV_QA_SCREENSHOTS}/terms-${testInfo.project.name}.png` });
+  }
+  await page.getByLabel("Buyer premium basis").selectOption("capped");
+  await expect(nmg).toHaveValue("100");
+  await expect(cash).toHaveValue("100");
+  await cash.fill("65");
+  await expect.poll(() => persisted.assetScheduleSheet.file_summary.capped_cash_purchase_percent).toBe(0.65);
+  await page.getByLabel("Buyer premium basis").selectOption("uncapped");
+  await expect(cash).toHaveValue("80.5");
+  expect(errors).toEqual([]);
 });

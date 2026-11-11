@@ -79,6 +79,11 @@ function Harness({
       file_risk_multiplier: null,
       commission_percent_no_guarantee: null,
       offer2_nmg_percent: 0.785,
+      auction_nmg_percent: null,
+      cash_purchase_percent: null,
+      capped_cash_purchase_percent: 1,
+      capped_nmg_percent: 1,
+      commission_basis_percent: 1,
       capped_threshold_percent: 0.1,
     },
   };
