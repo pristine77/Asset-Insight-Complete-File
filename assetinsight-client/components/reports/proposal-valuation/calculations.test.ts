@@ -81,7 +81,7 @@ describe("Proposal Valuation admin parity", () => {
       overall_file_risk_rating: "Low",
       selected_nmg: 34147.5,
       selected_cash_purchase_price: 39150,
-      selected_commission_basis_value: 6926.086956521736,
+      selected_commission_basis_value: 43500,
       uncapped: {
         get: 43500,
         costs: 1440,
@@ -108,7 +108,7 @@ describe("Proposal Valuation admin parity", () => {
         aquajets_potential_take: 34011.09358695652,
         mcd_potential_take: 9548.906413043478,
         potential_roi: 0.2683219223897008,
-        offer3_mcd_take: 6926.086956521736,
+        offer3_mcd_take: 43500,
       },
       capped: {
         avg: 41500,

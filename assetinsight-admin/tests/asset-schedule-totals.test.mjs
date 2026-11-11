@@ -18,6 +18,21 @@ function sheet(values, evaluatorIds = ["riley", "femi", "jay"]) {
   });
 }
 
+test("commission uses the displayed Get before costs on both premium bases", () => {
+  const data = sheet([{ riley: 998_000 }]);
+  assert.equal(data.file_summary.commission_basis_percent, 0.1);
+  for (const basis of ["capped", "uncapped"]) {
+    data.file_summary.buyers_premium_basis = basis;
+    for (const [rate, earned] of [[0.1, 100_000], [0.05, 50_000], [0, 0], [1, 1_000_000]]) {
+      data.file_summary.commission_basis_percent = rate;
+      const totals = deriveAssetScheduleSummary(data);
+      assert.equal(totals.uncapped.get, 1_000_000);
+      assert.equal(totals.selected_commission_basis_value, earned);
+      assert.equal(totals.uncapped.offer3_mcd_take, earned);
+    }
+  }
+});
+
 test("all-lot totals sum each evaluator and existing per-row average, high, low and capped premium", () => {
   const data = sheet([
     { riley: 10000, femi: 20000, jay: null },

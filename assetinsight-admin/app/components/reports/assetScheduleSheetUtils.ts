@@ -132,7 +132,7 @@ function normalizeFileSummary(fileSummary: AssetAdminScheduleFileSummary | undef
     cash_purchase_percent: fileSummary?.cash_purchase_percent == null ? null : normalizeRatio(fileSummary?.cash_purchase_percent, 0.9),
     capped_cash_purchase_percent: normalizeRatio(fileSummary?.capped_cash_purchase_percent, 1),
     capped_nmg_percent: normalizeRatio(fileSummary?.capped_nmg_percent, 1),
-    commission_basis_percent: normalizeRatio(fileSummary?.commission_basis_percent, 1),
+    commission_basis_percent: normalizeRatio(fileSummary?.commission_basis_percent, 0.1),
     capped_threshold_percent: normalizeRatio(fileSummary?.capped_threshold_percent, 0.1),
   };
 }
@@ -315,8 +315,7 @@ export function deriveAssetScheduleSummary(sheet: AssetAdminScheduleSheet): Asse
   const cappedTotalCost = cappedAds + cappedSvr + cappedRefurb;
   const cappedNmg = (cappedAvg - cappedTotalCost - cappedThreshold) * sheet.file_summary.capped_nmg_percent;
   const cappedCashOffer = cappedAvg * sheet.file_summary.capped_cash_purchase_percent;
-  const uncappedCommission = uncappedBp15 * sheet.file_summary.commission_basis_percent;
-  const cappedCommission = totalCappedBp * sheet.file_summary.commission_basis_percent;
+  const commission = uncappedGet * sheet.file_summary.commission_basis_percent;
 
   return {
     evaluator_totals: evaluatorTotals,
@@ -345,8 +344,7 @@ export function deriveAssetScheduleSummary(sheet: AssetAdminScheduleSheet): Asse
       sheet.file_summary.buyers_premium_basis === "capped" ? cappedNmg : uncappedOffer2Nmg,
     selected_cash_purchase_price:
       sheet.file_summary.buyers_premium_basis === "capped" ? cappedCashOffer : uncappedOffer1CashOffer,
-    selected_commission_basis_value:
-      sheet.file_summary.buyers_premium_basis === "capped" ? cappedCommission : uncappedCommission,
+    selected_commission_basis_value: commission,
     uncapped: {
       get: uncappedGet,
       costs: uncappedCosts,
@@ -373,7 +371,7 @@ export function deriveAssetScheduleSummary(sheet: AssetAdminScheduleSheet): Asse
       aquajets_potential_take: uncappedAquajetsPotentialTake,
       mcd_potential_take: uncappedMcdPotentialTake,
       potential_roi: divideOrNull(uncappedMcdPotentialTake, uncappedOffer2TotalCosts),
-      offer3_mcd_take: uncappedCommission,
+      offer3_mcd_take: commission,
     },
     capped: {
       avg: cappedAvg,

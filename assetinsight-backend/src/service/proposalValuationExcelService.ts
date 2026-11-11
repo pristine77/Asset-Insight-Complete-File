@@ -779,7 +779,7 @@ function buildSummarySheet(
     "uncapped.aquajets_potential_take": `${u("uncapped.offer2_nmg")}+(${u("uncapped.adjusted_potential_get")}-${u("uncapped.offer2_upper_value")})*98%`,
     "uncapped.mcd_potential_take": `${u("uncapped.potential_bp_15")}-${u("uncapped.costs")}+${u("uncapped.offer2_threshold")}+(${u("uncapped.adjusted_potential_get")}-${u("uncapped.offer2_upper_value")})*2%`,
     "uncapped.potential_roi": `IFERROR(${u("uncapped.mcd_potential_take")}/${u("uncapped.offer2_total_costs")},"")`,
-    "uncapped.offer3_mcd_take": `${u("uncapped.bp_15")}*$H$14`,
+    "uncapped.offer3_mcd_take": `${u("uncapped.get")}*$H$14`,
   };
   const cappedFormulas: Record<(typeof cappedKeys)[number], string> = {
     "capped.avg": "$D$7",
@@ -844,7 +844,7 @@ function buildSummarySheet(
     accent: "teal",
   });
   setKpiPair(worksheet, "G13", "H13", "Commission Basis", data.summary.selected_commission_basis_value, {
-    formula: `IF($B$13="Capped",${c("capped.bp")}*$H$14,${u("uncapped.offer3_mcd_take")})`,
+    formula: u("uncapped.offer3_mcd_take"),
     numFmt: currency,
     accent: "teal",
   });

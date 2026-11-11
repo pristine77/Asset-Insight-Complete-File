@@ -162,7 +162,7 @@ export type AssetScheduleCalculation = {
   inputs: Record<string, number | string | null>;
 };
 
-export const ASSET_SCHEDULE_CALCULATION_VERSION = "asset-pv-v3-proposal-percentages";
+export const ASSET_SCHEDULE_CALCULATION_VERSION = "asset-pv-v4-get-commission";
 
 const MARKET_CHECK_SCORE_MAP: Record<
   keyof Omit<AssetAdminScheduleMarketCheck, "notes">,
@@ -247,7 +247,7 @@ function getDefaultFileSummary(): AssetAdminScheduleFileSummary {
     cash_purchase_percent: 0.9,
     capped_cash_purchase_percent: 1,
     capped_nmg_percent: 1,
-    commission_basis_percent: 1,
+    commission_basis_percent: 0.1,
     capped_threshold_percent: 0.1,
   };
 }
@@ -406,7 +406,7 @@ function normalizeFileSummary(input: any): AssetAdminScheduleFileSummary {
     cash_purchase_percent: source.cash_purchase_percent == null ? null : normalizeRatio(source.cash_purchase_percent, 0.9),
     capped_cash_purchase_percent: normalizeRatio(source.capped_cash_purchase_percent, 1),
     capped_nmg_percent: normalizeRatio(source.capped_nmg_percent, 1),
-    commission_basis_percent: normalizeRatio(source.commission_basis_percent, 1),
+    commission_basis_percent: normalizeRatio(source.commission_basis_percent, 0.1),
     capped_threshold_percent: normalizeRatio(source.capped_threshold_percent, 0.1),
   };
 }
@@ -756,8 +756,7 @@ export function deriveAssetScheduleSummary(
   const cappedTotalCost = cappedAds + cappedSvr + cappedRefurb;
   const cappedNmg = (cappedAvg - cappedTotalCost - cappedThreshold) * sheet.file_summary.capped_nmg_percent;
   const cappedCashOffer = cappedAvg * sheet.file_summary.capped_cash_purchase_percent;
-  const uncappedCommission = uncappedBp15 * sheet.file_summary.commission_basis_percent;
-  const cappedCommission = totalCappedBp * sheet.file_summary.commission_basis_percent;
+  const commission = uncappedGet * sheet.file_summary.commission_basis_percent;
 
   return {
     row_appraiser_averages: rowAverages,
@@ -782,10 +781,7 @@ export function deriveAssetScheduleSummary(
       sheet.file_summary.buyers_premium_basis === "capped"
         ? cappedCashOffer
         : uncappedOffer1CashOffer,
-    selected_commission_basis_value:
-      sheet.file_summary.buyers_premium_basis === "capped"
-        ? cappedCommission
-        : uncappedCommission,
+    selected_commission_basis_value: commission,
     uncapped: {
       get: uncappedGet,
       costs: uncappedCosts,
@@ -815,7 +811,7 @@ export function deriveAssetScheduleSummary(
         uncappedMcdPotentialTake,
         uncappedOffer2TotalCosts
       ),
-      offer3_mcd_take: uncappedCommission,
+      offer3_mcd_take: commission,
     },
     capped: {
       avg: cappedAvg,
@@ -879,7 +875,7 @@ export function buildAssetScheduleCalculations(
     calculation("overall_file_risk_rating", "Overall File Risk Rating", summary.overall_file_risk_rating, "Risk bucket for the asset-value-weighted average market-check score", { weighted_average_risk_score: summary.weighted_average_risk_score }),
     calculation("selected_nmg", "Selected NMG", summary.selected_nmg, basis === "capped" ? "(Average asset value - capped costs - capped threshold) × capped NMG %" : nmgFormula, { basis, capped_nmg_percent: sheet.file_summary.capped_nmg_percent, capped_nmg: c.nmg, uncapped_offer2_nmg: u.offer2_nmg, offer2_nmg_percent: sheet.file_summary.auction_nmg_percent ?? sheet.file_summary.offer2_nmg_percent }),
     calculation("selected_cash_purchase_price", "Selected Cash Purchase Price", summary.selected_cash_purchase_price, basis === "capped" ? "Average asset value × capped cash purchase %" : cashFormula, { basis, cash_purchase_percent: basis === "capped" ? sheet.file_summary.capped_cash_purchase_percent : sheet.file_summary.cash_purchase_percent ?? 0.9, capped_average: c.avg, uncapped_get: u.get }),
-    calculation("selected_commission_basis_value", "Selected Commission Basis Value", summary.selected_commission_basis_value, basis === "capped" ? "Sum of capped buyer premiums × commission basis %" : "(Uncapped Get - adjusted Get) × commission basis %", { basis, commission_basis_percent: sheet.file_summary.commission_basis_percent, capped_buyer_premium: summary.total_capped_bp, uncapped_get: u.get, adjusted_get: u.adjusted_get }),
+    calculation("selected_commission_basis_value", "Selected Commission Basis Value", summary.selected_commission_basis_value, "Get Total × commission %", { get: u.get, commission_basis_percent: sheet.file_summary.commission_basis_percent }),
     calculation("uncapped.get", "Get", u.get, "Total asset value + capped buyer premium", base),
     calculation("uncapped.costs", "Costs", u.costs, "Sum of all projected per-asset costs", { total_projected_costs: summary.total_projected_costs }),
     calculation("uncapped.get_after_costs", "Get After Costs", u.get_after_costs, "Get - costs", { get: u.get, costs: u.costs }),
@@ -905,7 +901,7 @@ export function buildAssetScheduleCalculations(
     calculation("uncapped.aquajets_potential_take", "Clients Potential Take", u.aquajets_potential_take, "NMG + 98% of adjusted potential value above the upper value", { offer2_nmg: u.offer2_nmg, adjusted_potential_get: u.adjusted_potential_get, offer2_upper_value: u.offer2_upper_value }),
     calculation("uncapped.mcd_potential_take", "McD Potential Take", u.mcd_potential_take, "Potential buyer premium - costs + threshold + 2% of potential overage", { potential_bp_15: u.potential_bp_15, costs: u.costs, offer2_threshold: u.offer2_threshold, adjusted_potential_get: u.adjusted_potential_get, offer2_upper_value: u.offer2_upper_value }),
     calculation("uncapped.potential_roi", "Potential ROI", u.potential_roi, "McD potential take / Offer #2 total costs", { mcd_potential_take: u.mcd_potential_take, offer2_total_costs: u.offer2_total_costs }),
-    calculation("uncapped.offer3_mcd_take", "Offer #3 Commission", u.offer3_mcd_take, "Uncapped buyer premium × commission basis %", { commission_basis_percent: sheet.file_summary.commission_basis_percent, bp_15: u.bp_15 }),
+    calculation("uncapped.offer3_mcd_take", "Offer #3 Commission", u.offer3_mcd_take, "Get Total × commission %", { get: u.get, commission_basis_percent: sheet.file_summary.commission_basis_percent }),
     calculation("capped.avg", "AVG", c.avg, "Total asset value", { total_asset_value: summary.total_asset_value }),
     calculation("capped.high", "HIGH", c.high, "Sum of high estimated sale values", { total_high_est_value: summary.total_high_est_value }),
     calculation("capped.low", "LOW", c.low, "Sum of low estimated sale values", { total_low_est_value: summary.total_low_est_value }),

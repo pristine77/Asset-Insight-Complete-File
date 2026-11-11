@@ -155,6 +155,8 @@ test("bid percentages save per proposal and reload on both premium bases", async
   await cash.fill("80.5");
   await commission.fill("0");
   await expect.poll(() => persisted.assetScheduleSheet.file_summary.commission_basis_percent).toBe(0);
+  await commission.fill("10");
+  await expect.poll(() => persisted.assetScheduleSheet.file_summary.commission_basis_percent).toBe(0.1);
   await page.reload();
   await summaryTab.click();
   await expect(nmg).toHaveValue("70");
@@ -162,13 +164,18 @@ test("bid percentages save per proposal and reload on both premium bases", async
   const metrics = page.locator("section").filter({ has: page.getByRole("heading", { name: "Metric", exact: true }) }).last();
   await expect(metrics.getByText("$78,750", { exact: true })).toBeVisible();
   await expect(metrics.getByText("$90,563", { exact: true })).toBeVisible();
-  await expect(commission).toHaveValue("0");
+  await expect(commission).toHaveValue("10");
+  await expect(metrics.getByText("$12,938", { exact: true })).toBeVisible();
   await expect(page.getByText("Clients Potential Take", { exact: true })).toBeVisible();
   if (process.env.PV_QA_SCREENSHOTS) {
     await cash.evaluate(input => input.scrollIntoView({ block: "center" }));
     await page.screenshot({ path: `${process.env.PV_QA_SCREENSHOTS}/terms-${testInfo.project.name}.png` });
   }
   await page.getByLabel("Buyer premium basis").selectOption("capped");
+  await expect(metrics.getByText("$12,938", { exact: true })).toBeVisible();
+  await commission.fill("5");
+  await expect.poll(() => persisted.assetScheduleSheet.file_summary.commission_basis_percent).toBe(0.05);
+  await expect(metrics.getByText("$6,469", { exact: true })).toBeVisible();
   await expect(nmg).toHaveValue("100");
   await expect(cash).toHaveValue("100");
   await cash.fill("65");

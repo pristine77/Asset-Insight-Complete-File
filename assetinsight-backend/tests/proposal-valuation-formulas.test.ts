@@ -58,7 +58,7 @@ describe("canonical Proposal Valuation formulas", () => {
       lots: [{ lot_id: "lot-1", lot_number: "1" }],
       preview_data: {},
     } as any);
-    expect(fresh.file_summary).toMatchObject({ auction_nmg_percent: 0.785, cash_purchase_percent: 0.9 });
+    expect(fresh.file_summary).toMatchObject({ auction_nmg_percent: 0.785, cash_purchase_percent: 0.9, commission_basis_percent: 0.1 });
     expect(fresh.evaluator_columns).toEqual([]);
     expect(fresh.rows[0].evaluator_values).toEqual({});
 
@@ -111,10 +111,29 @@ describe("canonical Proposal Valuation formulas", () => {
     });
     expect(summary.selected_nmg).toBeCloseTo(632.5 * 0.785, 12);
     expect(summary.selected_cash_purchase_price).toBeCloseTo(632.5 * 0.9, 12);
-    expect(summary.selected_commission_basis_value).toBeCloseTo(
-      632.5 - 596.5 / 1.15,
-      12
-    );
+    expect(summary.selected_commission_basis_value).toBe(63.25);
+  });
+
+  it.each(["capped", "uncapped"])("charges commission on the full Get in the %s scenario", basis => {
+    const sheet = calculateAssetAdminScheduleSheet({
+      evaluator_columns: [{ id: "owner" }],
+      rows: [{ lot_id: "equipment", evaluator_values: { owner: 998_000 }, lien_search: 1_000 }],
+      file_summary: { buyers_premium_basis: basis, commission_basis_percent: 0.1 },
+    });
+    const summary = deriveAssetScheduleSummary(sheet);
+    expect(summary.total_capped_bp).toBe(2_000);
+    expect(summary.uncapped.get).toBe(1_000_000);
+    expect(summary.uncapped.get_after_costs).toBeLessThan(summary.uncapped.get);
+    expect(summary.selected_commission_basis_value).toBe(100_000);
+    expect(summary.uncapped.offer3_mcd_take).toBe(100_000);
+    const details = buildAssetScheduleCalculations(sheet, summary);
+    for (const key of ["selected_commission_basis_value", "uncapped.offer3_mcd_take"]) {
+      expect(details.find(item => item.key === key)).toMatchObject({
+        value: 100_000, inputs: { get: 1_000_000, commission_basis_percent: 0.1 },
+      });
+    }
+    sheet.file_summary.commission_basis_percent = 0.05;
+    expect(deriveAssetScheduleSummary(sheet).selected_commission_basis_value).toBe(50_000);
   });
 
   it("removes the actual capped premium once and changes only the chosen legacy offer", () => {

@@ -225,7 +225,7 @@ describe.sequential("collaborative Proposal Valuation API", () => {
     expect(capped.summary.selected_cash_purchase_price).toBe(750);
     expect(capped.summary.selected_commission_basis_value).toBe(0);
     const separate = await request(app).get(`/api/asset/${other._id}/proposal-valuation`).set(headers);
-    expect(separate.body.assetScheduleSheet.file_summary).toMatchObject({ auction_nmg_percent: null, cash_purchase_percent: null, offer2_nmg_percent: 0.785, commission_basis_percent: 1 });
+    expect(separate.body.assetScheduleSheet.file_summary).toMatchObject({ auction_nmg_percent: null, cash_purchase_percent: null, offer2_nmg_percent: 0.785, commission_basis_percent: 0.1 });
   });
 
   it("projects average-based premiums without read writes and recalculates owner/admin saves and exports", async () => {
@@ -243,7 +243,7 @@ describe.sequential("collaborative Proposal Valuation API", () => {
     const before = await AssetReport.findById(report._id).lean();
     const loaded = await request(app).get(`/api/asset/${report._id}/proposal-valuation`).set(authHeaders(String(owner._id)));
     expect(loaded.status).toBe(200);
-    expect(loaded.body.calculationVersion).toBe("asset-pv-v3-proposal-percentages");
+    expect(loaded.body.calculationVersion).toBe("asset-pv-v4-get-commission");
     expect(loaded.body.assetScheduleSheet.rows[0]).toMatchObject({
       buyer_premium_amount: 300, total_expected_gross: 2300, allocated_value: 2300,
       low_est_sale_value: 1000, high_est_sale_value: 3000, cleaning: 30,

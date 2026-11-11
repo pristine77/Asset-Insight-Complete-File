@@ -146,9 +146,9 @@ function ratio(value: unknown, fallback: number) {
 function normalizeFileValue(field: FileSummaryField, value: unknown): CellValue {
   if (field === "buyers_premium_basis") return value === "capped" ? "capped" : "uncapped";
   if (field === "offer2_nmg_percent") return ratio(value, 0.785);
-  if (field === "capped_threshold_percent") return ratio(value, 0.1);
+  if (field === "capped_threshold_percent" || field === "commission_basis_percent") return ratio(value, 0.1);
   if (field === "cash_purchase_percent" || field === "auction_nmg_percent") return numberOrNull(value);
-  if (field === "capped_cash_purchase_percent" || field === "capped_nmg_percent" || field === "commission_basis_percent") return ratio(value, 1);
+  if (field === "capped_cash_purchase_percent" || field === "capped_nmg_percent") return ratio(value, 1);
   return numberOrNull(value);
 }
 

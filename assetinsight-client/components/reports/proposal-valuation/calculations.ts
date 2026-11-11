@@ -159,7 +159,7 @@ export function recalculateProposalValuationSheet(
       cash_purchase_percent: sheet.file_summary?.cash_purchase_percent == null ? null : normalizeRatio(sheet.file_summary?.cash_purchase_percent, 0.9),
       capped_cash_purchase_percent: normalizeRatio(sheet.file_summary?.capped_cash_purchase_percent, 1),
       capped_nmg_percent: normalizeRatio(sheet.file_summary?.capped_nmg_percent, 1),
-      commission_basis_percent: normalizeRatio(sheet.file_summary?.commission_basis_percent, 1),
+      commission_basis_percent: normalizeRatio(sheet.file_summary?.commission_basis_percent, 0.1),
     },
   };
 }
@@ -243,8 +243,7 @@ export function deriveProposalValuationSummary(
   const cappedTotalCost = cappedAds + cappedSvr + cappedRefurb;
   const cappedNmg = (cappedAvg - cappedTotalCost - cappedThreshold) * sheet.file_summary.capped_nmg_percent;
   const cappedCashOffer = cappedAvg * sheet.file_summary.capped_cash_purchase_percent;
-  const uncappedCommission = uncappedBp15 * sheet.file_summary.commission_basis_percent;
-  const cappedCommission = totalCappedBp * sheet.file_summary.commission_basis_percent;
+  const commission = uncappedGet * sheet.file_summary.commission_basis_percent;
 
   return {
     row_appraiser_averages: rowAverages,
@@ -269,10 +268,7 @@ export function deriveProposalValuationSummary(
       sheet.file_summary.buyers_premium_basis === "capped"
         ? cappedCashOffer
         : uncappedOffer1CashOffer,
-    selected_commission_basis_value:
-      sheet.file_summary.buyers_premium_basis === "capped"
-        ? cappedCommission
-        : uncappedCommission,
+    selected_commission_basis_value: commission,
     uncapped: {
       get: uncappedGet,
       costs: uncappedCosts,
@@ -302,7 +298,7 @@ export function deriveProposalValuationSummary(
         uncappedMcdPotentialTake,
         uncappedOffer2TotalCosts
       ),
-      offer3_mcd_take: uncappedCommission,
+      offer3_mcd_take: commission,
     },
     capped: {
       avg: cappedAvg,
@@ -425,7 +421,7 @@ export function buildProposalValuationCalculations(
     calculation("overall_file_risk_rating", "Overall file risk rating", "Asset-value-weighted market risk score: Low < 1.67; Medium < 2.34; otherwise High", { weightedAverageRiskScore: summary.weighted_average_risk_score }, summary.overall_file_risk_rating),
     calculation("selected_nmg", "Selected NMG", sheet.file_summary.buyers_premium_basis === "capped" ? "(Capped average - capped costs - capped threshold) × capped NMG %" : nmgFormula, { basis: sheet.file_summary.buyers_premium_basis, ...base, cappedNmgPercent: sheet.file_summary.capped_nmg_percent, offer2Percent, cappedPercent }, summary.selected_nmg),
     calculation("selected_cash_purchase_price", "Cash purchase price", sheet.file_summary.buyers_premium_basis === "capped" ? "Total asset value × capped cash purchase %" : cashFormula, { cashPurchasePercent: sheet.file_summary.buyers_premium_basis === "capped" ? sheet.file_summary.capped_cash_purchase_percent : sheet.file_summary.cash_purchase_percent ?? 0.9, basis: sheet.file_summary.buyers_premium_basis, ...base }, summary.selected_cash_purchase_price),
-    calculation("selected_commission_basis_value", "Commission basis value", sheet.file_summary.buyers_premium_basis === "capped" ? "Total capped buyer premium × commission basis %" : "(Uncapped Get - Adjusted Get) × commission basis %", { commissionBasisPercent: sheet.file_summary.commission_basis_percent, basis: sheet.file_summary.buyers_premium_basis, ...base, adjustedGet: summary.uncapped.adjusted_get }, summary.selected_commission_basis_value),
+    calculation("selected_commission_basis_value", "Commission basis value", "Get Total × commission %", { get: summary.uncapped.get, commissionBasisPercent: sheet.file_summary.commission_basis_percent }, summary.selected_commission_basis_value),
     calculation("uncapped.get", "Get", "Total asset value + capped buyer premium", base, summary.uncapped.get),
     calculation("uncapped.costs", "Costs", "Total projected costs", { projectedCosts: summary.total_projected_costs }, summary.uncapped.costs),
     calculation("uncapped.get_after_costs", "Get after costs", "Get - projected costs", { get: summary.uncapped.get, projectedCosts: summary.total_projected_costs }, summary.uncapped.get_after_costs),
@@ -451,7 +447,7 @@ export function buildProposalValuationCalculations(
     calculation("uncapped.aquajets_potential_take", "Clients Potential Take", "NMG + (Adjusted Potential Get - Upper Value) × 98%", { nmg: summary.uncapped.offer2_nmg, adjustedPotentialGet: summary.uncapped.adjusted_potential_get, upperValue: summary.uncapped.offer2_upper_value }, summary.uncapped.aquajets_potential_take),
     calculation("uncapped.mcd_potential_take", "McD potential take", "Potential B.P. - costs + threshold + potential overage × 2%", { potentialBuyerPremium: summary.uncapped.potential_bp_15, projectedCosts: summary.total_projected_costs, threshold: summary.uncapped.offer2_threshold, adjustedPotentialGet: summary.uncapped.adjusted_potential_get, upperValue: summary.uncapped.offer2_upper_value }, summary.uncapped.mcd_potential_take),
     calculation("uncapped.potential_roi", "Potential ROI", "McD potential take ÷ Offer #2 total costs", { mcdPotentialTake: summary.uncapped.mcd_potential_take, totalCosts: summary.uncapped.offer2_total_costs }, summary.uncapped.potential_roi),
-    calculation("uncapped.offer3_mcd_take", "Offer #3 commission", "Uncapped buyer premium × commission basis %", { commissionBasisPercent: sheet.file_summary.commission_basis_percent, buyerPremium15: summary.uncapped.bp_15 }, summary.uncapped.offer3_mcd_take),
+    calculation("uncapped.offer3_mcd_take", "Offer #3 commission", "Get Total × commission %", { get: summary.uncapped.get, commissionBasisPercent: sheet.file_summary.commission_basis_percent }, summary.uncapped.offer3_mcd_take),
     calculation("capped.avg", "Capped average", "Total asset value", { totalAssetValue: summary.total_asset_value }, summary.capped.avg),
     calculation("capped.high", "Capped high", "Total high estimated value", { totalHighEstimate: summary.total_high_est_value }, summary.capped.high),
     calculation("capped.low", "Capped low", "Total low estimated value", { totalLowEstimate: summary.total_low_est_value }, summary.capped.low),

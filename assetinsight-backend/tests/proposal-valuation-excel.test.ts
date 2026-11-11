@@ -155,10 +155,12 @@ describe("Proposal Valuation Excel workbook", () => {
       expect(sheet.getCell("D36").formula).toBe("$D$7*$B$14");
       expect(sheet.getCell("D36").result).toBe(88_000);
       expect(sheet.getCell("D31").result).toBe(77_000);
-      expect(sheet.getCell("D48").formula).toBe("D27*$H$14");
+      expect(sheet.getCell("D48").formula).toBe("D23*$H$14");
+      expect(sheet.getCell("D48").result).toBe(56_000);
       expect(sheet.getCell("H32").formula).toBe("(H23-H31-H33)*$B$15");
       expect(sheet.getCell("F13").formula).toContain("H23*$D$15");
-      expect(sheet.getCell("H13").formula).toContain("H26*$H$14,D48");
+      expect(sheet.getCell("H13").formula).toBe("D48");
+      expect(sheet.getCell("H13").result).toBe(56_000);
       for (const [address, value] of [["D13", data.summary.selected_nmg], ["F13", data.summary.selected_cash_purchase_price], ["H13", data.summary.selected_commission_basis_value]] as const) {
         expect(sheet.getCell(address).result).toBeCloseTo(value);
       }

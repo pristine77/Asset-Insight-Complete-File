@@ -1979,7 +1979,9 @@ export default function AssetScheduleSheet({
           </Box>
         )}
       </Box>
-    ), formula, { basis: sheet.file_summary.buyers_premium_basis, [rate]: sheet.file_summary[rate] });
+    ), formula, rate === "commission_basis_percent"
+      ? { get: derivedSummary.uncapped.get, [rate]: sheet.file_summary[rate] }
+      : { basis: sheet.file_summary.buyers_premium_basis, [rate]: sheet.file_summary[rate] });
 
     return [
       {
@@ -2056,7 +2058,7 @@ export default function AssetScheduleSheet({
       offerRow("selected_cash_purchase_price", "Cash Purchase Price", capped ? "capped_cash_purchase_percent" : "cash_purchase_percent",
         capped ? "Average × capped cash purchase %" : cashFormula),
       offerRow("selected_commission_basis_value", "Commission Basis Value", "commission_basis_percent",
-        capped ? "Capped buyer premium × commission basis %" : "(Get - adjusted Get) × commission basis %"),
+        "Get Total × commission %"),
       calculated("total_projected_costs", "Total Projected Costs", derivedSummary.total_projected_costs, formatCurrencyCell(derivedSummary.total_projected_costs) || "-", "Cleaning + lien search + video + lotting + advertising across all assets", { asset_count: sheet.rows.length }),
       {
         key: "commission_percent_no_guarantee",
@@ -2145,7 +2147,7 @@ export default function AssetScheduleSheet({
       calculated("aquajets_potential_take", "Clients Potential Take", u.aquajets_potential_take, "NMG + 98% of adjusted potential value above the upper value", { offer2_nmg: u.offer2_nmg, adjusted_potential_get: u.adjusted_potential_get, offer2_upper_value: u.offer2_upper_value }),
       calculated("mcd_potential_take", "McD Potential Take", u.mcd_potential_take, "Potential buyer premium - costs + threshold + 2% of potential overage", { potential_bp_15: u.potential_bp_15, costs: u.costs, offer2_threshold: u.offer2_threshold, adjusted_potential_get: u.adjusted_potential_get, offer2_upper_value: u.offer2_upper_value }),
       calculated("potential_roi", "Potential ROI", u.potential_roi, "McD potential take / Offer #2 total costs", { mcd_potential_take: u.mcd_potential_take, offer2_total_costs: u.offer2_total_costs }, true),
-      calculated("offer3_mcd_take", "Offer #3 Commission", u.offer3_mcd_take, "Uncapped buyer premium × commission basis %", { commission_basis_percent: sheet.file_summary.commission_basis_percent, bp_15: u.bp_15 }),
+      calculated("offer3_mcd_take", "Offer #3 Commission", u.offer3_mcd_take, "Get Total × commission %", { get: u.get, commission_basis_percent: sheet.file_summary.commission_basis_percent }),
     ];
   }, [derivedSummary, serverCalculations, sheet]);
 
