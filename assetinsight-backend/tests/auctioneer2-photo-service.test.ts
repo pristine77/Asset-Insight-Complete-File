@@ -9,8 +9,20 @@ const r2Storage = vi.hoisted(() => ({
 
 vi.mock("../src/utils/r2Storage/r2Upload.js", () => r2Storage);
 
-import { loadAuctioneerPhoto } from "../src/service/auctioneer2PhotoService.js";
+import { loadAuctioneerPhoto, sniffAuctioneerImageType } from "../src/service/auctioneer2PhotoService.js";
 import { AuctioneerDeliveryError } from "../src/service/auctioneer2DeliveryError.js";
+
+describe("reading a photo's type from its bytes, as Auctioneer 2.0 does", () => {
+  it("knows the five types Auctioneer takes, and nothing else", () => {
+    expect(sniffAuctioneerImageType(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+    expect(sniffAuctioneerImageType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe("image/png");
+    expect(sniffAuctioneerImageType(Buffer.from("GIF89a", "ascii"))).toBe("image/gif");
+    expect(sniffAuctioneerImageType(Buffer.from("RIFF\0\0\0\0WEBP", "binary"))).toBe("image/webp");
+    expect(sniffAuctioneerImageType(Buffer.from("\0\0\0\x1cftypavif", "binary"))).toBe("image/avif");
+    expect(sniffAuctioneerImageType(Buffer.from("\0\0\0\x18ftypheic", "binary"))).toBeNull();
+    expect(sniffAuctioneerImageType(Buffer.from("II*\0", "binary"))).toBeNull();
+  });
+});
 
 describe("Auctioneer 2.0 photo preparation", () => {
   it.each([
@@ -143,34 +155,80 @@ describe("Auctioneer 2.0 photo preparation", () => {
     expect(r2Storage.readR2ObjectBuffer).not.toHaveBeenCalled();
   });
 
-  it("transcodes an unsupported HEIC-declared image to JPEG with a .jpg name", async () => {
+  /*
+     Owner, 2026-11-19 (contract 825853): Auctioneer 2.0 judges a photo by its
+     bytes and refused one sent under its storage label, stopping the delivery
+     as "status 400". The label sent now always comes from the bytes. (This
+     test used to expect PNG bytes stored as HEIC to be re-encoded as JPEG; the
+     bytes are a PNG Auctioneer takes, so they now go as that PNG.)
+  */
+  it("labels a photo by its bytes, not its storage label: PNG bytes stored as HEIC go as PNG", async () => {
     const sourceUrl =
       "https://media.asset-insight.example/uploads/asset/camera.heic";
-    const objectKey = "uploads/asset/camera.heic";
-    // A decodable image body isolates the outbound-format policy from HEIC codec
-    // availability: the unsupported declared type must still take the JPEG path.
     const sourceBytes = await sharp({
-      create: {
-        width: 3,
-        height: 2,
-        channels: 3,
-        background: { r: 180, g: 90, b: 30 },
-      },
+      create: { width: 3, height: 2, channels: 3, background: { r: 180, g: 90, b: 30 } },
     })
       .png()
       .toBuffer();
-    r2Storage.headR2Object.mockResolvedValue({
-      size: sourceBytes.length,
-      contentType: "image/heic",
-    });
+    r2Storage.headR2Object.mockResolvedValue({ size: sourceBytes.length, contentType: "image/heic" });
     r2Storage.readR2ObjectBuffer.mockResolvedValue(sourceBytes);
 
     const photo = await loadAuctioneerPhoto(sourceUrl, 0, 0);
-    const outputMetadata = await sharp(photo.buffer).metadata();
+
+    expect(photo.contentType).toBe("image/png");
+    expect(photo.filename).toBe("lot-001-photo-001.png");
+    expect(photo.buffer.equals(sourceBytes)).toBe(true);
+  });
+
+  it("sends JPEG bytes stored under a PNG label as JPEG, the mismatch Auctioneer refused", async () => {
+    const sourceUrl = "https://media.asset-insight.example/uploads/asset/front.png";
+    const jpeg = await sharp({
+      create: { width: 4, height: 3, channels: 3, background: { r: 10, g: 120, b: 200 } },
+    })
+      .jpeg()
+      .toBuffer();
+    r2Storage.headR2Object.mockResolvedValue({ size: jpeg.length, contentType: "image/png" });
+    r2Storage.readR2ObjectBuffer.mockResolvedValue(jpeg);
+
+    const photo = await loadAuctioneerPhoto(sourceUrl, 0, 4);
+
+    expect(photo.contentType).toBe("image/jpeg");
+    expect(photo.filename).toBe("lot-001-photo-005.jpg");
+    expect(photo.buffer.equals(jpeg)).toBe(true);
+  });
+
+  it("converts a format Auctioneer does not take (TIFF) to JPEG, whatever its label", async () => {
+    const sourceUrl = "https://media.asset-insight.example/uploads/asset/scan.jpg";
+    const tiff = await sharp({
+      create: { width: 3, height: 3, channels: 3, background: { r: 200, g: 200, b: 10 } },
+    })
+      .tiff()
+      .toBuffer();
+    r2Storage.headR2Object.mockResolvedValue({ size: tiff.length, contentType: "image/jpeg" });
+    r2Storage.readR2ObjectBuffer.mockResolvedValue(tiff);
+
+    const photo = await loadAuctioneerPhoto(sourceUrl, 0, 0);
 
     expect(photo.contentType).toBe("image/jpeg");
     expect(photo.filename).toBe("lot-001-photo-001.jpg");
-    expect(photo.buffer.equals(sourceBytes)).toBe(false);
-    expect(outputMetadata.format).toBe("jpeg");
+    expect((await sharp(photo.buffer).metadata()).format).toBe("jpeg");
+  });
+
+  it("names the photo and its format when it cannot be converted either", async () => {
+    const sourceUrl = "https://media.asset-insight.example/uploads/asset/iphone.jpg";
+    // An iPhone HEIC header with no decodable picture behind it.
+    const heic = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x18]),
+      Buffer.from("ftypheic", "ascii"),
+      Buffer.alloc(64, 7),
+    ]);
+    r2Storage.headR2Object.mockResolvedValue({ size: heic.length, contentType: "image/jpeg" });
+    r2Storage.readR2ObjectBuffer.mockResolvedValue(heic);
+
+    const error = await loadAuctioneerPhoto(sourceUrl, 0, 2).catch(value => value);
+
+    expect(error).toBeInstanceOf(AuctioneerDeliveryError);
+    expect(error.message).toContain("A report photo (photo 3) is a HEIC (iPhone) file");
+    expect(error.message).toContain("Replace that photo in the report");
   });
 });

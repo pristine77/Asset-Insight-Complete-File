@@ -86,38 +86,101 @@ function normalizeContentType(contentType: string): string {
   return normalized === "image/jpg" ? "image/jpeg" : normalized;
 }
 
+/**
+ * The image type the BYTES are, read from their first bytes exactly as
+ * Auctioneer 2.0 reads them (its server/imageBytes.ts sniffImageContentType),
+ * or null for anything Auctioneer does not take (HEIC, TIFF, BMP, …).
+ *
+ * WHY (owner, 2026-11-19, contract 825853): a photo was sent labelled with the
+ * type its storage claimed, and Auctioneer, which judges the bytes, refused
+ * it ("Photo bytes are … but were declared as …" or "not a supported image").
+ * The whole delivery stopped at the photos as "status 400". The label sent now
+ * always comes from the bytes, so the two systems cannot disagree about it.
+ */
+export function sniffAuctioneerImageType(bytes: Buffer): string | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (
+    bytes.length >= 8 &&
+    bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) {
+    return "image/png";
+  }
+  if (bytes.length >= 6 && /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+    bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = bytes.subarray(8, 12).toString("ascii").toLowerCase();
+    if (brand.includes("avif") || brand.includes("avis")) return "image/avif";
+  }
+  return null;
+}
+
+/** What a photo Auctioneer cannot take is, in words, for the message that names it. */
+function describeImageBytes(bytes: Buffer, label: string): string {
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = bytes.subarray(8, 12).toString("ascii").toLowerCase();
+    if (/^(heic|heix|hevc|hevx|mif1|msf1)$/.test(brand)) return "HEIC (iPhone)";
+  }
+  if (bytes.length >= 4) {
+    const head = bytes.subarray(0, 4).toString("binary");
+    if (head === "II*\u0000" || head === "MM\u0000*") return "TIFF";
+    if (head.startsWith("BM")) return "BMP";
+  }
+  const declared = normalizeContentType(label);
+  return declared && declared !== "image/jpeg" ? declared : "unrecognised image";
+}
+
 async function prepareAuctioneerImage(
   input: Buffer,
-  sourceContentType: string
+  sourceContentType: string,
+  photoNumber = 1
 ): Promise<{ buffer: Buffer; contentType: string; transformed: boolean }> {
-  const normalizedContentType = normalizeContentType(sourceContentType);
+  // Sent as-is only when the bytes are a type Auctioneer takes, labelled by
+  // the bytes; the storage label is never trusted (see sniffAuctioneerImageType).
+  const actualContentType = sniffAuctioneerImageType(input);
   if (
     input.length <= MAX_AUCTIONEER_PHOTO_BYTES &&
-    AUCTIONEER_ACCEPTED_IMAGE_TYPES.has(normalizedContentType)
+    actualContentType &&
+    AUCTIONEER_ACCEPTED_IMAGE_TYPES.has(actualContentType)
   ) {
     return {
       buffer: input,
-      contentType: normalizedContentType,
+      contentType: actualContentType,
       transformed: false,
     };
   }
 
+  // Anything else (a type Auctioneer does not take, or too large) goes as JPEG.
   const attempts = [
     { width: 6000, quality: 84 },
     { width: 4500, quality: 76 },
     { width: 3200, quality: 68 },
   ];
   for (const attempt of attempts) {
-    const output = await sharp(input)
-      .rotate()
-      .resize({
-        width: attempt.width,
-        height: attempt.width,
-        fit: "inside",
-        withoutEnlargement: true,
-      })
-      .jpeg({ quality: attempt.quality, mozjpeg: true })
-      .toBuffer();
+    let output: Buffer;
+    try {
+      output = await sharp(input)
+        .rotate()
+        .resize({
+          width: attempt.width,
+          height: attempt.width,
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .jpeg({ quality: attempt.quality, mozjpeg: true })
+        .toBuffer();
+    } catch {
+      // The converter cannot read it either (an iPhone HEIC, a damaged file):
+      // say which photo and what it is, so it can be replaced.
+      throw new AuctioneerDeliveryError(
+        `A report photo (photo ${photoNumber}) is a ${describeImageBytes(input, sourceContentType)} file that Auctioneer 2.0 cannot take, and it could not be converted to JPEG. Replace that photo in the report with a JPEG or PNG, then retry the delivery.`
+      );
+    }
     if (output.length <= MAX_AUCTIONEER_PHOTO_BYTES) {
       return {
         buffer: output,
@@ -184,7 +247,8 @@ export async function loadAuctioneerPhoto(
       : await readCloudinaryPhoto(sourceUrl);
   const prepared = await prepareAuctioneerImage(
     loaded.buffer,
-    loaded.contentType
+    loaded.contentType,
+    photoIndex + 1
   );
   // The transmitted filename must describe the bytes we actually send. Source
   // URLs can carry stale or misleading extensions (for example AVIF at .jpg),

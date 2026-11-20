@@ -182,6 +182,42 @@ describe("Auctioneer 2.0 client", () => {
     expect(error.message).not.toContain("test-secret");
   });
 
+  /*
+     Owner, 2026-11-19 (contract 825853): Auctioneer refused a Toyota Tundra
+     photo and the screen said only "rejected the request with status 400".
+     Its own fixed sentences now reach the screen; anything else stays private.
+  */
+  it.each([
+    "Photo bytes are image/png but were declared as image/jpeg",
+    "Photo data is not a supported image (JPEG, PNG, WebP, GIF, or AVIF)",
+    "Photo exceeds the 20 MB maximum",
+  ])("shows Auctioneer's photo refusal: %s", async sentence => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: sentence }), { status: 400 })));
+    const photo = { buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), filename: "lot-001-photo-001.jpg", contentType: "image/jpeg", order: 0 };
+    const error = await uploadLotPhotos("lot-guid", [photo]).catch(value => value);
+    expect(error).toBeInstanceOf(Auctioneer2ClientError);
+    expect(error).toMatchObject({ code: "AUCTIONEER_PHOTO_REJECTED", upstreamStatus: 400 });
+    expect(error.message).toContain(`Auctioneer 2.0 refused a photo: "${sentence}"`);
+  });
+
+  it.each([
+    ["eventId is required", "EVENT_REQUIRED", "has no auction event"],
+    ["Contract 825853 has no customer assigned", "CONTRACT_NO_CUSTOMER", "has no customer"],
+    ["A selected service is no longer active in the revenue contract catalog.", "SERVICE_INACTIVE", "switched off"],
+  ])("explains Auctioneer's lot refusal %s", async (sentence, code, words) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: sentence }), { status: 400 })));
+    const error = await completeConditionReport("row-guid", { lotNumber: "12" }).catch(value => value);
+    expect(error).toMatchObject({ code, upstreamStatus: 400 });
+    expect(error.message).toContain(words);
+  });
+
+  it("keeps an unrecognised 400 private, as before", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "SELECT * FROM secret_table failed at 127.0.0.1" }), { status: 400 })));
+    const error = await completeConditionReport("row-guid", { lotNumber: "12" }).catch(value => value);
+    expect(error.message).toBe("Auctioneer 2.0 rejected the request with status 400.");
+    expect(error.message).not.toContain("secret_table");
+  });
+
   it.each(["not json", JSON.stringify({ code: "OTHER_CONFLICT" })])("keeps unrecognized HTTP 409 responses generic: %s", async body => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status: 409 })));
     await expect(completeConditionReport("row-guid", { lotNumber: "12" })).rejects.toMatchObject({

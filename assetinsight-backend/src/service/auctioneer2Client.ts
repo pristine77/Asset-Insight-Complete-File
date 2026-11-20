@@ -316,6 +316,84 @@ function safeUpstreamValidation(
       { statusCode: 400, code: "EVENT_CLOSED", upstreamStatus: status }
     );
   }
+
+  if (status === 400) {
+    const refusal = knownAuctioneerRefusal(messages);
+    if (refusal) {
+      return new Auctioneer2ClientError(refusal.text, { statusCode: 400, code: refusal.code, upstreamStatus: status });
+    }
+  }
+  return undefined;
+}
+
+/*
+   AUCTIONEER 2.0'S OTHER REFUSALS DURING A DELIVERY (owner, 2026-11-19).
+   Contract 825853's Toyota Tundra failed as "Auctioneer 2.0 rejected the
+   request with status 400": Auctioneer had refused one of its photos and said
+   why, but no sentence here matched, so the reason never reached the screen
+   and nobody could tell what to fix. These are Auctioneer's own fixed
+   sentences (its server/assetInsightImages.ts photo checks and the lot,
+   condition-report and services checks in server/externalApi.ts). They carry
+   no customer data, so the sentence itself is shown, matched against these
+   exact shapes only; anything else still stays private.
+*/
+const AUCTIONEER_PHOTO_REFUSALS: readonly RegExp[] = [
+  /^Photo data is not a supported image \(JPEG, PNG, WebP, GIF, or AVIF\)$/,
+  /^Photo bytes are image\/[a-z0-9.+-]{1,24} but were declared as [a-z0-9./+-]{1,48}$/,
+  /^Photo exceeds the \d{1,3} MB maximum$/,
+  /^Photo checksum verification failed$/,
+  /^Photo data decoded to an empty image$/,
+  /^Photo data must be valid Base64 image data$/,
+  /^A maximum of \d{1,3} Base64 photos may be sent per request$/,
+  /^Combined Base64 photo data exceeds the \d{1,4} MB request limit$/,
+  /^No photos supplied$/,
+];
+
+const AUCTIONEER_LOT_REFUSALS: ReadonlyArray<{ pattern: RegExp; code: string; text: string }> = [
+  {
+    pattern: /^eventId is required$/,
+    code: "EVENT_REQUIRED",
+    text: "EVENT_REQUIRED: This contract has no auction event in Auctioneer 2.0. Ask the office to give the contract its sale (an Upcoming Sale Date), then retry.",
+  },
+  {
+    pattern: /^Contract [A-Za-z0-9-]{1,30} has no customer assigned$/,
+    code: "CONTRACT_NO_CUSTOMER",
+    text: "CONTRACT_NO_CUSTOMER: This contract has no customer in Auctioneer 2.0. Ask the office to set its customer, then retry.",
+  },
+  {
+    pattern: /^description is required$/,
+    code: "DESCRIPTION_REQUIRED",
+    text: "DESCRIPTION_REQUIRED: Auctioneer 2.0 needs a description for this lot. Add one to the lot in the report, then retry.",
+  },
+  {
+    pattern: /^A selected service is no longer active in the revenue contract catalog\.$/,
+    code: "SERVICE_INACTIVE",
+    text: "SERVICE_INACTIVE: One of the lot's services has been switched off in Auctioneer 2.0. Remove it from the lot's services, or ask the office to switch it back on, then retry.",
+  },
+  {
+    pattern: /^(Each selected service must [^\r\n]{1,120}|A lot cannot have more than \d{1,4} selected services\.|selectedServices must be an array\.)$/,
+    code: "SERVICES_REJECTED",
+    text: "SERVICES_REJECTED: Auctioneer 2.0 did not accept the lot's services list. Review the lot's services, then retry.",
+  },
+  {
+    pattern: /^childCategory must be \d{1,4} characters or fewer\.$/,
+    code: "CATEGORY_REJECTED",
+    text: "CATEGORY_REJECTED: Auctioneer 2.0 did not accept the lot's category name. Choose the category again, then retry.",
+  },
+];
+
+/** The screen's explanation of a known Auctioneer 400, or undefined. */
+export function knownAuctioneerRefusal(messages: readonly string[]): { code: string; text: string } | undefined {
+  const photo = messages.find(message => AUCTIONEER_PHOTO_REFUSALS.some(pattern => pattern.test(message)));
+  if (photo) {
+    return {
+      code: "AUCTIONEER_PHOTO_REJECTED",
+      text: `AUCTIONEER_PHOTO_REJECTED: Auctioneer 2.0 refused a photo: "${photo}". Retry the delivery; Asset Insight now checks each photo's real format and converts it when needed. If it fails again, replace that photo in the report.`,
+    };
+  }
+  for (const refusal of AUCTIONEER_LOT_REFUSALS) {
+    if (messages.some(message => refusal.pattern.test(message))) return { code: refusal.code, text: refusal.text };
+  }
   return undefined;
 }
 
