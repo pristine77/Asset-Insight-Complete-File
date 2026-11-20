@@ -14,7 +14,7 @@
       "distribution": "internal"
     },
     "production": {
-      "resourceClass": "large",
+      "resourceClass": "medium",
       "autoIncrement": true,
       "environment": "production",
       "developmentClient": false,
