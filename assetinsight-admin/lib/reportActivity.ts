@@ -1,4 +1,7 @@
 export const ACTIVITY_LABELS: Record<string, string> = {
+  draft_upload_started: "Draft upload started", draft_upload_resumed: "Draft upload resumed",
+  draft_upload_progress: "Draft upload progress", draft_upload_interrupted: "Draft upload interrupted",
+  draft_upload_finished: "Draft upload finished",
   upload_queued: "Background upload queued", upload_paused: "Upload paused", upload_resumed: "Upload resumed", upload_interrupted: "Upload interrupted", upload_failed: "Upload needs attention",
   backup_started: "Backup started", backup_paused: "Backup paused", backup_resumed: "Backup resumed", backup_interrupted: "Backup interrupted", backup_completed: "Backup completed",
   history_started: "History recording started", photo_captured: "Photo taken", photos_imported: "Photos imported", lot_added: "Lot added", next_lot: "Next lot", photos_removed: "Photos removed", lot_removed: "Lot removed", photos_reordered: "Photo order changed", lots_reordered: "Lot order changed", cover_changed: "Cover changed", logo_changed: "Upload logo changed", draft_opened: "Draft opened for review", draft_saved: "Draft saved", preview_saved: "Preview saved", upload_started: "Upload started", upload_progress: "Upload progress", upload_accepted: "Upload accepted", submission_requested: "Submit requested", preview_submitted: "Preview submitted", retry_requested: "Retry requested", cancelled: "Stopped", preview_ready: "Preview ready", generation_started: "Processing accepted", generation_completed: "Files generated", generation_failed: "Processing failed", reassigned: "Reassigned", approved: "Approved", declined: "Declined", released: "Released", auction_delivery: "Auction delivery", report_deleted: "Report deleted", draft_deleted: "Draft deleted", preview_deleted: "Preview deleted", fields_changed: "Details changed", capture_mode_changed: "Capture mode changed",
@@ -10,14 +13,46 @@ export type ActivityBackupReason = "user_pause" | "draft_deleted" | "network_una
 export type ActivityBackupData = { backupPlanId?: string; backupRevision?: number; backupReason?: ActivityBackupReason | null; backupCounts?: ActivityBackupCounts | null; backupCountAuthority?: "server_verified" };
 export type ActivityUploadReason = "user_pause" | "system_stop" | "network_unavailable" | "authentication_required" | "unknown";
 export type ActivityUploadData = { uploadSessionId?: string; uploadReason?: ActivityUploadReason | null; uploadCounts?: { totalFiles: number; verifiedFiles: number } | null; uploadCountAuthority?: "server_verified" };
+const DRAFT_UPLOAD_REASONS = {
+  offline_mode: "The app was in offline mode.",
+  connection_lost: "The device lost its network connection.",
+  transport_error: "The transfer request failed before a response arrived.",
+  no_progress: "The transfer timed out waiting for progress.",
+  server_error: "The server returned an error.",
+  rate_limited: "The server asked the app to wait before retrying.",
+  authentication_required: "The account needs to sign in again.",
+  access_denied: "The server denied access to this draft.",
+  request_conflict: "The server reported a conflict with the saved draft.",
+  request_rejected: "The server rejected the request.",
+  original_unavailable: "The app could not access an original file on the device.",
+  receipts_incomplete: "The app did not receive verification for every file.",
+  invalid_manifest: "The draft file list could not be verified.",
+  no_completion_record: "The app reopened with an unfinished transfer. The cause was not recorded.",
+  unknown: "The cause was not recorded.",
+};
+type DraftUploadReason = keyof typeof DRAFT_UPLOAD_REASONS;
+type DraftUploadCounts = { verified: number; total: number };
+type DraftUploadData = { draftUploadReason?: DraftUploadReason | null; draftUploadCounts?: DraftUploadCounts | null };
+export const draftUploadReasonLabel = (reason?: DraftUploadReason | null) => DRAFT_UPLOAD_REASONS[reason || "unknown"];
+export const isDraftUploadActivity = (action: string) => action.startsWith("draft_upload_") && Object.hasOwn(ACTIVITY_LABELS, action);
+function validDraftUploadCounts(value: unknown): value is DraftUploadCounts {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const { verified, total } = value as DraftUploadCounts;
+  return Number.isSafeInteger(total) && Number.isSafeInteger(verified) && verified >= 0 && verified <= total;
+}
 export type ActivityRow = { lastReportedApp?: { appVersion: string; source: string; receivedAt: string } | null; id: string; activityId: string; owner: ActivityPerson; reportType: "asset" | "lotListing"; contract: string; source: string; latestAction?: string; latestOutcome?: string; latestCounts: ActivityCounts | null; lastReceivedAt: string; lastConfirmedAt?: string; revision: number; deleted: boolean; reportId: string | null };
-export type ActivityDetail = ActivityRow & { canViewValues: boolean; canOpenPreview: boolean; canRemove: boolean; reportExists: boolean; previewPath?: string | null };
+export type ActivityDetail = ActivityRow & { canViewValues: boolean; canOpenPreview: boolean; canRemove: boolean; reportExists: boolean; previewPath?: string | null; draftUploadCounts?: DraftUploadCounts | null };
 export type ActivityField = string | { field: string; before?: unknown; after?: unknown };
 export type ActivityLot = { id: string; lotNumber?: string; beforePosition?: number | null; afterPosition?: number | null; beforeCover?: number | null; afterCover?: number | null; before: { mainPhotos: number; extraPhotos: number; cover?: number | null } | null; after: { mainPhotos: number; extraPhotos: number; cover?: number | null } | null; photos?: { id: string; before: number | null; after: number | null; slot?: string }[] };
-export type ActivityEvent = { id: string; action: string; outcome: string; source: string; authority: "device" | "server"; actor: ActivityPerson | null; actorRole: string; observedAt: string | null; receivedAt: string; sequence: number | null; appVersion: string | null; data: ActivityBackupData & ActivityUploadData & { baseline?: boolean; error?: string | null; verifiedLogoReceipts?: number | null; deliveryStatus?: string | null; beforeCounts: ActivityCounts | null; afterCounts: ActivityCounts | null; fields?: ActivityField[]; lots?: ActivityLot[]; uploadLogo?: boolean | null; previousUploadLogo?: boolean | null; cameraStamp?: string; captureMode?: string; destination?: string | null; status?: string; part?: number; parts?: number } };
+export type ActivityEvent = { id: string; action: string; outcome: string; source: string; authority: "device" | "server"; actor: ActivityPerson | null; actorRole: string; observedAt: string | null; receivedAt: string; sequence: number | null; appVersion: string | null; data: ActivityBackupData & ActivityUploadData & DraftUploadData & { baseline?: boolean; error?: string | null; verifiedLogoReceipts?: number | null; deliveryStatus?: string | null; beforeCounts: ActivityCounts | null; afterCounts: ActivityCounts | null; fields?: ActivityField[]; lots?: ActivityLot[]; uploadLogo?: boolean | null; previousUploadLogo?: boolean | null; cameraStamp?: string; captureMode?: string; destination?: string | null; status?: string; part?: number; parts?: number } };
 export const isBackupActivity = (action: string) => ["backup_started", "backup_paused", "backup_resumed", "backup_interrupted", "backup_completed"].includes(action);
 export const isUploadTransferActivity = (action: string) => ["upload_queued", "upload_paused", "upload_resumed", "upload_interrupted", "upload_failed"].includes(action);
-export const activityOutcomeLabel = (action?: string, outcome?: string) => action && ((isBackupActivity(action) && action !== "backup_completed") || isUploadTransferActivity(action)) && outcome === "completed" ? "Recorded" : outcome;
+export function activityOutcomeLabel(action?: string, outcome?: string) {
+  if (!action) return outcome;
+  if (isDraftUploadActivity(action) && outcome === "requested") return "Recorded";
+  if (((isBackupActivity(action) && action !== "backup_completed") || isUploadTransferActivity(action)) && outcome === "completed") return "Recorded";
+  return outcome;
+}
 const UPLOAD_REASON_LABELS: Record<ActivityUploadReason, string> = {
   user_pause: "User selected Pause", system_stop: "Android stopped or deferred the transfer", network_unavailable: "Network unavailable", authentication_required: "Sign-in required", unknown: "Cause not recorded",
 };
@@ -103,6 +138,11 @@ function validateActivityItem(item: unknown) {
   } else {
     if (!["device", "server"].includes(row.authority) || typeof row.action !== "string" || typeof row.outcome !== "string" || !row.data) fail();
     counts(row.data.beforeCounts); counts(row.data.afterCounts);
+    if (row.data.draftUploadCounts != null && !validDraftUploadCounts(row.data.draftUploadCounts)) fail();
+    if (row.data.draftUploadReason != null &&
+        (typeof row.data.draftUploadReason !== "string" || !Object.hasOwn(DRAFT_UPLOAD_REASONS, row.data.draftUploadReason) || row.action !== "draft_upload_interrupted")) fail();
+    if (row.data.draftUploadCounts && (!isDraftUploadActivity(row.action) ||
+        (row.action === "draft_upload_finished" && row.data.draftUploadCounts.verified !== row.data.draftUploadCounts.total))) fail();
     if (row.data.uploadReason != null && !Object.hasOwn(UPLOAD_REASON_LABELS, row.data.uploadReason)) fail();
     if (row.data.uploadSessionId != null && (typeof row.data.uploadSessionId !== "string" || !/^[a-f\d]{24}$/i.test(row.data.uploadSessionId))) fail();
     if (row.data.uploadCountAuthority != null && row.data.uploadCountAuthority !== "server_verified") fail();
@@ -132,5 +172,6 @@ export function parseActivityDetail(value: unknown): ActivityDetail {
   const row = (value as { data?: ActivityDetail })?.data;
   if (!row || !activityIdValid(row.id) || ![row.canViewValues, row.canOpenPreview, row.canRemove, row.reportExists].every(flag => typeof flag === "boolean") ||
       (row.previewPath != null && row.previewPath !== "/preview-reports" && !/^\/reports\/[a-f\d]{24}\/data$/.test(row.previewPath))) throw new Error("Activity details could not be verified.");
+  if (row.draftUploadCounts != null && !validDraftUploadCounts(row.draftUploadCounts)) throw new Error("Draft upload counts could not be verified.");
   validateActivityItem(row); return row;
 }

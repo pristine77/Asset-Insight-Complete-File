@@ -1,3 +1,4 @@
+import type { DraftCloudSyncErrorKind } from './draftCloudSyncState';
 import { isArrivalPhotoDraft, type ArrivalPhotoDraftData } from './arrivalPhotoDraft';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -149,12 +150,7 @@ export interface AutoSaveData {
 
 export type OfflineDraftType = 'asset' | 'lotListing';
 
-export type DraftCloudSyncErrorKind =
-  | 'network'
-  | 'transient_server'
-  | 'auth'
-  | 'validation'
-  | 'unknown';
+export type { DraftCloudSyncErrorKind } from './draftCloudSyncState';
 
 export interface OfflineReportDraft extends OfflineCaptureMetadata {
   id: string;
@@ -218,18 +214,26 @@ const shouldDeleteManagedUri = (uri?: string | null) =>
         ImageEditService.isManagedEditedUri(uri))
   );
 
-const ensureUriExists = async (uri?: string | null) => {
+const ensureUriExists = async (uri?: string | null, expectedSize?: number) => {
   if (!uri) return false;
   if (/^https?:\/\//i.test(uri)) return true;
   try {
     const info = await LocalMediaStore.getFileInfo(uri);
-    return Boolean(info.exists);
+    return info.exists && info.size !== 0 && (!expectedSize || info.size === expectedSize);
   } catch {
     return false;
   }
 };
 
 const isRemoteMediaUri = (uri?: string | null) => Boolean(uri && /^https?:\/\//i.test(uri));
+
+const findSavedOriginal = async (uri: string, sourceUri?: string, size?: number) => {
+  if (await ensureUriExists(uri, size)) return uri;
+  if (sourceUri && sourceUri !== uri && !isRemoteMediaUri(sourceUri) && await ensureUriExists(sourceUri, size)) {
+    return sourceUri;
+  }
+  return null;
+};
 
 const copyToDirectory = async (
   sourceUri: string,
@@ -299,17 +303,16 @@ const normalizeSavedPhotoFile = async (
     }) as SavedPhotoFileData;
   }
 
-  const originalUri = photo.originalUri ?? photo.uri;
-  const originalExists = await ensureUriExists(originalUri);
+  const originalUri = await findSavedOriginal(photo.originalUri ?? photo.uri, photo.sourceUri, photo.size);
   const editedExists = await ensureUriExists(photo.editedUri);
-  const fallbackUri = originalExists ? originalUri : editedExists ? photo.editedUri : null;
+  const fallbackUri = originalUri ?? (editedExists ? photo.editedUri : null);
 
   if (!fallbackUri) return { ...photo, availability: 'missing', missing: true };
 
   return normalizePhotoFile({
     ...photo,
-    uri: originalExists ? originalUri : fallbackUri,
-    originalUri: originalExists ? originalUri : fallbackUri,
+    uri: fallbackUri,
+    originalUri: fallbackUri,
     editedUri: editedExists ? photo.editedUri : undefined,
     displayUri: editedExists ? photo.editedUri : fallbackUri,
     adjustments: normalizeImageAdjustments(photo.adjustments),
@@ -326,7 +329,9 @@ const normalizeSavedVideoFile = async (
     return { uri: video, name: fallbackName, type: 'video/mp4', availability: await ensureUriExists(video) ? 'available' : 'missing' };
   }
 
-  return { ...video, availability: await ensureUriExists(video.uri) ? 'available' : 'missing' };
+  const originalUri = await findSavedOriginal(video.uri, video.sourceUri, video.size);
+  if (!originalUri) return { ...video, availability: 'missing', missing: true };
+  return { ...video, uri: originalUri, availability: 'available', missing: false };
 };
 
 const persistPhotoFile = async (
@@ -368,9 +373,10 @@ const persistPhotoFile = async (
 
   if (
     existingPhoto &&
-    existingPhoto.sourceUri === originalUri &&
+    !existingPhoto.missing && existingPhoto.availability !== 'missing' &&
+    (existingPhoto.sourceUri === originalUri || existingPhoto.uri === originalUri) &&
     normalized.editedUri === existingPhoto.editedUri &&
-    (await ensureUriExists(existingPhoto.uri))
+    (await ensureUriExists(existingPhoto.uri, existingPhoto.size))
   ) {
     return normalizePhotoFile({
       ...existingPhoto,
@@ -385,12 +391,15 @@ const persistPhotoFile = async (
   }
 
   if (draftId) {
-    const imported = await LocalMediaStore.importMedia({
+    const sourceUri = existingPhoto?.uri === originalUri
+      ? await findSavedOriginal(originalUri, existingPhoto.sourceUri, existingPhoto.size)
+      : originalUri;
+    const imported = sourceUri && await LocalMediaStore.importMedia({
       draftId,
       lotId,
       slot,
       index,
-      sourceUri: originalUri,
+      sourceUri,
       name: normalized.name,
       type: normalized.type,
       mediaId: normalized.mediaId || existingPhoto?.mediaId,
@@ -430,7 +439,7 @@ const persistPhotoFile = async (
       availability: 'available',
       missing: false,
       captureTimestamp: normalized.timestamp || existingPhoto?.captureTimestamp,
-      sourceUri: originalUri,
+      sourceUri: existingPhoto?.uri === sourceUri ? existingPhoto.sourceUri || sourceUri : sourceUri,
       cacheUri: normalized.cacheUri,
       size: imported.size,
       lotId,
@@ -507,19 +516,23 @@ const persistVideoFile = async (
   }
   if (
     existingVideo &&
-    existingVideo.sourceUri === videoFile.uri &&
-    (await ensureUriExists(existingVideo.uri))
+    !existingVideo.missing && existingVideo.availability !== 'missing' &&
+    (existingVideo.sourceUri === videoFile.uri || existingVideo.uri === videoFile.uri) &&
+    (await ensureUriExists(existingVideo.uri, existingVideo.size))
   ) {
     return existingVideo;
   }
 
   if (draftId) {
-    const imported = await LocalMediaStore.importMedia({
+    const sourceUri = existingVideo?.uri === videoFile.uri
+      ? await findSavedOriginal(videoFile.uri, existingVideo.sourceUri, existingVideo.size)
+      : videoFile.uri;
+    const imported = sourceUri && await LocalMediaStore.importMedia({
       draftId,
       lotId,
       slot: 'video',
       index,
-      sourceUri: videoFile.uri,
+      sourceUri,
       name: videoFile.name,
       type: videoFile.type || 'video/mp4',
       mediaId: (videoFile as SavedVideoFileData).mediaId || existingVideo?.mediaId,
@@ -533,7 +546,8 @@ const persistVideoFile = async (
       mediaId: imported.mediaId,
       ownership: imported.ownership,
       availability: 'available',
-      sourceUri: videoFile.uri,
+      missing: false,
+      sourceUri: existingVideo?.uri === sourceUri ? existingVideo.sourceUri || sourceUri : sourceUri,
       size: imported.size,
       lotId,
       slot: 'video',

@@ -129,8 +129,10 @@ export async function persistActivityEntry({ stream, event }: ActivityEntry) {
   }
   // Device observations never overwrite a confirmed report's owner, counts or stage.
   const confirmed = event.authority === "server";
-  const backupOnly = event.action.startsWith("backup_") || ["upload_queued", "upload_paused", "upload_resumed", "upload_interrupted", "upload_failed"].includes(event.action);
-  const sequenceKey = event.authority === "device" ? activityHash(String(event.sequenceScope)) : "";
+  const draftUpload = event.action.startsWith("draft_upload_");
+  const backupOnly = draftUpload || event.action.startsWith("backup_") || ["upload_queued", "upload_paused", "upload_resumed", "upload_interrupted", "upload_failed"].includes(event.action);
+  // Receipt observation sequences never advance the phone's inventory edit sequence.
+  const sequenceKey = event.authority === "device" ? activityHash(draftUpload ? `draft-upload\0${event.sequenceScope}` : String(event.sequenceScope)) : "";
   const currentSequence = active.deviceSequences?.[sequenceKey];
   if (sequenceKey && currentSequence === undefined && Object.keys(active.deviceSequences || {}).length >= 100) throw new ActivityError("Too many independent device sequences for this report.", 409);
   const update: any = { $max: { lastReceivedAt: event.receivedAt }, $inc: { revision: 1 }, $addToSet: { contracts: stream.contract } };
@@ -158,12 +160,33 @@ function clientCounts(raw: any) {
   if (![raw.lots, raw.photos, raw.mainPhotos, raw.extraPhotos].every(safeCount) || raw.photos !== raw.mainPhotos + raw.extraPhotos) throw new ActivityError("Photo counts do not add up.");
   return { lots: raw.lots, photos: raw.photos, mainPhotos: raw.mainPhotos, extraPhotos: raw.extraPhotos };
 }
-export function normalizeClientActivity(raw: any, actor: { id: string; role: string; device?: string }): ActivityEntry {
-  const allowed = new Set(["eventId", "activityId", "reportType", "contract", "source", "sequence", "sequenceScope", "observedAt", "appVersion", "action", "outcome", "data"]);
-  if (!raw || Object.keys(raw).some(key => !allowed.has(key))) throw new ActivityError("Unsupported activity fields.");
-  if (!/^[a-zA-Z0-9._:-]{1,160}$/.test(raw.activityId || "") || !/^[a-zA-Z0-9._:-]{1,200}$/.test(raw.eventId || "") || !["asset", "lotListing"].includes(raw.reportType) || !["web", "android", "ios"].includes(raw.source) || !CLIENT_ACTIVITY_ACTIONS.has(raw.action) || !["requested", "completed", "failed"].includes(raw.outcome)) throw new ActivityError("Invalid activity identity or action.");
-  if (!Number.isSafeInteger(raw.sequence) || raw.sequence < 1 || !text(raw.sequenceScope) || !text(raw.observedAt, 50) || !Number.isFinite(Date.parse(raw.observedAt))) throw new ActivityError("Invalid device sequence or time.");
-  const data = raw.data || {};
+const draftUploadReasons = new Set(["offline_mode", "connection_lost", "transport_error", "no_progress",
+  "server_error", "rate_limited", "authentication_required", "access_denied", "request_conflict",
+  "request_rejected", "original_unavailable", "receipts_incomplete", "invalid_manifest", "no_completion_record", "unknown"]);
+
+function normalizeDraftUpload(raw: any) {
+  const interrupted = raw.action === "draft_upload_interrupted";
+  const expectedOutcome = interrupted ? "failed" : raw.action === "draft_upload_finished" ? "completed" : "requested";
+  if (!["android", "ios"].includes(raw.source) || raw.outcome !== expectedOutcome) throw new ActivityError("Invalid mobile draft upload observation.");
+  const data = raw.data === undefined ? {} : raw.data;
+  if (!data || typeof data !== "object" || Array.isArray(data) ||
+      Object.keys(data).some(key => !["draftUploadCounts", "draftUploadReason"].includes(key))) throw new ActivityError("Unsupported draft upload metadata.");
+  if (interrupted ? !draftUploadReasons.has(data.draftUploadReason) : "draftUploadReason" in data) {
+    throw new ActivityError("Invalid draft upload interruption reason.");
+  }
+  if ("draftUploadCounts" in data) {
+    const counts = data.draftUploadCounts;
+    if (!counts || typeof counts !== "object" || Array.isArray(counts) ||
+        Object.keys(counts).some(key => !["verified", "total"].includes(key)) ||
+        !safeCount(counts.verified) || !safeCount(counts.total) || counts.verified > counts.total ||
+        (raw.action === "draft_upload_finished" && counts.verified !== counts.total)) {
+      throw new ActivityError("Invalid draft upload receipt counts.");
+    }
+  }
+  return data;
+}
+
+function normalizeCaptureObservation(data: any) {
   const dataKeys = ["beforeCounts", "afterCounts", "fields", "lots", "uploadLogo", "cameraStamp", "captureMode", "fromLotId", "toLotId", "destination"];
   if (Object.keys(data).some(key => !dataKeys.includes(key))) throw new ActivityError("Only operational metadata may be synchronized.");
   if (!Array.isArray(data.fields || []) || (data.fields || []).length > 100 || (data.fields || []).some((field: any) => !text(field, 160))) throw new ActivityError("Only changed field names may be synchronized.");
@@ -180,7 +203,15 @@ export function normalizeClientActivity(raw: any, actor: { id: string; role: str
     if (lot.lotNumber !== undefined && (typeof lot.lotNumber !== "string" || lot.lotNumber.length > 80 || /[\u0000-\u001f]/.test(lot.lotNumber))) throw new ActivityError("Invalid lot number.");
   }
   for (const key of ["captureMode", "fromLotId", "toLotId", "destination"]) if (data[key] != null && (!text(data[key]) || /^(?:file|content|data):/i.test(data[key]))) throw new ActivityError("Invalid operational metadata.");
-  const normalized = { ...data, beforeCounts: clientCounts(data.beforeCounts), afterCounts: clientCounts(data.afterCounts) };
+  return { ...data, beforeCounts: clientCounts(data.beforeCounts), afterCounts: clientCounts(data.afterCounts) };
+}
+
+export function normalizeClientActivity(raw: any, actor: { id: string; role: string; device?: string }): ActivityEntry {
+  const allowed = new Set(["eventId", "activityId", "reportType", "contract", "source", "sequence", "sequenceScope", "observedAt", "appVersion", "action", "outcome", "data"]);
+  if (!raw || Object.keys(raw).some(key => !allowed.has(key))) throw new ActivityError("Unsupported activity fields.");
+  if (!/^[a-zA-Z0-9._:-]{1,160}$/.test(raw.activityId || "") || !/^[a-zA-Z0-9._:-]{1,200}$/.test(raw.eventId || "") || !["asset", "lotListing"].includes(raw.reportType) || !["web", "android", "ios"].includes(raw.source) || !CLIENT_ACTIVITY_ACTIONS.has(raw.action) || !["requested", "completed", "failed"].includes(raw.outcome)) throw new ActivityError("Invalid activity identity or action.");
+  if (!Number.isSafeInteger(raw.sequence) || raw.sequence < 1 || !text(raw.sequenceScope) || !text(raw.observedAt, 50) || !Number.isFinite(Date.parse(raw.observedAt))) throw new ActivityError("Invalid device sequence or time.");
+  const normalized = raw.action.startsWith("draft_upload_") ? normalizeDraftUpload(raw) : normalizeCaptureObservation(raw.data || {});
   const id = activityHash(`${actor.id}\0${raw.reportType}\0${raw.activityId}`);
   return {
     stream: { _id: id, activityId: raw.activityId, owner: actor.id, reportType: raw.reportType, contract: text(raw.contract), source: raw.source, latestCounts: normalized.afterCounts },

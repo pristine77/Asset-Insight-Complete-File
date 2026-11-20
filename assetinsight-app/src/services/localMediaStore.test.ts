@@ -7,6 +7,7 @@ jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
   getInfoAsync: jest.fn(),
   copyAsync: jest.fn(),
+  moveAsync: jest.fn(),
   makeDirectoryAsync: jest.fn(),
   readDirectoryAsync: jest.fn(),
   deleteAsync: jest.fn(),
@@ -96,6 +97,35 @@ it('retains missing gallery references as an explicit failed import, never tries
     await LocalMediaStore.importMedia(input('content://media/external/images/media/12'))
   ).toBeNull();
   expect(FileSystem.copyAsync).not.toHaveBeenCalled();
+});
+
+it.each([true, false])('repairs a partial import on retry while preserving the original (copy throws: %s)', async (throws) => {
+  const source = 'file:///cache/inspection.mp4';
+  const destination = `${LocalMediaStore.getDraftDir('draft')}lot_video_0000_media-0.mp4`;
+  const sizes = new Map([[source, 200], [destination, 20]]);
+  const reference = { ...input(source), slot: 'video' as const, name: 'inspection.mp4', type: 'video/mp4' };
+  jest.mocked(FileSystem.getInfoAsync).mockImplementation(async uri =>
+    sizes.has(uri) || uri.endsWith('/')
+      ? { uri, exists: true, isDirectory: uri.endsWith('/'), size: sizes.get(uri) || 0, modificationTime: 1 }
+      : { uri, exists: false, isDirectory: false });
+  jest.mocked(FileSystem.copyAsync).mockImplementationOnce(async ({ to }) => {
+    sizes.set(to, 60);
+    if (throws) throw new Error('OS interrupted copy');
+  }).mockImplementation(async ({ from, to }) => { sizes.set(to, sizes.get(from)!); });
+  jest.mocked(FileSystem.moveAsync).mockImplementation(async ({ from, to }) => {
+    sizes.set(to, sizes.get(from)!);
+    sizes.delete(from);
+  });
+  jest.mocked(FileSystem.deleteAsync).mockImplementation(async uri => { sizes.delete(uri); });
+
+  expect(await LocalMediaStore.importMedia(reference)).toBeNull();
+  expect([...sizes]).toEqual([[source, 200], [destination, 20]]);
+  expect(FileSystem.moveAsync).not.toHaveBeenCalled();
+  expect(await LocalMediaStore.importMedia(reference)).toMatchObject({ uri: destination, sourceUri: source, size: 200 });
+  expect(await LocalMediaStore.importMedia(reference)).toMatchObject({ uri: destination, size: 200 });
+  expect([...sizes]).toEqual([[source, 200], [destination, 200]]);
+  expect(FileSystem.copyAsync).toHaveBeenCalledTimes(2);
+  expect(FileSystem.moveAsync).toHaveBeenCalledTimes(1);
 });
 
 it('bounds concurrent metadata/import operations to four for large capture batches', async () => {

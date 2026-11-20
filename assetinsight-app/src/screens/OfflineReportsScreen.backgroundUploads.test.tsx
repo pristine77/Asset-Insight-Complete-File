@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import OfflineReportsScreen from './OfflineReportsScreen';
 import AutoSaveService from '../services/autoSaveService';
 import OfflineCaptureStore from '../services/offlineCaptureStore';
+import OfflineQueueService from '../services/offlineQueueService';
 import reportDraftService from '../services/reportDraftService';
 import DraftSyncService from '../services/draftSyncService';
 import backgroundUploadManager, { type BackgroundUploadRequest } from '../services/backgroundUploadManager';
@@ -60,7 +61,9 @@ function localDraft(id: string, extra: Record<string, unknown> = {}) {
   };
 }
 function showDrafts(...drafts: Array<ReturnType<typeof localDraft>>) {
-  jest.mocked(OfflineCaptureStore.listSummaries).mockResolvedValue(drafts.map((draft) => ({ id: draft.id, type: draft.type, captureMode: 'online' })) as any);
+  jest.mocked(OfflineCaptureStore.listSummaries).mockResolvedValue(drafts.map((draft) => ({
+    id: draft.id, type: draft.type, captureMode: 'online', localRevision: (draft as any).localRevision,
+  })) as any);
   jest.mocked(AutoSaveService.getDraft).mockImplementation(async (id: string) => (drafts.find((draft) => draft.id === id) || null) as any);
 }
 /** An upload in the line that never finishes during the test. */
@@ -220,6 +223,51 @@ async function openCloudOnly(listed = cloudCopy('draft-a')) {
   return { onContinue, press: async () => fireEvent.press(screen.getByRole('button', { name: 'Continue' })) };
 }
 
+it('opens the phone draft while the connectivity check is still pending', async () => {
+  let finish!: (status: any) => void;
+  jest.mocked(OfflineQueueService.getConnectivityStatus).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  showDrafts(localDraft('draft-b'));
+  const onContinue = await openDrafts();
+  expect(reportDraftService.list).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Delete' }).props.accessibilityState.disabled).toBe(true);
+  await fireEvent.press(screen.getByText('Continue'));
+  expect(onContinue).toHaveBeenCalledWith('draft-b', 'asset');
+  await act(async () => { finish({ status: 'offline' }); });
+  expect(screen.getByRole('button', { name: 'Delete' }).props.accessibilityState.disabled).toBe(false);
+});
+
+it('does not start a backup of the older local snapshot after the cloud list arrives', async () => {
+  showDrafts(localDraft('draft-b', { localRevision: 7 }));
+  let finish!: (rows: any) => void;
+  jest.mocked(reportDraftService.list).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const onContinue = await openDrafts();
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.press(screen.getByText('Continue'));
+  expect(onContinue).toHaveBeenCalledWith('draft-b', 'asset');
+  showDrafts(localDraft('draft-b', { localRevision: 8 }));
+  await act(async () => { finish([]); });
+  expect(DraftSyncService.syncDraft).not.toHaveBeenCalled();
+});
+
+it('discards slow cloud results from the previous account after displaying the new phone drafts', async () => {
+  showDrafts(localDraft('old-local'));
+  let finish!: (rows: any) => void;
+  jest.mocked(reportDraftService.list).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const props = { onOpenDrawer: jest.fn(), onContinueDraft: jest.fn() };
+  await render(<OfflineReportsScreen key="owner" {...props} />);
+  await waitFor(() => expect(screen.getByText('Report old-local')).toBeTruthy());
+  await waitFor(() => expect(finish).toBeDefined());
+  invalidateAuthOperations();
+  jest.mocked(OfflineCaptureStore.getOwnerId).mockReturnValue('new-owner');
+  showDrafts(localDraft('new-local', { ownerId: 'new-owner', cloudSyncedAt: UPDATED_AT }));
+  await screen.rerender(<OfflineReportsScreen key="new-owner" {...props} />);
+  await waitFor(() => expect(screen.getByText('Report new-local')).toBeTruthy());
+  await act(async () => { finish([cloudCopy('old-private')]); });
+  expect(screen.queryByText('Report old-private')).toBeNull();
+  expect(screen.queryByText('Report old-local')).toBeNull();
+  expect(screen.getByText('Report new-local')).toBeTruthy();
+});
+
 it('blocks a cloud-only 224-photo draft when only 50 originals were verified', async () => {
   const cloud = cloudCopy('draft-a');
   cloud.media = Array.from({ length: 224 }, (_, index) => ({
@@ -255,29 +303,71 @@ it('fetches fresh complete cloud detail and saves once despite repeated taps', a
   expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
 });
 
-it('keeps a local capture saved while cloud loading was in flight', async () => {
-  let finish!: (draft: any) => void;
-  jest.mocked(reportDraftService.get).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+it.each(['complete', 'incomplete', 'interrupted'])('opens a local capture saved while the cloud request was %s', async (outcome) => {
+  let finish!: () => void;
+  const cloud = cloudCopy('draft-a');
+  if (outcome === 'incomplete') cloud.media[0].verifiedSize = 0;
+  jest.mocked(reportDraftService.get).mockReturnValue(new Promise((resolve, reject) => {
+    finish = () => outcome === 'interrupted' ? reject(new Error('Network Error')) : resolve(cloud as any);
+  }));
   const { onContinue, press } = await openCloudOnly();
   await press();
   const captured = localDraft('draft-a');
   showDrafts(captured, localDraft('draft-b'));
-  await act(async () => { finish(cloudCopy('draft-a')); });
+  await act(async () => { finish(); });
   await waitFor(() => expect(onContinue).toHaveBeenCalledWith('draft-a', 'asset'));
+  expect(Alert.alert).not.toHaveBeenCalled();
   expect(AutoSaveService.saveCloudDraftSnapshot).not.toHaveBeenCalled();
   expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
 });
 
-it('ignores cloud detail after an account change', async () => {
+it.each(['different owner', 'same owner after sign-in'])('ignores cloud detail after an account change to %s', async (session) => {
   let finish!: (draft: any) => void;
   jest.mocked(reportDraftService.get).mockReturnValue(new Promise(resolve => { finish = resolve; }));
   const { onContinue, press } = await openCloudOnly();
   await press();
-  jest.mocked(OfflineCaptureStore.getOwnerId).mockReturnValue('other-owner');
+  if (session === 'different owner') jest.mocked(OfflineCaptureStore.getOwnerId).mockReturnValue('other-owner');
+  invalidateAuthOperations();
   await act(async () => { finish(cloudCopy('draft-a')); });
   expect(AutoSaveService.saveCloudDraftSnapshot).not.toHaveBeenCalled();
   expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
   expect(onContinue).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'Opening draft' })).toBeNull();
+});
+
+it('shows the verified count for a 1,109-file backup and rejects short receipts before opening', async () => {
+  const cloud = cloudCopy('draft-a');
+  cloud.media = Array.from({ length: 1109 }, (_, index) => ({
+    ...cloud.media[0], clientFileId: `p${index}`, index, verifiedSize: index < 493 ? 50 : 49,
+  }));
+  jest.mocked(reportDraftService.get).mockResolvedValue(cloud as any);
+  const { onContinue, press } = await openCloudOnly(cloud);
+  expect(screen.getByText(/493 of 1109 media files verified/)).toBeTruthy();
+  await press();
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Draft could not be opened', expect.stringContaining('616 of 1109')));
+  expect(onContinue).not.toHaveBeenCalled();
+  expect(AutoSaveService.saveCloudDraftSnapshot).not.toHaveBeenCalled();
+});
+
+it('keeps drafts whose opaque IDs differ only in case separate', async () => {
+  showDrafts(localDraft('Draft-a', { cloudSyncedAt: UPDATED_AT }), localDraft('draft-b', { cloudSyncedAt: UPDATED_AT }));
+  jest.mocked(reportDraftService.list).mockResolvedValue([cloudCopy('draft-a')] as any);
+  await openDrafts();
+  expect(screen.getByText('Report draft-a')).toBeTruthy();
+  expect(screen.getByText('Report Draft-a')).toBeTruthy();
+});
+
+it('opens the phone draft that wins the create-only write during a restore', async () => {
+  jest.mocked(reportDraftService.get).mockResolvedValue(cloudCopy('draft-a') as any);
+  jest.mocked(AutoSaveService.saveCloudDraftSnapshot).mockImplementationOnce(async () => {
+    showDrafts(localDraft('draft-a'), localDraft('draft-b'));
+    throw new Error('This draft is already saved on this device.');
+  });
+  const { onContinue, press } = await openCloudOnly();
+  await press();
+  await waitFor(() => expect(onContinue).toHaveBeenCalledWith('draft-a', 'asset'));
+  expect(Alert.alert).not.toHaveBeenCalled();
+  expect(AutoSaveService.deleteDraftMedia).not.toHaveBeenCalled();
 });
 
 it('keeps paused uploads and local photos when opening a draft', async () => {

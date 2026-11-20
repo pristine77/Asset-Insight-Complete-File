@@ -68,8 +68,12 @@ api.interceptors.request.use(
       const appVersion = getAppVersionLabel();
       if (appVersion) config.headers["X-App-Version"] = appVersion;
       const details = config.data?.details || config.data?.formData || config.data;
-      const activityId = details?.capture_id || details?.client_submission_id || details?.clientSubmissionId || config.data?.clientDraftId;
-      if (typeof activityId === "string" && /^[a-zA-Z0-9._:-]{1,160}$/.test(activityId)) config.headers["X-Activity-Id"] = activityId;
+      const activityId = [config.headers["X-Activity-Id"], details?.capture_id, details?.client_submission_id,
+        details?.clientSubmissionId, config.data?.clientDraftId].find(
+        id => typeof id === "string" && /^[a-zA-Z0-9._:-]{1,160}$/.test(id)
+      );
+      if (activityId) config.headers["X-Activity-Id"] = activityId;
+      else delete config.headers["X-Activity-Id"];
       config.headers["X-Device-Form-Factor"] =
         Math.min(screen.width, screen.height) >= 600 ? "tablet" : "mobile";
     }

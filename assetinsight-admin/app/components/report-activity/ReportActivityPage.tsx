@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Alert, Autocomplete, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Drawer, IconButton, LinearProgress, MenuItem, Pagination, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
 import { ArrowRight, Camera, ChevronRight, Clock3, History, RefreshCw, Trash2, X } from "lucide-react";
-import { ACTIVITY_LABELS, activityEventLabel, activityOutcomeLabel, activityQuery, activityReceiptNote, activityTime, backupReasonLabel, isBackupActivity, isUploadTransferActivity, uploadReasonLabel, logoLabel, parseActivityDetail, parseActivityPage, type ActivityCounts, type ActivityDetail, type ActivityEvent, type ActivityField, type ActivityPage, type ActivityRow } from "@/lib/reportActivity";
+import { ACTIVITY_LABELS, activityEventLabel, activityOutcomeLabel, activityQuery, activityReceiptNote, activityTime, backupReasonLabel, draftUploadReasonLabel, isBackupActivity, isDraftUploadActivity, isUploadTransferActivity, uploadReasonLabel, logoLabel, parseActivityDetail, parseActivityPage, type ActivityCounts, type ActivityDetail, type ActivityEvent, type ActivityField, type ActivityPage, type ActivityRow } from "@/lib/reportActivity";
 import { parseCaptureUsers, type CaptureUser } from "@/lib/captureInventory";
 import ActivityLotCounts from "./ActivityLotCounts";
 
@@ -42,6 +42,7 @@ function EventItem({ event }: { event: ActivityEvent }) {
   const data = event.data || {};
   const backup = isBackupActivity(event.action);
   const transfer = isUploadTransferActivity(event.action);
+  const draftUpload = isDraftUploadActivity(event.action);
   const receiptNote = activityReceiptNote(event);
   const verifiedBackup = data.backupCountAuthority === "server_verified" ? data.backupCounts : null;
   const verifiedUpload = data.uploadCountAuthority === "server_verified" ? data.uploadCounts : null;
@@ -56,6 +57,10 @@ function EventItem({ event }: { event: ActivityEvent }) {
     {data.deliveryStatus ? <Typography sx={{ fontSize: 12 }}>Auction delivery: {data.deliveryStatus.replaceAll("_", " ")}</Typography> : null}
     {event.authority === "device" ? <Typography sx={{ fontSize: 11, color: "text.secondary" }}>Device time {activityTime(event.observedAt)}{event.sequence ? ` · sequence ${event.sequence}` : ""}</Typography> : null}
     {receiptNote ? <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.5 }}>{receiptNote}</Typography> : null}
+    {draftUpload && (data.draftUploadCounts || event.action === "draft_upload_interrupted") ? <Box sx={{ my: 1, bgcolor: "action.hover", p: 1 }}>
+      {data.draftUploadCounts ? <Typography sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}>The phone recorded receipts for {data.draftUploadCounts.verified.toLocaleString()} of {data.draftUploadCounts.total.toLocaleString()} files.</Typography> : null}
+      {event.action === "draft_upload_interrupted" ? <Typography sx={{ fontSize: 13 }}>{draftUploadReasonLabel(data.draftUploadReason)}</Typography> : null}
+    </Box> : null}
     {transfer ? <Box sx={{ my: 1, bgcolor: "action.hover", p: 1 }}>
       <Typography sx={{ fontSize: 12, fontWeight: 700 }}>Background report upload</Typography>
       {verifiedUpload ? <Typography sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}>Server-verified files: {verifiedUpload.verifiedFiles.toLocaleString()} of {verifiedUpload.totalFiles.toLocaleString()}</Typography> : <Typography sx={{ fontSize: 13 }}>Upload verification counts not recorded</Typography>}
@@ -71,8 +76,8 @@ function EventItem({ event }: { event: ActivityEvent }) {
       {["backup_paused", "backup_interrupted"].includes(event.action) || data.backupReason ? <Typography sx={{ fontSize: 12, mt: 0.5 }}>Reason: {backupReasonLabel(data.backupReason)}</Typography> : null}
       <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.5 }}>These counts cover this saved backup snapshot, separately from captured photo totals. Backup does not submit the report.</Typography>
     </Box> : null}
-    {(!backup && !transfer) || data.beforeCounts || data.afterCounts ? <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center" sx={{ my: 1, bgcolor: "action.hover", p: 1 }}><Count value={data.beforeCounts} /><ArrowRight size={14} aria-label="changed to" /><Count value={data.afterCounts} /></Stack> : null}
-    {!backup && !transfer ? <Stack direction="row" gap={1.5} flexWrap="wrap"><Typography sx={{ fontSize: 12 }}>Upload logo: <b>{logoLabel(data.uploadLogo)}</b></Typography><Typography sx={{ fontSize: 12 }}>Camera stamp: <b>{data.cameraStamp === "camera_reported" ? "Reported by camera" : data.cameraStamp === "receipt_verified" ? "Receipt verified" : "Not recorded"}</b></Typography>{data.destination ? <Typography sx={{ fontSize: 12 }}>Destination: <b>{data.destination}</b></Typography> : null}{data.captureMode ? <Typography sx={{ fontSize: 12 }}>Capture: {data.captureMode}</Typography> : null}</Stack> : null}
+    {(!backup && !transfer && !draftUpload) || data.beforeCounts || data.afterCounts ? <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center" sx={{ my: 1, bgcolor: "action.hover", p: 1 }}><Count value={data.beforeCounts} /><ArrowRight size={14} aria-label="changed to" /><Count value={data.afterCounts} /></Stack> : null}
+    {!backup && !transfer && !draftUpload ? <Stack direction="row" gap={1.5} flexWrap="wrap"><Typography sx={{ fontSize: 12 }}>Upload logo: <b>{logoLabel(data.uploadLogo)}</b></Typography><Typography sx={{ fontSize: 12 }}>Camera stamp: <b>{data.cameraStamp === "camera_reported" ? "Reported by camera" : data.cameraStamp === "receipt_verified" ? "Receipt verified" : "Not recorded"}</b></Typography>{data.destination ? <Typography sx={{ fontSize: 12 }}>Destination: <b>{data.destination}</b></Typography> : null}{data.captureMode ? <Typography sx={{ fontSize: 12 }}>Capture: {data.captureMode}</Typography> : null}</Stack> : null}
     {(data.fields?.length || data.lots?.length) ? <Box component="details" sx={{ mt: 1, "& summary": { cursor: "pointer", minHeight: 40, display: "list-item", fontSize: 13, fontWeight: 600, pt: 1 } }}><summary>View changes{data.fields?.length ? ` · ${data.fields.length} fields` : ""}{data.lots?.length ? ` · ${data.lots.length} lot updates` : ""}</summary>
       <Stack gap={1} sx={{ pt: 1 }}>{data.fields?.map((field, index) => <FieldChange key={index} field={field} />)}
         {data.lots?.map((lot, index) => <Box key={`${lot.id}-${index}`} sx={{ border: "1px solid", borderColor: "divider", p: 1 }}><Typography sx={{ fontSize: 13, fontWeight: 700 }}>Lot {lot.lotNumber || lot.id}</Typography><Typography sx={{ fontSize: 12 }}>{lot.before ? `${lot.before.mainPhotos} main + ${lot.before.extraPhotos} report-only` : "Not present"} → {lot.after ? `${lot.after.mainPhotos} main + ${lot.after.extraPhotos} report-only` : "Removed"}</Typography>
@@ -115,6 +120,11 @@ function ActivityDrawer({ id, close, removed }: { id: string; close: () => void;
       {issue ? <Alert severity="error" action={<Button onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{issue}</Alert> : null}
       {detail ? <><Stack direction="row" gap={1} flexWrap="wrap" alignItems="center" sx={{ mb: 1 }}><Chip size="small" label={detail.reportType === "asset" ? "Asset" : "Lot Listing"} />{detail.deleted ? <Chip size="small" color="warning" label="Report deleted · history retained" /> : null}<Count value={detail.latestCounts} /></Stack><Typography sx={{ fontSize: 12, color: "text.secondary", mb: 1.5 }}>Last received {activityTime(detail.lastReceivedAt)}. Device observations reflect the last synchronization.</Typography>
         <ReportedApp row={detail} detailed />
+        {detail.draftUploadCounts ? <Box sx={{ my: 1.5 }}>
+          <Typography sx={{ fontSize: 13, fontWeight: 700 }}>Cloud draft upload</Typography>
+          <Typography sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}>The server has verified {detail.draftUploadCounts.verified.toLocaleString()} of {detail.draftUploadCounts.total.toLocaleString()} files.</Typography>
+          {detail.draftUploadCounts.verified < detail.draftUploadCounts.total ? <Typography sx={{ fontSize: 12, color: "text.secondary" }}>The draft is incomplete. Check the timeline for any interruption the phone reported.</Typography> : null}
+        </Box> : null}
         <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mb: 2, mt: 1 }}><Button variant="outlined" startIcon={<RefreshCw size={15} />} onClick={() => setRefresh(value => value + 1)} disabled={busy} sx={touch}>Refresh history</Button><Button variant="outlined" disabled={!detail.canOpenPreview || detail.deleted} href={detail.canOpenPreview ? `${detail.previewPath || "/preview-reports"}?reportId=${detail.reportId}` : undefined} sx={touch}>Open preview</Button>{detail.canRemove ? <Button color="error" startIcon={<Trash2 size={15} />} onClick={() => { setRemovalIssue(""); setConfirm(true); }} disabled={busy || !!issue} sx={touch}>Remove history</Button> : null}</Stack>
         {!detail.canViewValues ? <Alert severity="info" sx={{ mb: 2 }}>Operational history is available. Saved field values require access to this report.</Alert> : null}
       </> : null}

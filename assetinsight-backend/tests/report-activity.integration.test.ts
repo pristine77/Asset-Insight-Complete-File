@@ -42,6 +42,94 @@ beforeEach(async () => { vi.restoreAllMocks(); await Promise.all(Object.values(m
 afterAll(async () => { await waitForActivityDispatch(); await mongoose.disconnect(); await mongo.stop(); });
 
 describe("durable report activity", () => {
+  it("records phone draft upload attempts idempotently and preserves the capture inventory", async () => {
+    const post = (events: any[], ownerId = String(owner)) => request(app).post("/events").set("test-role", "user").send({ ownerId, events });
+    const captured = rawEvent();
+    const receipt = { verified: 493, total: 1109 };
+    const attempt = [
+      { action: "draft_upload_started", outcome: "requested", data: {} },
+      { action: "draft_upload_progress", outcome: "requested", data: { draftUploadCounts: receipt } },
+      { action: "draft_upload_interrupted", outcome: "failed", data: { draftUploadCounts: receipt, draftUploadReason: "no_completion_record" } },
+      { action: "draft_upload_resumed", outcome: "requested", data: {} },
+      { action: "draft_upload_finished", outcome: "completed", data: { draftUploadCounts: { verified: 1109, total: 1109 } } },
+    ].map((event, index) => rawEvent({ ...event, sequence: index + 1, sequenceScope: captured.sequenceScope, source: "ios" }));
+    expect((await post([captured])).status).toBe(200);
+    expect((await post(attempt, String(other))).status).toBe(403);
+    expect(await ReportActivityEvent.countDocuments()).toBe(1);
+    expect((await post(attempt)).status).toBe(200);
+    expect((await post(attempt)).status).toBe(200);
+    expect(await ReportActivityEvent.countDocuments()).toBe(6);
+    const stream = await ReportActivity.findOne().lean() as any;
+    expect(stream.latestCounts).toEqual(captured.data.afterCounts);
+    expect(stream.lastConfirmedAt).toBeUndefined();
+    const listed = await request(app).get("/activity?action=draft_upload_interrupted").set("test-role", "admin");
+    expect(listed.body.data.total).toBe(1);
+    const events = await request(app).get(`/activity/${stream._id}/events`).set("test-role", "superadmin");
+    expect(events.body.data.items.find((item: any) => item.action === "draft_upload_interrupted")).toMatchObject({
+      authority: "device", source: "ios", outcome: "failed", data: attempt[2].data,
+    });
+    const detail = await request(app).get(`/activity/${stream._id}`).set("test-role", "admin");
+    expect(detail.body.data.draftUploadCounts).toBeNull();
+    const nextInventory = { lots: 1, photos: 2, mainPhotos: 2, extraPhotos: 0 };
+    expect((await post([rawEvent({ sequence: 2, data: { afterCounts: nextInventory } })])).status).toBe(200);
+    expect((await ReportActivity.findById(stream._id).lean() as any).latestCounts).toEqual(nextInventory);
+  });
+
+  it("refuses unsupported sources, outcomes, fields and reasons on mobile draft upload observations", async () => {
+    const interrupted = { action: "draft_upload_interrupted", outcome: "failed", data: { draftUploadReason: "connection_lost" } };
+    for (const change of [
+      { source: "web" }, { outcome: "completed" }, { data: {} }, { data: null }, { data: [] },
+      { data: { draftUploadReason: "user_closed_app" } }, { data: { ...interrupted.data, originalUri: "file:///private" } },
+      { data: { ...interrupted.data, afterCounts: rawEvent().data.afterCounts } },
+      { data: { ...interrupted.data, draftUploadCounts: { total: 1, verified: 2 } } },
+      { data: { ...interrupted.data, draftUploadCounts: { total: 5001, verified: 1 } } },
+      { data: { ...interrupted.data, draftUploadCounts: { total: 2, verified: -1 } } },
+      { data: { ...interrupted.data, draftUploadCounts: { total: "2", verified: 1 } } },
+      { data: { ...interrupted.data, draftUploadCounts: { total: 2, verified: 1, url: "private" } } },
+      { action: "draft_upload_progress", outcome: "requested" },
+      { action: "draft_upload_started", outcome: "completed", data: {} },
+      { action: "draft_upload_finished", outcome: "requested", data: {} },
+      { action: "draft_upload_finished", outcome: "completed", data: { draftUploadCounts: { total: 2, verified: 1 } } },
+    ]) {
+      const response = await request(app).post("/events").set("test-role", "user").send({ events: [rawEvent({ ...interrupted, ...change })] });
+      expect(response.status).toBe(400);
+    }
+    expect(await ReportActivityEvent.countDocuments()).toBe(0);
+  });
+
+  it("reads a pre-existing draft’s current storage receipts without a phone sync event", async () => {
+    const draft = { user: owner, type: "asset", storageMode: "r2_media", clientDraftId: "capture-one", contractNo: "93530",
+      lots: [], media: Array.from({ length: 1109 }, (_, index) => {
+        const valid = { uploadedAt: new Date(), size: 50, verifiedSize: 50, r2Key: `private-key-${index}` };
+        if (index < 493) return valid;
+        switch (index % 5) {
+          case 0: return { ...valid, r2Key: "" };
+          case 1: return { ...valid, uploadedAt: "invalid" };
+          case 2: return { ...valid, verifiedSize: 49 };
+          case 3: return { ...valid, verifiedSize: 0 };
+          default: return {};
+        }
+      }) };
+    const { insertedId } = await ReportDraft.collection.insertOne({ ...draft });
+    const { insertedId: otherId } = await ReportDraft.collection.insertOne({ ...draft, user: other, media: [] });
+    const { insertedId: lotId } = await ReportDraft.collection.insertOne({ ...draft, type: "lotListing", media: [] });
+    await request(app).post("/events").set("test-role", "user").send({ events: [rawEvent()] });
+    const stream = await ReportActivity.findOne().lean() as any;
+    const detail = async () => (await request(app).get(`/activity/${stream._id}`).set("test-role", "admin")).body.data;
+    expect((await detail()).draftUploadCounts).toEqual({ verified: 493, total: 1109 });
+    expect(JSON.stringify(await detail())).not.toContain("private-key-");
+    for (const wrongId of [otherId, lotId]) {
+      await ReportActivity.updateOne({ _id: stream._id }, { $set: { draftId: String(wrongId) } });
+      expect((await detail()).draftUploadCounts).toBeNull();
+    }
+    await ReportActivity.updateOne({ _id: stream._id }, { $set: { draftId: String(insertedId) } });
+    await ReportDraft.collection.updateOne({ _id: insertedId }, { $set: { clientDraftId: "different-client-id",
+      media: [{ r2Key: "old-key", uploadedAt: new Date(), verifiedSize: 50 }] } });
+    expect((await detail()).draftUploadCounts).toEqual({ verified: 1, total: 1 });
+    await ReportDraft.collection.updateOne({ _id: insertedId }, { $set: { storageMode: "local_media" } });
+    expect((await detail()).draftUploadCounts).toBeNull();
+    expect(await ReportActivityEvent.countDocuments()).toBe(1);
+  });
   it("shows the last received mobile version in bounded admin list/detail without guessing for legacy history", async () => {
     await persistActivityEntry(normalizeClientActivity(rawEvent({ appVersion: "1.0.1 (build 3)" }), { id: String(owner), role: "user" }));
     const stream = await ReportActivity.findOne().lean() as any;

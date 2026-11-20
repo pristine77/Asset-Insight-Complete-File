@@ -4,7 +4,7 @@ import { ReportActivity, ReportActivityEvent, ReportActivityDeletion } from "../
 import { ActivityError, normalizeClientActivity, persistActivityEntry } from "../service/reportActivityService.js";
 import { ACTIVITY_ACTIONS, activitySnapshot } from "../utils/reportActivitySnapshot.js";
 import { canInspectAdminReport } from "../utils/adminReportAccessPolicy.js";
-import { readActivityLotCounts } from "../service/reportActivityLotCounts.js";
+import { readActivityLotCounts, readDraftUploadCounts } from "../service/reportActivityLotCounts.js";
 
 function handle(res: Response, work: () => Promise<unknown>) {
   res.setHeader("Cache-Control", "no-store, private");
@@ -130,8 +130,11 @@ export const listReportActivity = (req: Request, res: Response) => handle(res, a
 });
 export const getReportActivity = (req: Request, res: Response) => handle(res, async () => {
   const stream = await getStream(req);
-  stream.lastReportedApp = await ReportActivityEvent.findOne({ activity: stream._id, owner: stream.owner, ...recordedAppFilter })
-    .sort({ receivedAt: -1, _id: -1 }).select("-_id appVersion source receivedAt").lean();
+  [stream.lastReportedApp, stream.draftUploadCounts] = await Promise.all([
+    ReportActivityEvent.findOne({ activity: stream._id, owner: stream.owner, ...recordedAppFilter })
+      .sort({ receivedAt: -1, _id: -1 }).select("-_id appVersion source receivedAt").lean(),
+    readDraftUploadCounts(stream),
+  ]);
   return { ...(await withUsers([stream]))[0], ...await access(req, stream) };
 });
 export const getReportActivityLots = (req: any, res: Response) => handle(res, async () => {

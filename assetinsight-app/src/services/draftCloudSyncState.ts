@@ -10,6 +10,7 @@ import {
 export type DraftCloudSyncErrorKind =
   | 'network'
   | 'transient_server'
+  | 'verification'
   | 'auth'
   | 'validation'
   | 'unknown';
@@ -27,7 +28,9 @@ const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 5 * 60_000;
 
 const recoverableMessage = (kind: DraftCloudSyncErrorKind) =>
-  kind === 'network'
+  kind === 'verification'
+    ? 'Some files still need a cloud receipt. This draft will retry automatically.'
+    : kind === 'network'
     ? 'The upload connection was interrupted. This draft remains safe and will retry automatically.'
     : 'The server is temporarily unavailable. This draft remains safe and will retry automatically.';
 
@@ -45,8 +48,11 @@ export function classifyDraftCloudSyncError(
   const attempts = Math.max(0, previousAttempts) + 1;
   const lastAttemptAt = new Date(now).toISOString();
 
-  if (isRetryableRequestError(error)) {
-    const kind: DraftCloudSyncErrorKind = isNetworkTransportError(error)
+  const cancelled = error?.code === 'ERR_CANCELED';
+  const lostConnection = cancelled && error.pauseReason === 'connection';
+  const incompleteReceipts = error?.code === 'DRAFT_RECEIPTS_INCOMPLETE';
+  if (incompleteReceipts || lostConnection || (!cancelled && isRetryableRequestError(error))) {
+    const kind: DraftCloudSyncErrorKind = incompleteReceipts ? 'verification' : lostConnection || isNetworkTransportError(error)
       ? 'network'
       : 'transient_server';
     const retryDelay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 4));
@@ -92,8 +98,8 @@ export function classifyDraftCloudSyncError(
 }
 
 export function isRecoverableDraftCloudError(draft: OfflineReportDraft): boolean {
-  if (draft.cloudSyncErrorKind === 'network' || draft.cloudSyncErrorKind === 'transient_server') {
-    return true;
+  if (draft.cloudSyncErrorKind) {
+    return ['network', 'transient_server', 'verification'].includes(draft.cloudSyncErrorKind);
   }
 
   // Older app versions stored only the raw Axios message. Treat those records
@@ -133,7 +139,7 @@ export function canAttemptDraftCloudSync(
 export function getDraftCloudSyncMessage(draft: OfflineReportDraft): string | undefined {
   if (!draft.cloudSyncError) return undefined;
   if (isRecoverableDraftCloudError(draft)) {
-    const kind = draft.cloudSyncErrorKind === 'network' ? 'network' : 'transient_server';
+    const kind = draft.cloudSyncErrorKind || 'transient_server';
     return recoverableMessage(kind);
   }
   return draft.cloudSyncError;

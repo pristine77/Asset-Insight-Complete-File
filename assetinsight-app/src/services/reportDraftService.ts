@@ -1,11 +1,12 @@
 import { assertOrdinaryReport } from './arrivalPhotoDraft';
 import { captureAuthOperation } from './authSessionOperation';
 import api from './api';
+import { observeDraftUpload } from './draftUploadActivity';
 import { allowsCloudDraft } from './offlineDraftPolicy';
 import OfflineCaptureStore from './offlineCaptureStore';
 import { isRetryableRequestError } from './connectivityService';
-import { createUploadOperation, cancellableUploadRequest } from './uploadCancellation';
-import { assertCloudDraftIdentity, hydrateCompleteCloudDraft } from './cloudDraftRestore';
+import { createUploadOperation, cancellableUploadRequest, uploadGeneration, type UploadOperation } from './uploadCancellation';
+import { assertCloudDraftIdentity, hydrateCompleteCloudDraft, isVerifiedDraftMedia } from './cloudDraftRestore';
 import type {
   AutoSaveFormData,
   OfflineDraftType,
@@ -110,6 +111,7 @@ export function getDuplicateLotWarning(value: unknown): string | null {
 type DraftMediaEntry = {
   descriptor: CloudDraftMedia;
   file?: DirectUploadFile;
+  originalUnavailable: boolean;
 };
 
 type DraftUploadTarget = {
@@ -141,14 +143,20 @@ async function mapWithConcurrency<T>(
   worker: (item: T, index: number) => Promise<void>
 ) {
   let cursor = 0;
+  let failure: { error: unknown } | undefined;
   await Promise.all(
     Array.from({ length: Math.min(Math.max(1, items.length), concurrency) }, async () => {
-      while (cursor < items.length) {
+      while (!failure && cursor < items.length) {
         const index = cursor++;
-        await worker(items[index], index);
+        try {
+          await worker(items[index], index);
+        } catch (error) {
+          failure ??= { error };
+        }
       }
     })
   );
+  if (failure) throw failure.error;
 }
 
 function stableHash(value: string) {
@@ -209,9 +217,11 @@ function buildDraftEntries(draft: OfflineReportDraft): DraftMediaEntry[] {
     fallbackType: string
   ) => {
     const source: any = typeof value === 'string' ? {} : value;
-    const uri = preferredUri(value);
-    if (!uri || source.missing || source.availability === 'missing') {
-      throw new Error('A draft original is unavailable on this device. Keep all originals and reopen the saved draft before syncing.');
+    // Imported video.uri points to the durable local copy; sourceUri can be an expired picker grant.
+    const uri = slot === 'video' && source.uri ? source.uri : preferredUri(value);
+    const originalUnavailable = !uri || !!source.missing || source.availability === 'missing';
+    if (!uri && !source.clientFileId && !source.mediaId && !source.localKey) {
+      throw draftError('DRAFT_MEDIA_IDENTITY', 'A draft original has no saved identifier or location. Reopen the saved draft before syncing.');
     }
     const clientFileId = stableMediaId(draft, value, lotId, slot, fallbackName);
     const name = String(source.name || fallbackName);
@@ -234,7 +244,8 @@ function buildDraftEntries(draft: OfflineReportDraft): DraftMediaEntry[] {
     };
     entries.push({
       descriptor,
-      ...(isUploadableLocalUri(uri)
+      originalUnavailable,
+      ...(!originalUnavailable && isUploadableLocalUri(uri)
         ? {
             file: {
               uri,
@@ -279,12 +290,9 @@ function serializeLots(lots: SavedLotData[]): SavedLotData[] {
   }));
 }
 
-function isConfirmedDraftEntry(entry: DraftMediaEntry, media: CloudDraftMedia[]) {
+function isConfirmedDraftEntry(entry: DraftMediaEntry, saved: CloudDraftMedia | undefined) {
   const expected = entry.descriptor;
-  const saved = media.find((item) => item.clientFileId === expected.clientFileId);
-  if (!saved?.uploadedAt || !Number.isFinite(Date.parse(saved.uploadedAt)) ||
-      typeof saved.url !== 'string' || !/^https?:\/\/[^\s/]+(?:\/|$)/i.test(saved.url) ||
-      !Number.isFinite(saved.verifiedSize) || Number(saved.verifiedSize) <= 0) return false;
+  if (!saved || !isVerifiedDraftMedia(saved)) return false;
   // A response may have been lost after the multipart batch committed. Only
   // matching saved identities/metadata can establish that this batch succeeded.
   const fields = ['lotId', 'slot', 'index', 'captureOrder', 'originalOrder', 'name', 'mimeType', 'lastModified'] as const;
@@ -309,7 +317,7 @@ export function isVerifiedCloudBackupOfLocal(draft: OfflineReportDraft, cloud: R
         new Set(entries.map((entry) => entry.descriptor.clientFileId)).size !== entries.length) return false;
     return entries.every((entry) => {
       const saved = savedById.get(entry.descriptor.clientFileId);
-      return !!saved && isConfirmedDraftEntry(entry, [saved]);
+      return !!saved && isConfirmedDraftEntry(entry, saved);
     });
   } catch {
     return false;
@@ -343,194 +351,7 @@ const reportDraftService = {
     return response.data.data;
   },
 
-  async upsertFromLocalDraft(draft: OfflineReportDraft): Promise<ReportDraft> {
-    const operation = createUploadOperation();
-    const assertAllowed = () => {
-      operation.assertActive();
-      assertOrdinaryReport(draft.formData);
-      if (!allowsCloudDraft(draft)) throw new Error('Offline captures save only on this device. Use Submit when you are ready to upload.');
-      if (!draft.ownerId || draft.ownerId !== OfflineCaptureStore.getOwnerId()) throw new Error('Sign in to the account that owns this draft.');
-    };
-    assertAllowed();
-    // An in-progress upload owns one immutable manifest. UI edits made while
-    // bytes are in flight belong to the next revision, never this receipt.
-    const snapshot: OfflineReportDraft = JSON.parse(JSON.stringify(draft));
-    const entries = buildDraftEntries(snapshot);
-    const lots = serializeLots(snapshot.lots);
-    const lotIds = new Set(lots.map((lot) => lot.id));
-    const mediaIds = new Set(entries.map((entry) => entry.descriptor.clientFileId));
-    if (lotIds.size !== lots.length || mediaIds.size !== entries.length) {
-      throw new Error('This draft has missing or duplicate media references. Keep all originals and reopen the saved draft before syncing.');
-    }
-    const revision = Date.now();
-    const assertSavedSnapshot = (saved: ReportDraft, cloudId?: string) => {
-      assertCloudDraftIdentity(saved, {
-        cloudId: cloudId || snapshot.cloudId || String(saved?.id || saved?._id || ''),
-        clientDraftId: snapshot.id, type: snapshot.type, revision, ownerId: snapshot.ownerId,
-      });
-      const sameLots = Array.isArray(saved.lots) && saved.lots.length === lots.length &&
-        saved.lots.every((lot, index) => lot && lot.id === lots[index].id);
-      const savedMedia = saved.media;
-      const validMedia = Array.isArray(savedMedia) && savedMedia.every((item) => item && typeof item.clientFileId === 'string');
-      const savedById = new Map((validMedia ? savedMedia! : []).map((item) => [item.clientFileId, item]));
-      const descriptorFields = ['localKey', 'mediaId', 'lotId', 'slot', 'index', 'captureOrder', 'originalOrder', 'name', 'mimeType', 'lastModified'] as const;
-      if (saved.revision !== revision || !sameLots || !validMedia || !Array.isArray(savedMedia) ||
-          savedMedia.length !== entries.length || savedById.size !== entries.length ||
-          saved.formData?.clientSubmissionId !== snapshot.formData.clientSubmissionId ||
-          normalizeContractNo(saved.contractNo) !== normalizeContractNo(snapshot.contractNo || snapshot.formData.contractNo) ||
-          entries.some(({ descriptor }) => {
-            const item = savedById.get(descriptor.clientFileId);
-            return !item || descriptorFields.some((field) => item[field] !== descriptor[field]) ||
-              (Number(descriptor.size) > 0 && item.size !== descriptor.size);
-          })) {
-        throw new Error('The cloud draft changed while saving. Your local draft and all originals are unchanged. Refresh Drafts and retry syncing.');
-      }
-    };
-    const response = await cancellableUploadRequest(operation, (signal) => api.post<{
-      message: string;
-      code?: string;
-      warning?: boolean;
-      conflicts?: DuplicateLotConflict[];
-      data: ReportDraft;
-    }>('/report-drafts', {
-      clientDraftId: snapshot.id,
-      type: snapshot.type,
-      storageMode: 'r2_media',
-      revision,
-      contractNo: snapshot.contractNo || snapshot.formData.contractNo,
-      normalizedContractNo:
-        snapshot.normalizedContractNo || normalizeContractNo(snapshot.contractNo || snapshot.formData.contractNo),
-      title: snapshot.title,
-      formData: snapshot.formData,
-      lots,
-      activeLotIdx: snapshot.activeLotIdx,
-      media: entries.map((entry) => entry.descriptor),
-    }, { signal }));
-    const syncWarningCode = response.data.code;
-    assertAllowed();
-    const syncWarningMessage = syncWarningCode ? response.data.message : undefined;
-    const duplicateLotConflicts = response.data.conflicts || [];
-    let cloud: ReportDraft = {
-      ...response.data.data,
-      duplicateLotConflicts,
-      syncWarningCode,
-      syncWarningMessage,
-    };
-    assertSavedSnapshot(cloud);
-    const draftId = String(cloud.id || cloud._id || '');
-    const pending = entries.filter((entry) => !isConfirmedDraftEntry(entry, cloud.media || []));
-
-    for (const batch of chunks(pending, TARGET_BATCH_SIZE)) {
-      assertAllowed();
-      const targetResponse = await cancellableUploadRequest(operation, (signal) => api.post<{ message: string; data: DraftUploadTarget[] }>(
-        `/report-drafts/${draftId}/media/targets`,
-        { media: batch.map((entry) => entry.descriptor) },
-        { timeout: 60000, signal }
-      ));
-      const targetById = new Map(
-        (targetResponse.data.data || []).map((target) => [target.clientFileId, target])
-      );
-      const confirmed: string[] = [];
-      const multipart: DraftMediaEntry[] = [];
-
-      await mapWithConcurrency(batch, UPLOAD_CONCURRENCY, async (entry) => {
-        assertAllowed();
-        const target = targetById.get(entry.descriptor.clientFileId);
-        if (!target) throw new Error(`No storage target was returned for ${entry.descriptor.name}.`);
-        if (target.alreadyUploaded) {
-          // Legacy receipts may have a key/date but no measured size. Targets
-          // alone do not fill that evidence; confirm HEADs the existing object
-          // without retransmitting or replacing the original.
-          confirmed.push(entry.descriptor.clientFileId);
-          return;
-        }
-        if (!entry.file) {
-          throw new Error(
-            `${entry.descriptor.name || 'Draft media'} is unavailable on this device and was not found in cloud storage.`
-          );
-        }
-        if (!target.uploadUrl) {
-          // Draft direct PUTs are optional on the server. The authenticated
-          // multipart route persists the same media identities when disabled.
-          multipart.push(entry);
-          return;
-        }
-        await uploadLocalFileToPresignedUrl(
-          entry.file,
-          target.uploadUrl,
-          entry.descriptor.mimeType
-        );
-        confirmed.push(entry.descriptor.clientFileId);
-      });
-
-      for (const idBatch of chunks(confirmed, TARGET_BATCH_SIZE)) {
-        assertAllowed();
-        if (!idBatch.length) continue;
-        await cancellableUploadRequest(operation, (signal) => api.post(
-          `/report-drafts/${draftId}/media/confirm`,
-          { clientFileIds: idBatch },
-          { timeout: 120000, signal }
-        ));
-      }
-
-      for (const mediaBatch of chunks(multipart, MULTIPART_BATCH_SIZE)) {
-        assertAllowed();
-        const body = new FormData();
-        body.append('replace', 'false');
-        body.append('metadata', JSON.stringify(mediaBatch.map((entry) => entry.descriptor)));
-        mediaBatch.forEach((entry) => body.append('files', {
-          uri: entry.file!.uri,
-          name: entry.file!.name,
-          type: entry.file!.type,
-        } as any));
-        try {
-          await cancellableUploadRequest(operation, (signal) => api.post(
-            `/report-drafts/${encodeURIComponent(draftId)}/media`,
-            body,
-            { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000, signal }
-          ));
-          assertAllowed();
-        } catch (error) {
-          assertAllowed();
-          if (!isRetryableRequestError(error)) throw error;
-          // Multipart writes allocate fresh object keys. Never replay an
-          // uncertain batch: read the same draft before proceeding or retrying.
-          let savedMedia: CloudDraftMedia[] = [];
-          try {
-            const saved = await cancellableUploadRequest(operation, (signal) => api.get<{ data: ReportDraft }>(
-              `/report-drafts/${encodeURIComponent(draftId)}`, { signal }
-            ));
-            assertAllowed();
-            assertSavedSnapshot(saved.data.data, draftId);
-            savedMedia = saved.data.data.media || [];
-          } catch {
-            assertAllowed();
-            throw error;
-          }
-          if (!mediaBatch.every((entry) => isConfirmedDraftEntry(entry, savedMedia))) throw error;
-        }
-      }
-    }
-
-    assertAllowed();
-    const refreshed = await cancellableUploadRequest(operation, (signal) => api.get<{ data: ReportDraft }>(`/report-drafts/${encodeURIComponent(draftId)}`, { signal }));
-    assertAllowed();
-    cloud = {
-      ...refreshed.data.data,
-      duplicateLotConflicts,
-      syncWarningCode,
-      syncWarningMessage,
-    };
-    assertSavedSnapshot(cloud, draftId);
-    const missing = entries.filter((entry) => !isConfirmedDraftEntry(entry, cloud.media || []));
-    if (missing.length) {
-      throw new Error(
-        `${missing.length} draft media file${missing.length === 1 ? '' : 's'} could not be verified in cloud storage.`
-      );
-    }
-    hydrateCompleteCloudDraft(cloud, { cloudId: draftId, clientDraftId: snapshot.id, type: snapshot.type, revision, ownerId: snapshot.ownerId });
-    return cloud;
-  },
+  upsertFromLocalDraft: saveDraftWithMedia,
 
   async delete(id: string, discard?: { intent: 'discard'; baseRevision: string }): Promise<void> {
     if (!discard) {
@@ -558,5 +379,306 @@ const reportDraftService = {
     }
   },
 };
+
+function draftError(code: string, message: string) {
+  return Object.assign(new Error(message), { code });
+}
+
+type DraftUploadProgress = { cloudId: string; verified: number; total: number };
+type DraftUploadProgressListener = (progress: DraftUploadProgress) => void | Promise<void>;
+type PendingDraftTransfer = {
+  result: Promise<ReportDraft>;
+  listeners: Set<DraftUploadProgressListener>;
+  latest?: DraftUploadProgress;
+};
+const draftTransfers = new Map<string, Map<string, PendingDraftTransfer>>();
+
+// Both Save Preview and the foreground sync loop can start the same persisted
+// draft. Share identical transfers and finish older writes before starting newer ones.
+async function saveDraftWithMedia(draft: OfflineReportDraft, onProgress?: DraftUploadProgressListener): Promise<ReportDraft> {
+  const scope = JSON.stringify([uploadGeneration(), draft.ownerId, draft.type, draft.id]);
+  const snapshotKey = JSON.stringify(draft);
+  const transfers = draftTransfers.get(scope) || new Map<string, PendingDraftTransfer>();
+  const existing = transfers.get(snapshotKey);
+  if (existing) {
+    if (onProgress && !existing.listeners.has(onProgress)) {
+      existing.listeners.add(onProgress);
+      const latest = existing.latest;
+      if (latest) await Promise.resolve().then(() => onProgress(latest)).catch(() => undefined);
+    }
+    return existing.result;
+  }
+  const operation = createUploadOperation();
+  const snapshot: OfflineReportDraft = JSON.parse(snapshotKey);
+  const listeners = new Set<DraftUploadProgressListener>();
+  if (onProgress) listeners.add(onProgress);
+  const previous = Array.from(transfers.values()).pop();
+  const result = (previous?.result || Promise.resolve()).catch(() => undefined).then(() => {
+    operation.assertActive();
+    return observeDraftUpload(snapshot, report => uploadDraft(draft, snapshot, operation, report), async progress => {
+      transfer.latest = progress;
+      // A caller that unmounts or throws while displaying progress cannot cancel someone else's backup.
+      await Promise.allSettled([...listeners].map(listener => Promise.resolve().then(() => listener(progress))));
+    });
+  }).finally(() => {
+    transfers.delete(snapshotKey);
+    if (transfers.size === 0) draftTransfers.delete(scope);
+  });
+  const transfer: PendingDraftTransfer = { result, listeners };
+  transfers.set(snapshotKey, transfer);
+  draftTransfers.set(scope, transfers);
+  return result;
+}
+
+async function uploadDraft(
+  draft: OfflineReportDraft,
+  snapshot: OfflineReportDraft,
+  operation: UploadOperation,
+  report: DraftUploadProgressListener
+): Promise<ReportDraft> {
+  assertOrdinaryReport(snapshot.formData);
+  const initiallyAllowed = allowsCloudDraft(snapshot);
+  const assertAllowed = () => {
+    operation.assertActive();
+    assertOrdinaryReport(draft.formData);
+    if (!initiallyAllowed || !allowsCloudDraft(draft)) throw new Error('Offline captures save only on this device. Use Submit when you are ready to upload.');
+    if (!snapshot.ownerId || draft.ownerId !== snapshot.ownerId || snapshot.ownerId !== OfflineCaptureStore.getOwnerId()) throw new Error('Sign in to the account that owns this draft.');
+  };
+  assertAllowed();
+  const entries = buildDraftEntries(snapshot);
+  const lots = serializeLots(snapshot.lots);
+  const lotIds = new Set(lots.map((lot) => lot.id));
+  const mediaIds = new Set(entries.map((entry) => entry.descriptor.clientFileId));
+  if (lotIds.size !== lots.length || mediaIds.size !== entries.length) {
+    throw draftError('DRAFT_MEDIA_IDENTITY', 'This draft has missing or duplicate media references. Keep all originals and reopen the saved draft before syncing.');
+  }
+  // A retry must use the revision of the saved edits. Giving an old interrupted
+  // snapshot today's timestamp would let it overwrite newer edits on the web.
+  let revision = Date.parse(snapshot.updatedAt) || Date.parse(snapshot.createdAt) || 0;
+  const manifestConflict = () => draftError('DRAFT_MANIFEST_CONFLICT',
+    'The cloud draft changed while saving. Your local draft and all originals are unchanged. Refresh Drafts and retry syncing.');
+
+  const assertSavedSnapshot = (saved: ReportDraft, cloudId?: string) => {
+    assertCloudDraftIdentity(saved, {
+      cloudId: cloudId || snapshot.cloudId || String(saved?.id || saved?._id || ''),
+      clientDraftId: snapshot.id, type: snapshot.type, ownerId: snapshot.ownerId,
+    });
+    const sameLots = Array.isArray(saved.lots) && saved.lots.length === lots.length &&
+      saved.lots.every((lot, index) => lot && lot.id === lots[index].id);
+    const savedMedia = saved.media;
+    const validMedia = Array.isArray(savedMedia) && savedMedia.every((item) => item && typeof item.clientFileId === 'string');
+    const savedById = new Map((validMedia ? savedMedia! : []).map((item) => [item.clientFileId, item]));
+    const descriptorFields = ['localKey', 'mediaId', 'lotId', 'slot', 'index', 'captureOrder', 'originalOrder', 'name', 'mimeType', 'lastModified'] as const;
+    if (saved.revision !== revision || !sameLots || !validMedia || !Array.isArray(savedMedia) ||
+        savedMedia.length !== entries.length || savedById.size !== entries.length ||
+        saved.formData?.clientSubmissionId !== snapshot.formData.clientSubmissionId ||
+        normalizeContractNo(saved.contractNo) !== normalizeContractNo(snapshot.contractNo || snapshot.formData.contractNo) ||
+        entries.some(({ descriptor }) => {
+          const item = savedById.get(descriptor.clientFileId);
+          return !item || descriptorFields.some((field) => item[field] !== descriptor[field]) ||
+            (Number(descriptor.size) > 0 && item.size !== descriptor.size);
+        })) {
+      throw manifestConflict();
+    }
+  };
+  const saveMetadata = () => cancellableUploadRequest(operation, (signal) => api.post<{
+    message: string;
+    code?: string;
+    warning?: boolean;
+    conflicts?: DuplicateLotConflict[];
+    data: ReportDraft;
+  }>('/report-drafts', {
+    clientDraftId: snapshot.id,
+    type: snapshot.type,
+    storageMode: 'r2_media',
+    revision,
+    contractNo: snapshot.contractNo || snapshot.formData.contractNo,
+    normalizedContractNo:
+      snapshot.normalizedContractNo || normalizeContractNo(snapshot.contractNo || snapshot.formData.contractNo),
+    title: snapshot.title,
+    formData: snapshot.formData,
+    lots,
+    activeLotIdx: snapshot.activeLotIdx,
+    media: entries.map((entry) => entry.descriptor),
+  }, { signal, ...(snapshot.captureId ? { headers: { 'X-Activity-Id': snapshot.captureId } } : {}) }));
+  if (entries.length && entries.every(entry => entry.originalUnavailable) && !snapshot.cloudId) {
+    // With no accessible originals and no cloud ID, recover an existing capture
+    // by its stable client ID before creating any cloud metadata.
+    try {
+      const prior = await cancellableUploadRequest(operation, signal => api.get<{ data: ReportDraft }>(
+        `/report-drafts/client/${encodeURIComponent(snapshot.id)}`, { params: { type: snapshot.type }, signal }
+      ));
+      assertAllowed();
+      assertCloudDraftIdentity(prior.data.data, {
+        cloudId: prior.data.data?.id || prior.data.data?._id || '',
+        clientDraftId: snapshot.id, ownerId: snapshot.ownerId, type: snapshot.type,
+      });
+    } catch (error: any) {
+      if (error?.response?.status !== 404) throw error;
+      throw draftError('DRAFT_ORIGINAL_UNAVAILABLE', 'The draft originals are unavailable on this device. Keep the saved draft for recovery.');
+    }
+  }
+  let response: Awaited<ReturnType<typeof saveMetadata>>;
+  try {
+    response = await saveMetadata();
+  } catch (error: any) {
+    assertAllowed();
+    const conflict = error?.response?.data;
+    if (error?.response?.status === 409 && conflict?.code === 'DRAFT_REVISION_CONFLICT') throw manifestConflict();
+    if (error?.response?.status !== 409 || conflict?.code !== 'STALE_DRAFT_REVISION') throw error;
+    const newer = conflict.data as ReportDraft | undefined;
+    if (!newer || !Number.isSafeInteger(newer.revision) || newer.revision! <= revision) throw manifestConflict();
+    // Older APKs stamped the time of the transfer. Reuse exactly the returned
+    // revision. The server accepts this only if its full content hash matches.
+    revision = newer.revision!;
+    assertSavedSnapshot(newer);
+    try {
+      response = await saveMetadata();
+    } catch (retryError: any) {
+      if (retryError?.response?.status === 409 && ['DRAFT_REVISION_CONFLICT', 'STALE_DRAFT_REVISION'].includes(retryError.response.data?.code)) throw manifestConflict();
+      throw retryError;
+    }
+  }
+  const syncWarningCode = response.data.code;
+  assertAllowed();
+  const syncWarningMessage = syncWarningCode ? response.data.message : undefined;
+  const duplicateLotConflicts = response.data.conflicts || [];
+  let cloud: ReportDraft = {
+    ...response.data.data,
+    duplicateLotConflicts,
+    syncWarningCode,
+    syncWarningMessage,
+  };
+  assertSavedSnapshot(cloud);
+  const draftId = String(cloud.id || cloud._id || '');
+  const receiptById = (media: CloudDraftMedia[]) => new Map(media.map((item) => [item.clientFileId, item]));
+  const existing = receiptById(cloud.media || []);
+  const pending = entries.filter((entry) => !isConfirmedDraftEntry(entry, existing.get(entry.descriptor.clientFileId)));
+  let verified = entries.length - pending.length;
+  await report({ cloudId: draftId, verified, total: entries.length });
+  const checkpoint = async (batch: DraftMediaEntry[], media: CloudDraftMedia[] | undefined) => {
+    assertAllowed();
+    if (!Array.isArray(media)) return;
+    const saved = receiptById(media);
+    const count = batch.filter((entry) => isConfirmedDraftEntry(entry, saved.get(entry.descriptor.clientFileId))).length;
+    if (count) {
+      verified += count;
+      await report({ cloudId: draftId, verified, total: entries.length });
+    }
+  };
+
+  const unavailable = new Set<string>();
+  for (const batch of chunks(pending, TARGET_BATCH_SIZE)) {
+    assertAllowed();
+    const targetResponse = await cancellableUploadRequest(operation, (signal) => api.post<{ message: string; data: DraftUploadTarget[] }>(
+      `/report-drafts/${draftId}/media/targets`,
+      { media: batch.map((entry) => entry.descriptor) },
+      { timeout: 60000, signal }
+    ));
+    const targetById = new Map(
+      (targetResponse.data.data || []).map((target) => [target.clientFileId, target])
+    );
+    const multipart: DraftMediaEntry[] = [];
+    const direct: DraftMediaEntry[] = [];
+    for (const entry of batch) {
+      const target = targetById.get(entry.descriptor.clientFileId);
+      if (!target) throw new Error(`No storage target was returned for ${entry.descriptor.name}.`);
+      if (!target.alreadyUploaded && !entry.file) {
+        // Keep the missing descriptor and back up all other available originals.
+        unavailable.add(entry.descriptor.clientFileId);
+        continue;
+      }
+      if (target.alreadyUploaded || target.uploadUrl) direct.push(entry);
+      else multipart.push(entry);
+    }
+    // Confirm small groups so a long direct upload has durable checkpoints
+    // even if Android suspends the process between PUT and confirmation.
+    for (const directBatch of chunks(direct, MULTIPART_BATCH_SIZE)) {
+      await mapWithConcurrency(directBatch, UPLOAD_CONCURRENCY, async (entry) => {
+        assertAllowed();
+        const target = targetById.get(entry.descriptor.clientFileId)!;
+        if (!target.alreadyUploaded) {
+          await uploadLocalFileToPresignedUrl(entry.file!, target.uploadUrl!, entry.descriptor.mimeType);
+        }
+      });
+      assertAllowed();
+      const receipt = await cancellableUploadRequest(operation, (signal) => api.post<{ data: CloudDraftMedia[] }>(
+        `/report-drafts/${draftId}/media/confirm`,
+        { clientFileIds: directBatch.map((entry) => entry.descriptor.clientFileId) },
+        { timeout: 120000, signal }
+      ));
+      await checkpoint(directBatch, receipt.data.data);
+    }
+
+    for (const mediaBatch of chunks(multipart, MULTIPART_BATCH_SIZE)) {
+      assertAllowed();
+      const body = new FormData();
+      body.append('replace', 'false');
+      body.append('metadata', JSON.stringify(mediaBatch.map((entry) => entry.descriptor)));
+      mediaBatch.forEach((entry) => body.append('files', {
+        uri: entry.file!.uri,
+        name: entry.file!.name,
+        type: entry.file!.type,
+      } as any));
+      let mediaReceipt: CloudDraftMedia[] | undefined;
+      try {
+        const response = await cancellableUploadRequest(operation, (signal) => api.post<{ data: CloudDraftMedia[] }>(
+          `/report-drafts/${encodeURIComponent(draftId)}/media`,
+          body,
+          { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000, signal }
+        ));
+        mediaReceipt = response.data.data;
+        assertAllowed();
+      } catch (error) {
+        assertAllowed();
+        if (!isRetryableRequestError(error)) throw error;
+        // Multipart writes allocate fresh object keys. Never replay an
+        // uncertain batch: read the same draft before proceeding or retrying.
+        let savedMedia: CloudDraftMedia[] = [];
+        try {
+          const saved = await cancellableUploadRequest(operation, (signal) => api.get<{ data: ReportDraft }>(
+            `/report-drafts/${encodeURIComponent(draftId)}`, { signal }
+          ));
+          assertAllowed();
+          assertSavedSnapshot(saved.data.data, draftId);
+          savedMedia = saved.data.data.media || [];
+        } catch {
+          assertAllowed();
+          throw error;
+        }
+        const saved = receiptById(savedMedia);
+        if (!mediaBatch.every((entry) => isConfirmedDraftEntry(entry, saved.get(entry.descriptor.clientFileId)))) throw error;
+        mediaReceipt = savedMedia;
+      }
+      await checkpoint(mediaBatch, mediaReceipt);
+    }
+  }
+
+  assertAllowed();
+  const refreshed = await cancellableUploadRequest(operation, (signal) => api.get<{ data: ReportDraft }>(`/report-drafts/${encodeURIComponent(draftId)}`, { signal }));
+  assertAllowed();
+  cloud = {
+    ...refreshed.data.data,
+    duplicateLotConflicts,
+    syncWarningCode,
+    syncWarningMessage,
+  };
+  assertSavedSnapshot(cloud, draftId);
+  const finalMedia = receiptById(cloud.media || []);
+  const missing = entries.filter((entry) => !isConfirmedDraftEntry(entry, finalMedia.get(entry.descriptor.clientFileId)));
+  if (missing.length) {
+    const absent = missing.filter(entry => unavailable.has(entry.descriptor.clientFileId));
+    if (absent.length) {
+      throw draftError('DRAFT_ORIGINAL_UNAVAILABLE',
+        `${absent.length} draft original${absent.length === 1 ? ' is' : 's are'} unavailable on this device and still need a verified cloud backup. Keep the saved draft for recovery.`);
+    }
+    throw draftError('DRAFT_RECEIPTS_INCOMPLETE',
+      `${missing.length} draft media file${missing.length === 1 ? '' : 's'} could not be verified in cloud storage.`
+    );
+  }
+  hydrateCompleteCloudDraft(cloud, { cloudId: draftId, clientDraftId: snapshot.id, type: snapshot.type, revision, ownerId: snapshot.ownerId });
+  if (verified !== entries.length) await report({ cloudId: draftId, verified: entries.length, total: entries.length });
+  return cloud;
+}
 
 export default reportDraftService;

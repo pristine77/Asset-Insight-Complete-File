@@ -34,6 +34,14 @@ it('sends the installed app version with the existing owner and device context',
 });
 
 it.each([
+  ['capture-95396', 'capture-95396'], [undefined, 'draft-submission'], ['bad header', 'draft-submission'],
+])('preserves a valid explicit capture activity ID over the draft submission identity', async (explicit, expected) => {
+  const request = await prepareRequest({ url: '/report-drafts',
+    headers: { 'X-Activity-Id': explicit }, data: { clientDraftId: 'local-draft', formData: { clientSubmissionId: 'draft-submission' } } });
+  expect(request.headers['X-Activity-Id']).toBe(expected);
+});
+
+it.each([
   { message: 'Network Error' }, { code: 'ECONNABORTED', message: 'timeout' },
   { response: { status: 503, data: {} } }, { response: { status: 429, data: {} } }, { code: 'ERR_CANCELED' },
 ])('preserves offline credentials and cached owner on transient refresh failure %#', async (failure) => {

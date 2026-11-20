@@ -7,7 +7,7 @@ import { pauseActiveUploads, setUploadOwner } from './uploadCancellation';
 import { invalidateAuthOperations } from './authSessionOperation';
 
 jest.mock('./api', () => ({ __esModule: true, default: { post: jest.fn(), get: jest.fn(), delete: jest.fn() } }));
-jest.mock('./offlineCaptureStore', () => ({ __esModule: true, default: { getOwnerId: jest.fn() } }));
+jest.mock('./offlineCaptureStore', () => ({ __esModule: true, default: { getOwnerId: jest.fn(), beginDraftUpload: jest.fn(), updateDraftUpload: jest.fn() } }));
 jest.mock('./directR2UploadService', () => ({ uploadLocalFileToPresignedUrl: jest.fn() }));
 jest.mock('@react-native-community/netinfo', () => ({ __esModule: true, default: { fetch: jest.fn() } }));
 
@@ -49,6 +49,7 @@ const uploaded = (item: CloudDraftMedia): CloudDraftMedia => ({ ...item, url: `h
 let cloud: ReportDraft;
 let targetFor: (item: CloudDraftMedia) => object;
 let onMultipart: ((body: unknown, config: any) => Promise<unknown>) | undefined;
+const mediaResponse = () => ({ data: { data: cloud.media!.map(item => ({ ...item })) } });
 const apiResponse = () => ({ data: { data: JSON.parse(JSON.stringify(cloud)) } });
 beforeEach(() => {
   jest.resetAllMocks();
@@ -69,13 +70,13 @@ beforeEach(() => {
     if (String(url).endsWith('/media/targets')) return { data: { data: body.media.map(targetFor) } };
     if (String(url).endsWith('/media/confirm')) {
       cloud.media = cloud.media?.map((item) => body.clientFileIds.includes(item.clientFileId) ? uploaded(item) : item);
-      return apiResponse();
+      return mediaResponse();
     }
     if (url === '/report-drafts/cloud-draft/media') {
       if (onMultipart) return onMultipart(body, config);
       const ids = new Set(metadataFor(body).map((item) => item.clientFileId));
       cloud.media = cloud.media?.map((item) => ids.has(item.clientFileId) ? uploaded(item) : item);
-      return apiResponse();
+      return mediaResponse();
     }
     throw new Error(`Unexpected request: ${url}`);
   });
@@ -104,14 +105,14 @@ it.each(['asset', 'lotListing'] as const)('saves %s draft media when the backend
 it('preserves original URI references, lot/slot order, cover choices and video metadata', async () => {
   const draft = draftWith({ lots: [
     { id: 'lot-42', lotNumber: '42A', mainImages: [photo(0, { uri: 'file:///edited.jpg', originalUri: 'content://media/external/images/42' })], extraImages: [photo(1)],
-      videoFiles: [{ clientFileId: 'clip-42', uri: 'content://media/external/video/8', name: 'clip.mp4', type: 'video/mp4', size: 8000 }], coverIndex: 1 },
+      videoFiles: [{ clientFileId: 'clip-42', uri: 'file:///managed/clip.mp4', sourceUri: 'content://expired-picker/video/8', name: 'clip.mp4', type: 'video/mp4', size: 8000 }], coverIndex: 1 },
     { id: 'lot-56', lotNumber: '56', mainImages: [photo(2)], extraImages: [], videoFiles: [], coverIndex: 0 },
   ] });
   const snapshot = JSON.stringify(draft);
   await reportDraftService.upsertFromLocalDraft(draft);
   const body = multipartCalls()[0][1];
   expect(partsFor(body).filter((part) => part.fieldName === 'files').map((part) => part.uri)).toEqual([
-    'content://media/external/images/42', photo(1).uri, 'content://media/external/video/8', photo(2).uri,
+    'content://media/external/images/42', photo(1).uri, 'file:///managed/clip.mp4', photo(2).uri,
   ]);
   expect(metadataFor(body).map(({ clientFileId, lotId, slot, index, originalOrder }) => ({ clientFileId, lotId, slot, index, originalOrder }))).toEqual([
     { clientFileId: 'photo-0', lotId: 'lot-42', slot: 'main', index: 0, originalOrder: 0 },
@@ -214,6 +215,69 @@ it.each([400, 401, 403, 409, 413])('preserves terminal HTTP %i without a second 
   expect(api.get).not.toHaveBeenCalled();
 });
 
+it('resumes 493 of 1109 confirmed photos, including direct PUTs whose confirmation was interrupted', async () => {
+  const photos = Array.from({ length: 1109 }, (_, index) => photo(index));
+  const draft = draftWith({ captureId: 'capture-95396', lots: Array.from({ length: 77 }, (_, index) => ({
+    ...draftWith().lots[0], id: `lot-${index}`, mainImages: photos.slice(Math.floor(index * photos.length / 77), Math.floor((index + 1) * photos.length / 77)),
+  })) });
+  const stored = new Set(photos.slice(0, 493).map(item => item.clientFileId!));
+  const originalPost = jest.mocked(api.post).getMockImplementation()!;
+  let interrupted = true;
+  jest.mocked(api.post).mockImplementation(async (path, body: any, config) => {
+    if (path === '/report-drafts' && !cloud.media?.length) cloud.media = body.media.slice(0, 493).map(uploaded);
+    return originalPost(path, body, config);
+  });
+  targetFor = item => ({ clientFileId: item.clientFileId, r2Key: `draft/${item.clientFileId}`,
+    alreadyUploaded: stored.has(item.clientFileId), uploadUrl: `https://storage.invalid/${item.clientFileId}` });
+  const error = uncertainError();
+  jest.mocked(uploadLocalFileToPresignedUrl).mockImplementation(async (_, url) => {
+    const id = url.split('/').pop()!;
+    if (interrupted && id === 'photo-505') throw error;
+    expect(stored.has(id)).toBe(false);
+    stored.add(id);
+  });
+  const progress = jest.fn();
+  await expect(reportDraftService.upsertFromLocalDraft(draft, progress)).rejects.toBe(error);
+  expect(progress.mock.calls.map(([p]) => p.verified)).toEqual([493, 503]);
+  expect(confirmationCalls()).toHaveLength(1);
+  expect(confirmationCalls()[0][1]).toMatchObject({ clientFileIds: photos.slice(493, 503).map(p => p.clientFileId) });
+  const previousTargets = jest.mocked(api.post).mock.calls.length;
+  progress.mockClear();
+  interrupted = false;
+  const saved = await reportDraftService.upsertFromLocalDraft(JSON.parse(JSON.stringify(draft)), progress);
+  const secondTargets = jest.mocked(api.post).mock.calls.slice(previousTargets)
+    .filter(([path]) => String(path).endsWith('/media/targets')).flatMap(([, body]) => (body as any).media);
+  expect(secondTargets.map(item => item.clientFileId)).toEqual(photos.slice(503).map(p => p.clientFileId));
+  expect(progress.mock.calls[0][0]).toEqual({ cloudId: 'cloud-draft', verified: 503, total: 1109 });
+  expect(progress.mock.lastCall![0]).toEqual({ cloudId: 'cloud-draft', verified: 1109, total: 1109 });
+  expect(stored.size).toBe(1109);
+  expect(isVerifiedCloudBackupOfLocal(draft, saved)).toBe(true);
+  expect(jest.mocked(api.post).mock.calls.filter(([path]) => path === '/report-drafts')
+    .every(([, body, config]) => (body as any).revision === Date.parse(draft.updatedAt) &&
+      config?.headers?.['X-Activity-Id'] === draft.captureId)).toBe(true);
+});
+
+it.each([true, false])('a legacy transfer-time revision resumes only on a full server content match (%s)', async (matches) => {
+  const draft = draftWith();
+  const previous = await reportDraftService.upsertFromLocalDraft(draft);
+  const oldApkRevision = previous.revision! + 1000000;
+  const server = { ...previous, revision: oldApkRevision,
+    formData: { ...previous.formData, ...(matches ? {} : { changedElsewhere: true }) } };
+  const error = (code: string) => Object.assign(new Error(code), { response: { status: 409, data: { code, data: server } } });
+  jest.mocked(api.post).mockClear().mockImplementation(async (path, body: any) => {
+    expect(path).toBe('/report-drafts');
+    if (body.revision < oldApkRevision) throw error('STALE_DRAFT_REVISION');
+    expect(body.revision).toBe(oldApkRevision);
+    if (!matches) throw error('DRAFT_REVISION_CONFLICT');
+    return { data: { idempotent: true, data: server } };
+  });
+  jest.mocked(api.get).mockResolvedValue({ data: { data: server } });
+  const attempt = reportDraftService.upsertFromLocalDraft(draft);
+  if (matches) expect((await attempt).revision).toBe(oldApkRevision);
+  else await expect(attempt).rejects.toMatchObject({ code: 'DRAFT_MANIFEST_CONFLICT' });
+  expect(api.post).toHaveBeenCalledTimes(2);
+});
+
 it('an explicit retry uses the same draft/media identities and skips committed prior batches', async () => {
   const draft = draftWith({ lots: [{ ...draftWith().lots[0], mainImages: Array.from({ length: 11 }, (_, index) => photo(index, { clientFileId: undefined })) }] });
   const error = uncertainError();
@@ -275,6 +339,40 @@ it('blocks unavailable local media and missing target identities instead of manu
   targetFor = () => ({ clientFileId: 'other-photo', alreadyUploaded: false });
   await expect(reportDraftService.upsertFromLocalDraft(draftWith())).rejects.toThrow('No storage target');
   expect(multipartCalls()).toHaveLength(0);
+});
+
+it('keeps one missing photo in its lot, backs up its neighbours and retries only the restored original', async () => {
+  const draft = draftWith({ lots: [{ ...draftWith().lots[0], mainImages: [photo(0), photo(1, { missing: true }), photo(2)] }] });
+  const progress = jest.fn();
+  await expect(reportDraftService.upsertFromLocalDraft(draft, progress)).rejects.toMatchObject({ code: 'DRAFT_ORIGINAL_UNAVAILABLE' });
+  expect(progress.mock.lastCall![0]).toEqual({ verified: 2, total: 3, cloudId: 'cloud-draft' });
+  expect(cloud.media?.map(item => [item.clientFileId, !!item.uploadedAt])).toEqual([
+    ['photo-0', true], ['photo-1', false], ['photo-2', true],
+  ]);
+  draft.lots[0].mainImages[1] = photo(1);
+  await reportDraftService.upsertFromLocalDraft(draft, progress);
+  expect(multipartCalls().map(([, body]) => metadataFor(body).map(item => item.clientFileId))).toEqual([
+    ['photo-0', 'photo-2'], ['photo-1'],
+  ]);
+  expect(progress.mock.lastCall![0].verified).toBe(3);
+});
+
+it('reuses a verified cloud original even if its local copy has since become unavailable', async () => {
+  const draft = draftWith();
+  await reportDraftService.upsertFromLocalDraft(draft);
+  draft.lots[0].mainImages[0] = photo(0, { missing: true });
+  const saved = await reportDraftService.upsertFromLocalDraft(draft);
+  expect(api.get).toHaveBeenCalledWith('/report-drafts/client/local-draft', expect.objectContaining({ params: { type: 'asset' } }));
+  expect(multipartCalls()).toHaveLength(1);
+  expect(isVerifiedCloudBackupOfLocal(draft, saved)).toBe(true);
+});
+
+it('reports an unavailable original without creating an empty cloud draft when it has never been backed up', async () => {
+  jest.mocked(api.get).mockRejectedValue({ response: { status: 404 } });
+  const draft = draftWith();
+  draft.lots[0].mainImages[0] = photo(0, { missing: true });
+  await expect(reportDraftService.upsertFromLocalDraft(draft)).rejects.toMatchObject({ code: 'DRAFT_ORIGINAL_UNAVAILABLE' });
+  expect(api.post).not.toHaveBeenCalled();
 });
 
 it('refuses success if the final saved draft does not confirm every expected original', async () => {
@@ -385,6 +483,65 @@ it('never uses another draft, owner or type as local backup evidence', async () 
     expect(isVerifiedCloudBackupOfLocal(draft, { ...saved, ...different })).toBe(false);
   }
   expect(isVerifiedCloudBackupOfLocal({ ...draft, cloudId: 'other-cloud' }, saved)).toBe(false);
+});
+
+it('shares one transfer and one activity attempt between Save Preview and automatic sync of the same snapshot', async () => {
+  const started = deferred();
+  const release = deferred();
+  const draft = draftWith({ captureId: 'capture-shared' });
+  const initialProgress = jest.fn();
+  const resumedProgress = jest.fn();
+  onMultipart = async () => {
+    started.resolve(); await release.promise;
+    cloud.media = cloud.media?.map(uploaded);
+    return mediaResponse();
+  };
+  const manual = reportDraftService.upsertFromLocalDraft(draft, initialProgress);
+  await started.promise;
+  const automatic = reportDraftService.upsertFromLocalDraft(JSON.parse(JSON.stringify(draft)), resumedProgress);
+  release.resolve();
+  const [first, second] = await Promise.all([manual, automatic]);
+  expect(second).toBe(first);
+  expect(OfflineCaptureStore.beginDraftUpload).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(api.post).mock.calls.filter(([path]) => path === '/report-drafts')).toHaveLength(1);
+  expect(multipartCalls()).toHaveLength(1);
+  expect(initialProgress.mock.calls.map(([p]) => p.verified)).toEqual([0, 1]);
+  expect(resumedProgress.mock.calls).toEqual(initialProgress.mock.calls);
+});
+
+it('queues a new local revision while its older snapshot still has media in flight', async () => {
+  const started = deferred();
+  const release = deferred();
+  const older = draftWith({ captureId: 'capture-edited' });
+  const newer = draftWith({ captureId: older.captureId, title: 'New local title', updatedAt: '2026-10-01T10:00:00.000Z' });
+  onMultipart = async () => {
+    started.resolve(); await release.promise;
+    cloud.media = cloud.media?.map(uploaded);
+    return mediaResponse();
+  };
+  const first = reportDraftService.upsertFromLocalDraft(older);
+  await started.promise;
+  const next = reportDraftService.upsertFromLocalDraft(newer);
+  await Promise.resolve();
+  expect(OfflineCaptureStore.beginDraftUpload).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(api.post).mock.calls.filter(([path]) => path === '/report-drafts')).toHaveLength(1);
+  release.resolve();
+  expect((await first).title).toBe(older.title);
+  expect((await next).title).toBe(newer.title);
+  expect(multipartCalls()).toHaveLength(1);
+  expect(OfflineCaptureStore.beginDraftUpload).toHaveBeenCalledTimes(2);
+});
+
+it('honours an upload pause while the local activity journal is opening', async () => {
+  const journal = deferred<number>();
+  const opening = deferred();
+  jest.mocked(OfflineCaptureStore.beginDraftUpload).mockImplementationOnce(() => { opening.resolve(); return journal.promise; });
+  const result = reportDraftService.upsertFromLocalDraft(draftWith({ captureId: 'capture-before-journal' }));
+  await opening.promise;
+  pauseActiveUploads('connection');
+  journal.resolve(1);
+  await expect(result).rejects.toMatchObject({ code: 'ERR_CANCELED', pauseReason: 'connection' });
+  expect(api.post).not.toHaveBeenCalled();
 });
 
 it('holds the original metadata snapshot when the caller edits its draft mid-upload', async () => {

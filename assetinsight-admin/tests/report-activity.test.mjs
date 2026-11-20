@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { ACTIVITY_LABELS, activityEventLabel, activityOutcomeLabel, activityQuery, activityReceiptNote, activityRemoval, activityIdValid, backupReasonLabel, isBackupActivity, isUploadTransferActivity, uploadReasonLabel, logoLabel, parseActivityPage, parseActivityDetail, parseActivityLotPage } from '../lib/reportActivity.ts';
+import { ACTIVITY_LABELS, activityEventLabel, activityOutcomeLabel, activityQuery, activityReceiptNote, activityRemoval, activityIdValid, backupReasonLabel, draftUploadReasonLabel, isBackupActivity, isDraftUploadActivity, isUploadTransferActivity, uploadReasonLabel, logoLabel, parseActivityPage, parseActivityDetail, parseActivityLotPage } from '../lib/reportActivity.ts';
 test('offline review opens have a distinct searchable label, never a submission label', () => {
  assert.equal(ACTIVITY_LABELS.draft_opened, 'Draft opened for review');
  assert.equal(new URLSearchParams(activityQuery(new URLSearchParams('action=draft_opened'))).get('action'), 'draft_opened');
@@ -15,6 +15,40 @@ const backupEvent = (changes = {}) => ({
  ...changes,
 });
 const eventPage = event => ({data:{items:[event],total:1,page:1,limit:25}});
+test('draft upload stages are searchable and interrupted device events preserve exact receipts and the recorded reason', () => {
+ const event = backupEvent({action:'draft_upload_interrupted', outcome:'failed', data:{draftUploadCounts:{verified:493,total:1109},draftUploadReason:'no_completion_record'}});
+ for (const stage of ['started','resumed','progress','interrupted','finished']) {
+  const action = 'draft_upload_' + stage;
+  assert.equal(isDraftUploadActivity(action),true);
+  assert.equal(activityQuery(new URLSearchParams({action})), 'action=' + action);
+  if (stage !== 'finished' && stage !== 'interrupted') assert.equal(activityOutcomeLabel(action,'requested'),'Recorded');
+ }
+ for (const reason of ['offline_mode','connection_lost','transport_error','no_progress','server_error','rate_limited','authentication_required','access_denied','request_conflict','request_rejected','original_unavailable','receipts_incomplete','invalid_manifest','no_completion_record','unknown']) {
+  const parsed = parseActivityPage(eventPage({...event,data:{...event.data,draftUploadReason:reason}})).items[0];
+  assert.deepEqual(parsed.data.draftUploadCounts,{verified:493,total:1109});
+  assert.equal(typeof draftUploadReasonLabel(parsed.data.draftUploadReason), 'string');
+ }
+ assert.match(draftUploadReasonLabel('no_completion_record'), /cause was not recorded/);
+ assert.match(draftUploadReasonLabel(null), /cause was not recorded/);
+ for (const counts of [true,[],{}, {verified:494}, {total:1109}, {verified:1110,total:1109}, {verified:-1,total:1109}, {verified:0,total:NaN}, {verified:'493',total:1109}]) {
+  assert.throws(()=>parseActivityPage(eventPage({...event,data:{draftUploadCounts:counts}})));
+ }
+ assert.throws(()=>parseActivityPage(eventPage({...event,data:{draftUploadReason:'user_closed_app'}})));
+ assert.throws(()=>parseActivityPage(eventPage({...event,action:'draft_upload_progress'})));
+ assert.throws(()=>parseActivityPage(eventPage({...event,action:'draft_upload_finished',data:{draftUploadCounts:{verified:493,total:1109}}})));
+});
+test('current cloud draft counts in Asset and Lot Listing details can exist without a recorded device reason', () => {
+ for (const reportType of ['asset','lotListing']) {
+  const detail = {...row, reportType, canViewValues:false,canOpenPreview:false,canRemove:false,reportExists:false};
+  for (const evidence of [null, {verified:493,total:1109}, {verified:0,total:1109}, {verified:0,total:0}]) {
+   assert.deepEqual(parseActivityDetail({data:{...detail,draftUploadCounts:evidence}}).draftUploadCounts,evidence);
+  }
+  assert.equal(parseActivityDetail({data:detail}).draftUploadCounts,undefined);
+  for (const counts of [{verified:1110,total:1109}, {verified:.5,total:1}, 'missing']) {
+   assert.throws(()=>parseActivityDetail({data:{...detail,draftUploadCounts:counts}}));
+  }
+ }
+});
 test('backup actions are searchable independently of report submission', () => {
  for(const action of ['backup_started','backup_paused','backup_resumed','backup_interrupted','backup_completed']) {
   assert.equal(isBackupActivity(action),true);

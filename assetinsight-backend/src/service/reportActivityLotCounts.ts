@@ -1,6 +1,30 @@
 import mongoose from "mongoose";
 import { activityHash, activitySnapshot } from "../utils/reportActivitySnapshot.js";
 
+// Contract numbers can repeat across users, types and separate drafts.
+const draftIdentity = (stream: any) => ({
+  user: stream.owner, type: stream.reportType,
+  ...(stream.draftId ? { _id: stream.draftId } : { clientDraftId: stream.activityId }),
+});
+
+/** Current persisted verification receipts, independent of any device timeline. */
+export async function readDraftUploadCounts(stream: any): Promise<{ verified: number; total: number } | null> {
+  const model = mongoose.models.ReportDraft;
+  if (!model || stream.deleted || stream.baseline) return null;
+  const draft = await model.findOne({ ...draftIdentity(stream), storageMode: "r2_media" })
+    .select("media.r2Key media.uploadedAt media.verifiedSize media.size").lean();
+  if (!Array.isArray(draft?.media)) return null;
+  let verified = 0;
+  for (const media of draft.media) {
+    if (typeof media?.r2Key !== "string" || !media.r2Key.trim()) continue;
+    const date = media.uploadedAt;
+    if (!(date instanceof Date || typeof date === "string") || !Number.isFinite(new Date(date).getTime())) continue;
+    if (Number.isSafeInteger(media.verifiedSize) && media.verifiedSize > 0 &&
+        (media.size == null || media.size === 0 || media.size === media.verifiedSize)) verified++;
+  }
+  return { verified, total: draft.media.length };
+}
+
 // A read-only current-state projection, not reconstructed historical activity.
 // Never return photos, local paths, descriptions or other saved field values.
 export async function readActivityLotCounts(stream: any, page: number, limit: number) {
@@ -18,8 +42,7 @@ export async function readActivityLotCounts(stream: any, page: number, limit: nu
     if (row) { lots = fromSnapshot(row, name); source = "report"; asOf = row.updatedAt || null; }
   } else if (!stream.deleted) {
     const draftModel = mongoose.models.ReportDraft;
-    const draft = draftModel && await draftModel.findOne({ user: stream.owner, type: stream.reportType,
-      ...(stream.draftId ? { _id: stream.draftId } : { clientDraftId: stream.activityId }) })
+    const draft = draftModel && await draftModel.findOne(draftIdentity(stream))
       .select("lots media updatedAt").lean();
     if (draft) { lots = fromSnapshot(draft, "ReportDraft"); source = "draft"; asOf = draft.updatedAt || null; }
     else {

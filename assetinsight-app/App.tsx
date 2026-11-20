@@ -452,6 +452,7 @@ function MainApp() {
       case 'savedInputs':
         return (
           <OfflineReportsScreen
+            key={user?._id}
             onOpenDrawer={openDrawer}
             onBack={() => setActiveScreen('dashboard')}
             onContinueDraft={handleContinueOfflineDraft}
@@ -464,6 +465,7 @@ function MainApp() {
       case 'offlineReports':
         return (
           <OfflineReportsScreen
+            key={user?._id}
             onOpenDrawer={openDrawer}
             onBack={() => setActiveScreen('dashboard')}
             onContinueDraft={handleContinueOfflineDraft}

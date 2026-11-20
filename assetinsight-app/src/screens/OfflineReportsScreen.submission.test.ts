@@ -8,7 +8,8 @@ describe('Drafts submission boundary', () => {
     const handler = source.match(/const submitLocalDraft = useCallback\(([\s\S]*?)\}, \[onContinueDraft\]\);/)?.[1];
     expect(handler).toBeDefined();
     expect(handler).toContain('onContinueDraft(draft.id, draft.type)');
-    expect(handler).toContain('backgroundUploadManager.isBusy');
+    expect(handler).toContain('isEditingBlockedByUpload(draft.id)');
+    expect(source).toContain('return backgroundUploadManager.isBusy(draftId)');
     expect(source).toContain('onPress={() => submitLocalDraft(item.draft)}');
   });
 

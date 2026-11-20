@@ -90,3 +90,19 @@ describe('draft cloud sync state', () => {
     );
   });
 });
+
+it('automatically retries a recorded connection pause while honoring all other cancellations', () => {
+  const error = {code:'ERR_CANCELED', request:{}, message:'Upload paused'};
+  const failure = classifyDraftCloudSyncError({...error,pauseReason:'connection'},0,1000);
+  expect(failure).toMatchObject({kind:'network',retryable:true,retryAt:31_000});
+  expect(canAttemptDraftCloudSync(draftWith({cloudSyncError:failure.message,cloudSyncErrorKind:failure.kind,cloudSyncRetryAt:failure.retryAt}),{now:31_001})).toBe(true);
+  expect(classifyDraftCloudSyncError({...error,pauseReason:'offline_mode'}).retryable).toBe(false);
+  expect(classifyDraftCloudSyncError(error).retryable).toBe(false);
+});
+
+it('rechecks incomplete receipts after backoff and keeps hard failures out of automatic retry', () => {
+  const incomplete = classifyDraftCloudSyncError({code:'DRAFT_RECEIPTS_INCOMPLETE'},0,1000);
+  expect(incomplete).toMatchObject({kind:'verification',retryable:true,retryAt:31_000});
+  expect(getDraftCloudSyncMessage(draftWith({cloudSyncError:incomplete.message,cloudSyncErrorKind:incomplete.kind}))).toBe(incomplete.message);
+  expect(canAttemptDraftCloudSync(draftWith({cloudSyncError:'timeout',cloudSyncErrorKind:'auth'}))).toBe(false);
+});

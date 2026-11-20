@@ -29,13 +29,12 @@ export function onUploadOwnerChange(listener: (ownerId: string | null) => void):
   return () => { ownerListeners.delete(listener); };
 }
 /**
- * Why uploads were paused, when no person asked for it. Only the automatic
- * pause on a lost connection gives one; the Pause button, Offline mode and an
- * account change give none. A 'connection' pause lets the upload wait for a
+ * Observed cause when known. A lost connection and Offline capture mode
+ * carry distinct reasons. A 'connection' pause lets the upload wait for a
  * steady signal and continue by itself (uploadAutoResume.ts, 2026-10-11); the
  * others hold uploads until the person resumes them.
  */
-export type UploadPauseReason = 'connection';
+export type UploadPauseReason = 'connection' | 'offline_mode';
 // The reason for each pause, by the generation that pause started. The pause
 // that ended generation g is the one that started g + 1.
 const pauseReasons = new Map<number, UploadPauseReason>();

@@ -82,16 +82,25 @@ async function syncOnce(): Promise<void> {
   syncing = true;
   try {
     if (!didInit || AppState.currentState !== 'active' || !(await OfflineQueueService.isOnline())) return;
+    const owner = OfflineCaptureStore.getOwnerId();
+    if (!owner) return;
     const summaries = await OfflineCaptureStore.listSummaries();
     for (const summary of summaries) {
-      if (!didInit) return;
+      if (!didInit || owner !== OfflineCaptureStore.getOwnerId() || AppState.currentState !== 'active') return;
       if (summary.captureMode === 'offline' || summary.manualSubmissionRequired) continue;
-      const draft = await AutoSaveService.getDraft(summary.id);
-      if (!draft) continue;
-      if (!isCloudClean(draft)) {
-        await syncDraft(draft);
+      try {
+        // Read SQLite metadata first. Checking the filesystem for thousands of images is only
+        // necessary when a transfer is due, not every time the foreground timer fires.
+        const saved = await OfflineCaptureStore.getDraft(summary.id);
+        if (!saved || saved.ownerId !== owner || isCloudClean(saved) || !canAttemptDraftCloudSync(saved)) continue;
+        const draft = await AutoSaveService.getDraft(summary.id);
+        if (draft?.ownerId === owner && !isCloudClean(draft)) await syncDraft(draft);
+      } catch {
+        // One unreadable draft or unavailable local store must not starve the other drafts.
       }
     }
+  } catch {
+    // An unavailable network or database is checked again on the next foreground tick.
   } finally {
     syncing = false;
   }
@@ -107,6 +116,8 @@ const DraftSyncService = {
   init(): void {
     if (didInit) return;
     didInit = true;
+    const owner = OfflineCaptureStore.getOwnerId();
+    if (owner) void OfflineCaptureStore.reconcileDraftUploads(owner).catch(() => undefined);
     void syncOnce();
     syncInterval = setInterval(() => {
       void syncOnce();

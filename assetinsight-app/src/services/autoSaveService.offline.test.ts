@@ -80,6 +80,39 @@ it('keeps missing photo placeholders, their positions and cover selection', asyn
   expect(result.lots[0].coverIndex).toBe(1);
 });
 
+it('retries a previously interrupted import and clears its missing marker when the original returns', async () => {
+  const input = form();
+  jest.mocked(LocalMediaStore.importMedia).mockResolvedValueOnce(null);
+  const first = await AutoSaveService.saveDraft(input);
+  expect(first.lots[0].mainImages[0]).toMatchObject({ missing: true });
+  const retry = await AutoSaveService.saveDraft(input);
+  expect(retry.lots[0].mainImages[0]).toMatchObject({ uri:photo(1).uri, availability:'available', missing:false });
+  expect(retry.lots[0].mainImages).toHaveLength(2);
+});
+
+it.each(['asset', 'lotListing'] as const)('reopens an interrupted %s draft from its recorded original and retains missing slots', async type => {
+  const draft = await AutoSaveService.saveDraft({ ...form(), type });
+  const media = (id: string, size: number) => ({
+    uri: `file:///documents/managed/${id}`, sourceUri: `file:///cache/originals/${id}`,
+    mediaId: id, name: id, type: id.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg', size,
+  });
+  const photo = media('one.jpg', 300);
+  const missing = media('two.jpg', 400);
+  const video = media('three.mp4', 800);
+  const sizes = new Map([[photo.uri, 10], [photo.sourceUri, 300], [missing.sourceUri, 399], [video.sourceUri, 800]]);
+  jest.mocked(LocalMediaStore.getFileInfo).mockImplementation(async uri => ({ exists: sizes.has(uri), size: sizes.get(uri) }));
+  saved.set(draft.id, { ...draft, lots: [{ ...draft.lots[0], mainImages: [photo, missing], videoFiles: [video], coverIndex: 1 }] });
+  const reopened = await AutoSaveService.getDraft(draft.id);
+  expect(reopened?.lots[0]).toMatchObject({
+    id: 'lot', coverIndex: 1,
+    mainImages: [
+      { mediaId: 'one.jpg', originalUri: photo.sourceUri, availability: 'available' },
+      { mediaId: 'two.jpg', uri: missing.uri, availability: 'missing' },
+    ],
+    videoFiles: [{ mediaId: 'three.mp4', uri: video.sourceUri, availability: 'available' }],
+  });
+});
+
 it('serializes competing autosaves for the same draft before reading the prior revision', async () => {
   const first = form(); const second = { ...form(), title: 'Latest user edit' };
   await Promise.all([AutoSaveService.saveDraft(first), AutoSaveService.saveDraft(second)]);

@@ -1,3 +1,5 @@
+import { AppState } from 'react-native';
+import OfflineQueueService from './offlineQueueService';
 import AutoSaveService, { type OfflineReportDraft } from './autoSaveService';
 import OfflineCaptureStore from './offlineCaptureStore';
 import reportDraftService, { type ReportDraft } from './reportDraftService';
@@ -6,7 +8,7 @@ import DraftSyncService from './draftSyncService';
 jest.mock('./autoSaveService', () => ({ __esModule: true, default: {
   markDraftCloudSynced: jest.fn(), markDraftCloudSyncError: jest.fn(), getDraft: jest.fn(),
 } }));
-jest.mock('./offlineCaptureStore', () => ({ __esModule: true, default: { getOwnerId: jest.fn() } }));
+jest.mock('./offlineCaptureStore', () => ({ __esModule: true, default: { getOwnerId: jest.fn(), listSummaries: jest.fn(), getDraft: jest.fn(), reconcileDraftUploads: jest.fn(async () => undefined) } }));
 jest.mock('./reportDraftService', () => ({ __esModule: true, default: { upsertFromLocalDraft: jest.fn() } }));
 jest.mock('./offlineQueueService', () => ({ __esModule: true, default: { isOnline: jest.fn() } }));
 
@@ -105,4 +107,33 @@ it('never sends a draft with no photos or video to the cloud', async () => {
   expect((await DraftSyncService.syncDraft({ ...draftFor(), lots: [] }, { force: true })).status).toBe('skipped');
   expect(reportDraftService.upsertFromLocalDraft).not.toHaveBeenCalled();
   expect(AutoSaveService.markDraftCloudSyncError).not.toHaveBeenCalled();
+});
+
+
+it('resumes due copies after launch even if another draft cannot open, and skips checking clean originals', async () => {
+  const old = AppState.currentState;
+  const draft = draftFor();
+  const clean = { ...draft, id: 'clean', cloudSyncedAt: draft.updatedAt };
+  const blocked = { ...draft, id: 'blocked', cloudSyncErrorKind: 'auth' as const, cloudSyncError: 'Sign in' };
+  AppState.currentState = 'active';
+  jest.mocked(OfflineQueueService.isOnline).mockResolvedValue(true);
+  jest.mocked(OfflineCaptureStore.reconcileDraftUploads).mockResolvedValue(undefined);
+  jest.mocked(OfflineCaptureStore.listSummaries).mockResolvedValue(
+    ['bad', clean.id, blocked.id, draft.id].map(id => ({id,captureMode:'online'})) as any);
+  jest.mocked(OfflineCaptureStore.getDraft).mockImplementation(async id => {
+    if (id === 'bad') throw new Error('unreadable draft');
+    return id === clean.id ? clean : id === blocked.id ? blocked : draft;
+  });
+  jest.mocked(AutoSaveService.getDraft).mockResolvedValue(draft);
+  try {
+    DraftSyncService.init();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(OfflineCaptureStore.reconcileDraftUploads).toHaveBeenCalledWith('owner-a');
+    expect(AutoSaveService.getDraft).toHaveBeenCalledTimes(1);
+    expect(AutoSaveService.getDraft).toHaveBeenCalledWith(draft.id);
+    expect(AutoSaveService.markDraftCloudSynced).toHaveBeenCalledTimes(1);
+  } finally {
+    DraftSyncService.cleanup();
+    AppState.currentState = old;
+  }
 });

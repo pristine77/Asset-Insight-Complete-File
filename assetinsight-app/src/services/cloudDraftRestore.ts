@@ -1,5 +1,5 @@
 import type { OfflineDraftType, SavedLotData, SavedPhotoFileData } from './autoSaveService';
-import type { ReportDraft } from './reportDraftService';
+import type { CloudDraftMedia, ReportDraft } from './reportDraftService';
 
 export type CloudDraftExpectation = {
   cloudId: string;
@@ -10,8 +10,17 @@ export type CloudDraftExpectation = {
 };
 
 const fail = (message: string): never => {
-  throw new Error(`${message} Your saved draft and original photos are unchanged. Open the original draft on the device used to capture it, or retry after its upload completes.`);
+  throw new Error(message);
 };
+
+/** The same receipt determines backup progress and whether a cloud original can be reopened. */
+export function isVerifiedDraftMedia(item: CloudDraftMedia): boolean {
+  const verifiedSize = Number(item?.verifiedSize);
+  return !!item?.uploadedAt && Number.isFinite(Date.parse(item.uploadedAt)) &&
+    typeof item.url === 'string' && /^https?:\/\/[^\s/]+(?:\/|$)/i.test(item.url) &&
+    Number.isFinite(verifiedSize) && verifiedSize > 0 &&
+    !(Number(item.size) > 0 && verifiedSize !== Number(item.size));
+}
 
 /** A detail response is not interchangeable with a cached row or another draft. */
 export function assertCloudDraftIdentity(cloud: ReportDraft, expected: CloudDraftExpectation): void {
@@ -71,17 +80,13 @@ export function hydrateCompleteCloudDraft(cloud: ReportDraft, expected: CloudDra
         fail('The saved media order is inconsistent.');
       }
     }
-    const verifiedSize = Number(item.verifiedSize);
-    if (!item.uploadedAt || !Number.isFinite(Date.parse(item.uploadedAt)) ||
-        typeof item.url !== 'string' || !/^https?:\/\/[^\s/]+(?:\/|$)/i.test(item.url) ||
-        !Number.isFinite(verifiedSize) || verifiedSize <= 0 ||
-        (Number(item.size) > 0 && verifiedSize !== Number(item.size))) incomplete++;
+    if (!isVerifiedDraftMedia(item)) incomplete++;
     if ((item.slot === 'video' && item.mimeType?.startsWith('image/')) ||
         (item.slot !== 'video' && item.mimeType?.startsWith('video/'))) {
       fail('A saved photo or video has the wrong media type.');
     }
   }
-  if (incomplete) fail(`${incomplete} of ${manifest.length} draft media files have not been completely uploaded and verified.`);
+  if (incomplete) fail(`${incomplete} of ${manifest.length} draft media files still need a verified backup. On the original phone, open Drafts and tap Sync All while online if the local draft is listed. If it is missing there too, contact support with the contract number before deleting any drafts.`);
 
   // The slot index is the saved editing position. Legacy capture order may be
   // per-lot rather than global, and must not move photos or change coverIndex.

@@ -17,7 +17,7 @@ export function needsExplicitUploadResume(state: unknown): boolean {
 export function setDraftCaptureMode(id: string, mode: 'online' | 'offline') {
   if (mode === 'offline') {
     held.add(id);
-    pauseActiveUploads();
+    pauseActiveUploads('offline_mode');
   }
 }
 export function allowsCloudDraft(draft: OfflineReportDraft) {

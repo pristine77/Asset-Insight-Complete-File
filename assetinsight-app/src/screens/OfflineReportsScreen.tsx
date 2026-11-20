@@ -25,7 +25,7 @@ import { useBackgroundUploads } from '../components/useBackgroundUploads';
 import backgroundUploadManager, { describeBackgroundUpload } from '../services/backgroundUploadManager';
 import reportDraftService, { isVerifiedCloudBackupOfLocal, ReportDraft } from '../services/reportDraftService';
 import DraftSyncService from '../services/draftSyncService';
-import { hydrateCompleteCloudDraft } from '../services/cloudDraftRestore';
+import { hydrateCompleteCloudDraft, isVerifiedDraftMedia } from '../services/cloudDraftRestore';
 import {
   canAttemptDraftCloudSync,
   getDraftCloudSyncMessage,
@@ -80,6 +80,7 @@ type UnifiedDraftItem =
       status: 'Cloud saved' | 'Backup incomplete';
       counts: { lots: number; images: number; videos: number };
       cloud: ReportDraft;
+      verifiedMedia: number;
     }
   | {
       id: string;
@@ -133,10 +134,7 @@ const formatDate = (value: string) =>
     minute: '2-digit',
   });
 
-const normalizeContractNo = (value?: string | null) =>
-  String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
-
-const draftKey = (type: string, value?: string | null) => `${type}:${normalizeContractNo(value)}`;
+const draftKey = (type: string, id?: string | null) => `${type}:${id || ''}`;
 
 
 const getDraftCounts = (draft: Pick<OfflineReportDraft | ReportDraft, 'lots'> & { media?: any[] }) => {
@@ -194,10 +192,6 @@ const isRecoverableQueueError = (job: OfflineQueueJob) =>
     String(job.lastError || '')
   );
 
-const hasCompleteCloudBackup = (cloud: ReportDraft) =>
-  cloud.storageMode !== 'local_media' && Array.isArray(cloud.media) &&
-  cloud.media.every((item) => !!item.url && !!item.uploadedAt && Number(item.verifiedSize) > 0);
-
 const isDraftCloudClean = (draft: OfflineReportDraft, cloud?: ReportDraft) => {
   // Server progress timestamps are not acknowledgements of this local revision.
   if (cloud && !isVerifiedCloudBackupOfLocal(draft, cloud)) return false;
@@ -210,7 +204,11 @@ const isDraftCloudClean = (draft: OfflineReportDraft, cloud?: ReportDraft) => {
 // replaces that snapshot or removes its original media.
 const heldByBackgroundUpload = (draftId: string) => Boolean(backgroundUploadManager.statusFor(draftId));
 
-
+const isEditingBlockedByUpload = (draftId: string) => {
+  const transfer = backgroundUploadManager.statusFor(draftId);
+  return backgroundUploadManager.isBusy(draftId) &&
+    !(transfer?.durable && ['paused', 'attention'].includes(transfer.status));
+};
 
 const OfflineReportsScreen = ({
   onOpenDrawer,
@@ -235,6 +233,7 @@ const OfflineReportsScreen = ({
   const mounted = useRef(true);
   const loadRevision = useRef(0);
   const loadsInFlight = useRef(0);
+  const localActorEpoch = useRef<number | null>(null);
   const loadedActorEpoch = useRef<number | null>(null);
   const deletingItems = useRef(new Set<string>());
   useEffect(() => {
@@ -259,7 +258,8 @@ const OfflineReportsScreen = ({
   const syncOneDraft = useCallback(async (draft: OfflineReportDraft, force = false) => {
     const owner = OfflineCaptureStore.getOwnerId();
     if (!owner || draft.ownerId !== owner) return;
-    const isCurrent = () => mounted.current && OfflineCaptureStore.getOwnerId() === owner;
+    const actorEpoch = getAuthOperationEpoch();
+    const isCurrent = () => mounted.current && OfflineCaptureStore.getOwnerId() === owner && getAuthOperationEpoch() === actorEpoch;
     if (!canAttemptDraftCloudSync(draft, { force }) || heldByBackgroundUpload(draft.id)) return;
     setSyncingDraftIds((prev) => new Set(prev).add(draft.id));
     try {
@@ -313,7 +313,7 @@ const OfflineReportsScreen = ({
       OfflineCaptureStore.getOwnerId() === owner && getAuthOperationEpoch() === actorEpoch && revision === loadRevision.current;
     loadsInFlight.current += 1;
     try {
-    const [nextDrafts, nextJobs, connectivity] = await Promise.all([
+    const [nextDrafts, nextJobs] = await Promise.all([
       OfflineCaptureStore.listSummaries().then(async (summaries) => {
         const online = summaries.filter((draft) => draft.captureMode !== 'offline' && !draft.manualSubmissionRequired);
         const drafts: OfflineReportDraft[] = [];
@@ -321,8 +321,21 @@ const OfflineReportsScreen = ({
         return drafts;
       }),
       OfflineQueueService.getJobs(),
-      OfflineQueueService.getConnectivityStatus(),
     ]);
+    if (!isCurrent()) return;
+    if (localActorEpoch.current !== actorEpoch) {
+      // A new session has no usable remote list until its own fetch finishes.
+      loadedActorEpoch.current = null;
+      setCloudDrafts([]);
+      setSavedInputs([]);
+      setStorageSummary(null);
+      setConnectionStatus('unknown');
+      setSyncingDraftIds(new Set());
+    }
+    localActorEpoch.current = actorEpoch;
+    setDrafts(nextDrafts);
+    setJobs(nextJobs);
+    const connectivity = await OfflineQueueService.getConnectivityStatus();
     if (!isCurrent()) return;
 
     let nextSavedInputs: SavedInput[] = [];
@@ -338,6 +351,7 @@ const OfflineReportsScreen = ({
 
     let nextCloudDrafts: ReportDraft[] = [];
     if (connectivity.status === 'online') {
+      if (!isCurrent()) return;
       try {
         nextCloudDrafts = await reportDraftService.list();
       } catch {
@@ -347,8 +361,8 @@ const OfflineReportsScreen = ({
 
     if (!isCurrent()) return;
     loadedActorEpoch.current = actorEpoch;
-    setDrafts(nextDrafts);
-    setJobs(nextJobs);
+    // A local edit or queue notification may have arrived during the network reads.
+    // The remote list supplies only cloud rows; it never republishes the older local snapshot.
     setSavedInputs(nextSavedInputs);
     setCloudDrafts(nextCloudDrafts);
     setConnectionStatus(connectivity.status);
@@ -371,6 +385,9 @@ const OfflineReportsScreen = ({
       .catch(() => undefined);
 
     if (connectivity.status === 'online' && syncAfterLoad) {
+      // The form can be edited while the remote list loads. Skip superseded
+      // snapshots here; the normal sync pass reads the new revision.
+      const currentRevisions = new Map((await OfflineCaptureStore.listSummaries()).map(row => [row.id, row.localRevision]));
       const cloudByKey = new Map(
         nextCloudDrafts.map((draft) => [
           draftKey(draft.type, draft.clientDraftId || draft.id || draft._id),
@@ -379,6 +396,7 @@ const OfflineReportsScreen = ({
       );
       for (const draft of nextDrafts) {
         if (!isCurrent()) return;
+        if (!currentRevisions.has(draft.id) || currentRevisions.get(draft.id) !== draft.localRevision) continue;
         const cloud = cloudByKey.get(draftKey(draft.type, draft.id));
         if (!isDraftCloudClean(draft, cloud)) {
           void syncOneDraft(draft);
@@ -475,6 +493,8 @@ const OfflineReportsScreen = ({
     for (const cloud of cloudDrafts) {
       const key = draftKey(cloud.type, cloud.clientDraftId || cloud.id || cloud._id);
       if (localKeys.has(key)) continue;
+      const verifiedMedia = Array.isArray(cloud.media)
+        ? cloud.media.reduce((n, item) => n + Number(isVerifiedDraftMedia(item)), 0) : 0;
       merged.push({
         id: `cloud:${cloud.id || cloud._id}`,
         source: 'cloud',
@@ -482,9 +502,11 @@ const OfflineReportsScreen = ({
         title: cloud.title || cloud.contractNo,
         contractNo: cloud.contractNo,
         updatedAt: cloud.updatedAt,
-        status: hasCompleteCloudBackup(cloud) ? 'Cloud saved' : 'Backup incomplete',
+        status: cloud.storageMode !== 'local_media' && Array.isArray(cloud.media) && verifiedMedia === cloud.media.length
+          ? 'Cloud saved' : 'Backup incomplete',
         counts: getDraftCounts(cloud),
         cloud,
+        verifiedMedia,
       });
     }
 
@@ -638,71 +660,84 @@ const OfflineReportsScreen = ({
   const submitLocalDraft = useCallback((draft: OfflineReportDraft) => {
     // Every draft uses the canonical form's complete settings, validation, and
     // same-ID upload flow. Opening this screen never submits or clears a draft.
-    const transfer = backgroundUploadManager.statusFor(draft.id);
-    if (backgroundUploadManager.isBusy(draft.id) && !(transfer?.durable && ['paused', 'attention'].includes(transfer.status))) {
+    if (draft.ownerId !== OfflineCaptureStore.getOwnerId() || localActorEpoch.current !== getAuthOperationEpoch()) return;
+    if (isEditingBlockedByUpload(draft.id)) {
       Alert.alert('Uploading in the background', 'This draft is uploading in the background. Pause it from the upload bar to edit it, or continue when the upload finishes.');
       return;
     }
-    if (draft.ownerId !== OfflineCaptureStore.getOwnerId()) return;
     onContinueDraft(draft.id, draft.type);
   }, [onContinueDraft]);
 
   const continueCloudDraft = useCallback(async (listed: ReportDraft) => {
     if (openingDraft.current) return;
     const ownerId = OfflineCaptureStore.getOwnerId();
+    const actorEpoch = getAuthOperationEpoch();
     const cloudId = listed.id || listed._id || '';
-    if (!ownerId || !cloudId) return;
-    const isCurrent = () => mounted.current && OfflineCaptureStore.getOwnerId() === ownerId;
+    const listedOwner = typeof listed.user === 'string' ? listed.user : listed.user?._id;
+    if (!ownerId || !cloudId || (listedOwner && listedOwner !== ownerId) || loadedActorEpoch.current !== actorEpoch) return;
+    const isCurrent = () => mounted.current && OfflineCaptureStore.getOwnerId() === ownerId && getAuthOperationEpoch() === actorEpoch;
     const localId = listed.clientDraftId || `cloud-${cloudId}`;
     const checkCanOpen = (draft: OfflineReportDraft) => {
       if (!isCurrent() || draft.ownerId !== ownerId || draft.type !== listed.type) {
         throw new Error('The signed-in account changed. Reopen drafts from the owner account.');
       }
+      if (draft.id !== localId || (draft.cloudId && draft.cloudId !== cloudId)) {
+        throw new Error('The phone copy belongs to a different draft. Refresh Drafts and open the matching saved copy.');
+      }
       if (['accepted', 'submitted', 'discarded'].includes(draft.submissionState || '')) {
         throw new Error('This draft is no longer editable. Check Reports or Previews; its saved media has not been changed.');
       }
-      if (backgroundUploadManager.isBusy(draft.id)) {
+      if (isEditingBlockedByUpload(draft.id)) {
         throw new Error('This draft is uploading in the background. Pause it from the upload bar before opening it.');
       }
+    };
+    const openLocalIfPresent = async () => {
+      if (!isCurrent()) return false;
+      const local = await AutoSaveService.getDraft(localId);
+      if (!isCurrent() || !local) return false;
+      checkCanOpen(local);
+      onContinueDraft(local.id, local.type);
+      return true;
     };
     openingDraft.current = true;
     setOpeningCloudId(cloudId);
     try {
       // A local draft wins even if the list shows a newer cloud timestamp.
       // Progress timestamps and partially uploaded manifests are not newer edits.
-      const existing = await AutoSaveService.getDraft(localId);
-      if (!isCurrent()) return;
-      if (existing) {
-        checkCanOpen(existing);
-        onContinueDraft(existing.id, existing.type);
-        return;
-      }
+      if (await openLocalIfPresent() || !isCurrent()) return;
       if (heldByBackgroundUpload(localId)) {
         throw new Error('This saved upload is still held on this device. Open it from the upload bar; its original files have not been replaced.');
       }
-      const cloud = await reportDraftService.get(cloudId);
+      const detail = await reportDraftService.get(cloudId).then(
+        (cloud) => ({ ok: true as const, cloud }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
       if (!isCurrent()) return;
+      // A device save during the request wins even if the cloud fetch failed
+      // or its backup still has missing receipts.
+      if (await openLocalIfPresent() || !isCurrent()) return;
+      if (heldByBackgroundUpload(localId)) {
+        throw new Error('An upload now holds this draft. Keep its originals and open it from the upload bar.');
+      }
+      if (!detail.ok) throw detail.error;
+      const cloud = detail.cloud;
       const lots = hydrateCompleteCloudDraft(cloud, {
         cloudId, clientDraftId: listed.clientDraftId, type: listed.type,
         revision: listed.revision, ownerId,
       });
-      // The list can predate a local save or a paused upload. Never overwrite it.
-      const current = await AutoSaveService.getDraft(localId);
-      if (!isCurrent()) return;
-      if (current) {
-        checkCanOpen(current);
-        onContinueDraft(current.id, current.type);
-        return;
+      let local: OfflineReportDraft;
+      try {
+        local = await AutoSaveService.saveCloudDraftSnapshot({
+          ownerId, id: localId, cloudId, type: cloud.type, title: cloud.title,
+          contractNo: cloud.contractNo, normalizedContractNo: cloud.normalizedContractNo,
+          formData: cloud.formData, lots, activeLotIdx: cloud.activeLotIdx || 0,
+          createdAt: cloud.createdAt, updatedAt: cloud.updatedAt,
+        });
+      } catch (error) {
+        // SQLite's create-only transaction can lose the race to a device save.
+        if (await openLocalIfPresent() || !isCurrent()) return;
+        throw error;
       }
-      if (heldByBackgroundUpload(localId)) {
-        throw new Error('An upload now holds this draft. Keep its originals and open it from the upload bar.');
-      }
-      const local = await AutoSaveService.saveCloudDraftSnapshot({
-        ownerId, id: localId, cloudId, type: cloud.type, title: cloud.title,
-        contractNo: cloud.contractNo, normalizedContractNo: cloud.normalizedContractNo,
-        formData: cloud.formData, lots, activeLotIdx: cloud.activeLotIdx || 0,
-        createdAt: cloud.createdAt, updatedAt: cloud.updatedAt,
-      });
       if (!isCurrent()) return;
       checkCanOpen(local);
       onContinueDraft(local.id, local.type);
@@ -712,7 +747,7 @@ const OfflineReportsScreen = ({
       Alert.alert('Draft could not be opened', feedback.message);
     } finally {
       openingDraft.current = false;
-      if (isCurrent()) setOpeningCloudId(null);
+      if (mounted.current) setOpeningCloudId(null);
     }
   }, [onContinueDraft]);
 
@@ -830,6 +865,7 @@ const OfflineReportsScreen = ({
     // holding in line cannot be deleted (the bar's Pause comes first).
     const background = item.source === 'local' ? backgroundUploadManager.statusFor(item.draft.id) : undefined;
     const uploadingInBackground = item.source === 'local' && backgroundUploadManager.isBusy(item.draft.id);
+    const deleteDisabled = uploadingInBackground || loadedActorEpoch.current !== getAuthOperationEpoch();
 
     return (
       <View key={item.id} style={styles.card}>
@@ -872,8 +908,9 @@ const OfflineReportsScreen = ({
         {item.source === 'cloud' && item.status === 'Backup incomplete' ? (
           <View style={[styles.errorBox, styles.retryBox]}>
             <Text style={[styles.errorText, styles.retryText]}>
-              Some originals are not confirmed in this backup. Keep the original device and its photos.
-              Opening will check the latest backup; an incomplete copy will not replace your draft.
+              {item.cloud.storageMode === 'local_media' || !Array.isArray(item.cloud.media)
+                ? 'Open the saved draft on the original phone to access its photos.'
+                : `${item.verifiedMedia} of ${item.cloud.media.length} media files verified in the cloud. On the original phone, open the local draft to continue, or tap Sync All while online to resume its backup.`}
             </Text>
           </View>
         ) : null}
@@ -990,11 +1027,11 @@ const OfflineReportsScreen = ({
           )}
 
           <TouchableOpacity
-            style={[styles.secondaryAction, uploadingInBackground && styles.actionDisabled]}
+            style={[styles.secondaryAction, deleteDisabled && styles.actionDisabled]}
             onPress={() => deleteItem(item)}
-            disabled={uploadingInBackground}
+            disabled={deleteDisabled}
             accessibilityRole="button"
-            accessibilityState={{ disabled: uploadingInBackground }}
+            accessibilityState={{ disabled: deleteDisabled }}
           >
             <Feather name="trash-2" size={15} color="#DC2626" />
             <Text style={styles.deleteText}>Delete</Text>
@@ -1123,7 +1160,7 @@ const OfflineReportsScreen = ({
         <CaptureBackupPanel />
         <UploadContinuationPanel onOpen={onContinueDraft} />
         <OfflineCaptureList onOpen={onContinueDraft} />
-        {loading ? (
+        {loading && items.length === 0 ? (
           <View style={styles.loadingState}>
             <ActivityIndicator size="large" color="#E11D48" />
           </View>

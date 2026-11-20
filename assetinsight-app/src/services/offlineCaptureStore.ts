@@ -8,6 +8,7 @@ import type { CaptureContext, NativeCaptureJournal, OfflineDraftCounts, OfflineS
 import type { MixedLot } from '../components/camera/types';
 import { activityBatch, activityCounts, observeActivity, type ActivityState, type DeviceActivity } from './reportActivityObservation';
 import { backupContent, backupOriginalUri, isBackupCandidate } from './captureBackupSnapshot';
+import { beginDraftUpload, draftUploadSchema, recoverDraftUploads, updateDraftUpload, type DraftReceiptCounts, type DraftUploadReason } from './draftUploadJournal';
 import type { DurableContinuationIntent } from './durableContinuationTypes';
 
 const LEGACY_DRAFTS = '@clearvalue_offline_report_drafts_v1';
@@ -16,6 +17,7 @@ const LEGACY_QUEUE = '@clearvalue_offline_submit_queue_v1';
 const schema = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
+${draftUploadSchema}
 CREATE TABLE IF NOT EXISTS capture_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS report_upload_continuations (
   owner_id TEXT NOT NULL, id TEXT NOT NULL, parent_work_item_id TEXT NOT NULL, data TEXT NOT NULL,
@@ -319,8 +321,43 @@ export function createOfflineCaptureStore(openDatabase: DatabaseFactory, legacyS
     return saved;
   }
 
+  let uploadRuntime: string | undefined;
+  // A new login/runtime can report an unfinished previous attempt once, including while offline.
+  async function journalTransaction<T>(owner: string, work: (tx: SQLiteDatabase, runtime: string) => Promise<T>) {
+    const runtime = uploadRuntime ??= randomUUID();
+    return serialize(async () => {
+      await initialize();
+      let result!: T;
+      await (await db()).withExclusiveTransactionAsync(async tx => {
+        assertOwner(owner);
+        if (runtime !== uploadRuntime) throw new Error('The draft upload session changed.');
+        result = await work(tx, runtime);
+        assertOwner(owner);
+        if (runtime !== uploadRuntime) throw new Error('The draft upload session changed.');
+      });
+      return result;
+    });
+  }
+
   const store = {
-    setOwner(value: string | null) { ownerId = value?.trim() || null; },
+    setOwner(value: string | null) {
+      const next = value?.trim() || null;
+      if (ownerId !== next) uploadRuntime = undefined;
+      ownerId = next;
+    },
+    reconcileDraftUploads(owner: string) {
+      return journalTransaction(owner, (tx, runtime) => recoverDraftUploads(tx, owner, runtime));
+    },
+    beginDraftUpload(draft: OfflineReportDraft) {
+      const owner = requireOwner();
+      if (!draft.captureId || draft.ownerId !== owner) throw new Error('Local draft identity is unavailable.');
+      const context = { activityId: draft.captureId, reportType: draft.type, contract: draft.contractNo || '',
+        source: Platform.OS === 'ios' ? 'ios' as const : 'android' as const, appVersion: getAppVersionLabel() };
+      return journalTransaction(owner, (tx, runtime) => beginDraftUpload(tx, owner, draft.id, runtime, context));
+    },
+    updateDraftUpload(owner: string, id: number, update: DraftReceiptCounts | 'finished' | DraftUploadReason) {
+      return journalTransaction(owner, tx => updateDraftUpload(tx, owner, id, update));
+    },
     getOwnerId() { return ownerId; },
     initialize,
     subscribeSaved(listener: () => void) { savedListeners.add(listener); return () => { savedListeners.delete(listener); }; },

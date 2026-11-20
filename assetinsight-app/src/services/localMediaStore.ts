@@ -255,7 +255,7 @@ export const LocalMediaStore = {
       }
 
       const ownership = durableMediaOwnership(sourceUri);
-      if (ownership && !sourceInfo.exists) return null;
+      if (sourceInfo.size === 0 || (ownership && !sourceInfo.exists)) return null;
       if (ownership && sourceInfo.exists) {
         return {
           mediaId: args.mediaId || makeMediaId(),
@@ -277,23 +277,28 @@ export const LocalMediaStore = {
       const fileName = `${safeNamePart(args.lotId)}_${args.slot}_${String(args.index).padStart(4, '0')}_${safeNamePart(mediaId)}.${ext}`;
       const destinationUri = `${draftDir}${fileName}`;
 
-      if (sourceUri !== destinationUri && !(await fileExists(destinationUri, assertOwner))) {
+      let copiedInfo = await getFileInfo(destinationUri);
+      assertOwner();
+      if (!copiedInfo.exists || !sourceInfo.size || copiedInfo.size !== sourceInfo.size) {
+        // An interrupted copy must never leave a partial file at the URI saved in the draft.
+        const stagingUri = `${destinationUri}.${makeMediaId()}.part`;
         try {
+          await FileSystem.copyAsync({ from: sourceUri, to: stagingUri });
           assertOwner();
-          await FileSystem.copyAsync({ from: sourceUri, to: destinationUri });
+          copiedInfo = await getFileInfo(stagingUri);
+          assertOwner();
+          if (!copiedInfo.exists || !copiedInfo.size ||
+              (sourceInfo.size !== undefined && copiedInfo.size !== sourceInfo.size)) {
+            throw new Error('The local copy did not contain the complete media file.');
+          }
+          await FileSystem.moveAsync({ from: stagingUri, to: destinationUri });
           assertOwner();
         } catch (error) {
           assertOwner();
+          await deleteIfExists(stagingUri, assertOwner);
           console.warn(`[LocalMediaStore] Failed to import media: ${sourceUri}`, error);
           return null;
         }
-      }
-
-      const copiedInfo = await getFileInfo(destinationUri);
-      assertOwner();
-      if (!copiedInfo.exists) {
-        console.warn(`[LocalMediaStore] Imported media is missing after copy: ${destinationUri}`);
-        return null;
       }
 
       let thumbnailUri: string | undefined;
