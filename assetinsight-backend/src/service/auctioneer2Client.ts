@@ -363,22 +363,22 @@ const AUCTIONEER_LOT_REFUSALS: ReadonlyArray<{ pattern: RegExp; code: string; te
   {
     pattern: /^description is required$/,
     code: "DESCRIPTION_REQUIRED",
-    text: "DESCRIPTION_REQUIRED: Auctioneer 2.0 needs a description for this lot. Add one to the lot in the report, then retry.",
+    text: "DESCRIPTION_REQUIRED: Auctioneer 2.0 needs a description for this lot. Contact support to review the description in the saved delivery before retrying.",
   },
   {
     pattern: /^A selected service is no longer active in the revenue contract catalog\.$/,
     code: "SERVICE_INACTIVE",
-    text: "SERVICE_INACTIVE: One of the lot's services has been switched off in Auctioneer 2.0. Remove it from the lot's services, or ask the office to switch it back on, then retry.",
+    text: "SERVICE_INACTIVE: One of the lot's services has been switched off in Auctioneer 2.0. Ask the office to switch it back on, or contact support to review the services in the saved delivery.",
   },
   {
     pattern: /^(Each selected service must [^\r\n]{1,120}|A lot cannot have more than \d{1,4} selected services\.|selectedServices must be an array\.)$/,
     code: "SERVICES_REJECTED",
-    text: "SERVICES_REJECTED: Auctioneer 2.0 did not accept the lot's services list. Review the lot's services, then retry.",
+    text: "SERVICES_REJECTED: Auctioneer 2.0 did not accept the lot's services list. Contact support to review the services in the saved delivery before retrying.",
   },
   {
     pattern: /^childCategory must be \d{1,4} characters or fewer\.$/,
     code: "CATEGORY_REJECTED",
-    text: "CATEGORY_REJECTED: Auctioneer 2.0 did not accept the lot's category name. Choose the category again, then retry.",
+    text: "CATEGORY_REJECTED: Auctioneer 2.0 did not accept the lot's category name. Contact support to review the category in the saved delivery before retrying.",
   },
 ];
 
@@ -386,9 +386,12 @@ const AUCTIONEER_LOT_REFUSALS: ReadonlyArray<{ pattern: RegExp; code: string; te
 export function knownAuctioneerRefusal(messages: readonly string[]): { code: string; text: string } | undefined {
   const photo = messages.find(message => AUCTIONEER_PHOTO_REFUSALS.some(pattern => pattern.test(message)));
   if (photo) {
+    const reason = photo.startsWith("Photo bytes are ")
+      ? "Photo content does not match its declared image format"
+      : photo;
     return {
       code: "AUCTIONEER_PHOTO_REJECTED",
-      text: `AUCTIONEER_PHOTO_REJECTED: Auctioneer 2.0 refused a photo: "${photo}". Retry the delivery; Asset Insight now checks each photo's real format and converts it when needed. If it fails again, replace that photo in the report.`,
+      text: `AUCTIONEER_PHOTO_REJECTED: Auctioneer 2.0 refused a photo: "${reason}". Retry the delivery. If it fails again, contact support to review the photo in the saved delivery.`,
     };
   }
   for (const refusal of AUCTIONEER_LOT_REFUSALS) {

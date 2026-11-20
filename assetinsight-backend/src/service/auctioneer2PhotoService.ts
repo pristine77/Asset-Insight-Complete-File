@@ -6,6 +6,7 @@
  */
 import axios from "axios";
 import sharp from "sharp";
+import { normalizeHeicToJpegBuffer } from "../utils/imageProcessing.js";
 /*
    These failures are all things the person retrying can act on — a photo on a
    host we will not fetch from, an attachment that is not an image, one too
@@ -121,7 +122,7 @@ export function sniffAuctioneerImageType(bytes: Buffer): string | null {
 }
 
 /** What a photo Auctioneer cannot take is, in words, for the message that names it. */
-function describeImageBytes(bytes: Buffer, label: string): string {
+function describeImageBytes(bytes: Buffer): string {
   if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
     const brand = bytes.subarray(8, 12).toString("ascii").toLowerCase();
     if (/^(heic|heix|hevc|hevx|mif1|msf1)$/.test(brand)) return "HEIC (iPhone)";
@@ -131,13 +132,11 @@ function describeImageBytes(bytes: Buffer, label: string): string {
     if (head === "II*\u0000" || head === "MM\u0000*") return "TIFF";
     if (head.startsWith("BM")) return "BMP";
   }
-  const declared = normalizeContentType(label);
-  return declared && declared !== "image/jpeg" ? declared : "unrecognised image";
+  return "unrecognised image";
 }
 
 async function prepareAuctioneerImage(
   input: Buffer,
-  sourceContentType: string,
   photoNumber = 1
 ): Promise<{ buffer: Buffer; contentType: string; transformed: boolean }> {
   // Sent as-is only when the bytes are a type Auctioneer takes, labelled by
@@ -161,10 +160,18 @@ async function prepareAuctioneerImage(
     { width: 4500, quality: 76 },
     { width: 3200, quality: 68 },
   ];
+  let conversionInput = input;
+  try {
+    // Match Sharp's existing pixel ceiling while supporting HEVC builds through
+    // the decoder already used by report uploads. Originals remain untouched.
+    conversionInput = await normalizeHeicToJpegBuffer(input, { maxInputPixels: 268_402_689 });
+  } catch {
+    // Sharp may decode a HEIF-compatible format the fallback decoder cannot.
+  }
   for (const attempt of attempts) {
     let output: Buffer;
     try {
-      output = await sharp(input)
+      output = await sharp(conversionInput)
         .rotate()
         .resize({
           width: attempt.width,
@@ -178,7 +185,7 @@ async function prepareAuctioneerImage(
       // The converter cannot read it either (an iPhone HEIC, a damaged file):
       // say which photo and what it is, so it can be replaced.
       throw new AuctioneerDeliveryError(
-        `A report photo (photo ${photoNumber}) is a ${describeImageBytes(input, sourceContentType)} file that Auctioneer 2.0 cannot take, and it could not be converted to JPEG. Replace that photo in the report with a JPEG or PNG, then retry the delivery.`
+        `A report photo (photo ${photoNumber}) is a ${describeImageBytes(input)} file that Auctioneer 2.0 cannot take, and it could not be converted to JPEG. Contact support to review this photo in the saved delivery before retrying.`
       );
     }
     if (output.length <= MAX_AUCTIONEER_PHOTO_BYTES) {
@@ -203,7 +210,7 @@ async function readR2Photo(url: string): Promise<{
 
   const metadata = await headR2Object(location.bucketName, location.key);
   const contentType = String(metadata.contentType || "image/jpeg");
-  if (!contentType.toLowerCase().startsWith("image/")) {
+  if (!contentType.toLowerCase().startsWith("image/") && normalizeContentType(contentType) !== "application/octet-stream") {
     throw new AuctioneerDeliveryError("A selected report attachment is not an image.");
   }
   const buffer = await readR2ObjectBuffer(location.bucketName, location.key);
@@ -229,7 +236,7 @@ async function readCloudinaryPhoto(url: string): Promise<{
     validateStatus: (status) => status >= 200 && status < 300,
   });
   const contentType = String(response.headers["content-type"] || "image/jpeg");
-  if (!contentType.toLowerCase().startsWith("image/")) {
+  if (!contentType.toLowerCase().startsWith("image/") && normalizeContentType(contentType) !== "application/octet-stream") {
     throw new AuctioneerDeliveryError("A selected Cloudinary attachment is not an image.");
   }
   return { buffer: Buffer.from(response.data), contentType };
@@ -247,7 +254,6 @@ export async function loadAuctioneerPhoto(
       : await readCloudinaryPhoto(sourceUrl);
   const prepared = await prepareAuctioneerImage(
     loaded.buffer,
-    loaded.contentType,
     photoIndex + 1
   );
   // The transmitted filename must describe the bytes we actually send. Source

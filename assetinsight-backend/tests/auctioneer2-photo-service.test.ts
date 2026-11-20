@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const r2Storage = vi.hoisted(() => ({
@@ -229,6 +230,42 @@ describe("Auctioneer 2.0 photo preparation", () => {
 
     expect(error).toBeInstanceOf(AuctioneerDeliveryError);
     expect(error.message).toContain("A report photo (photo 3) is a HEIC (iPhone) file");
-    expect(error.message).toContain("Replace that photo in the report");
+    expect(error.message).toContain("review this photo in the saved delivery");
+  });
+
+  it("converts a real HEIC original through the available decoder", async () => {
+    // Synthetic 8x6 solid-color image encoded as HEIC with macOS sips.
+    const sourceBytes = await readFile(new URL("./fixtures/auctioneer-8x6.heic", import.meta.url));
+    r2Storage.headR2Object.mockResolvedValue({ size: sourceBytes.length, contentType: "image/jpeg" });
+    r2Storage.readR2ObjectBuffer.mockResolvedValue(sourceBytes);
+
+    const photo = await loadAuctioneerPhoto("https://media.asset-insight.example/uploads/asset/original.jpg", 0, 0);
+
+    expect(photo.contentType).toBe("image/jpeg");
+    expect(photo.filename).toBe("lot-001-photo-001.jpg");
+    expect(await sharp(photo.buffer).metadata()).toMatchObject({ format: "jpeg", width: 8, height: 6 });
+  });
+
+  it("recognizes JPEG originals saved with generic binary storage metadata", async () => {
+    const jpeg = await sharp({ create: { width: 3, height: 2, channels: 3, background: "red" } }).jpeg().toBuffer();
+    r2Storage.headR2Object.mockResolvedValue({ size: jpeg.length, contentType: "application/octet-stream" });
+    r2Storage.readR2ObjectBuffer.mockResolvedValue(jpeg);
+
+    const photo = await loadAuctioneerPhoto("https://media.asset-insight.example/uploads/asset/original", 0, 0);
+
+    expect(photo.contentType).toBe("image/jpeg");
+    expect(photo.buffer).toEqual(jpeg);
+  });
+
+  it("keeps storage metadata private when a corrupt original cannot be decoded", async () => {
+    const sourceBytes = Buffer.from("damaged image");
+    r2Storage.headR2Object.mockResolvedValue({ size: sourceBytes.length, contentType: "image/private-storage-detail" });
+    r2Storage.readR2ObjectBuffer.mockResolvedValue(sourceBytes);
+
+    const error = await loadAuctioneerPhoto("https://media.asset-insight.example/uploads/asset/original.jpg", 0, 5).catch(value => value);
+
+    expect(error).toBeInstanceOf(AuctioneerDeliveryError);
+    expect(error.message).toContain("photo 6");
+    expect(error.message).not.toContain("private-storage-detail");
   });
 });

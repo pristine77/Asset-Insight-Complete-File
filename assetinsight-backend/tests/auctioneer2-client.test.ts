@@ -197,7 +197,9 @@ describe("Auctioneer 2.0 client", () => {
     const error = await uploadLotPhotos("lot-guid", [photo]).catch(value => value);
     expect(error).toBeInstanceOf(Auctioneer2ClientError);
     expect(error).toMatchObject({ code: "AUCTIONEER_PHOTO_REJECTED", upstreamStatus: 400 });
-    expect(error.message).toContain(`Auctioneer 2.0 refused a photo: "${sentence}"`);
+    expect(error.message).toContain(sentence.startsWith("Photo bytes are ")
+      ? "Photo content does not match its declared image format"
+      : sentence);
   });
 
   it.each([
@@ -216,6 +218,17 @@ describe("Auctioneer 2.0 client", () => {
     const error = await completeConditionReport("row-guid", { lotNumber: "12" }).catch(value => value);
     expect(error.message).toBe("Auctioneer 2.0 rejected the request with status 400.");
     expect(error.message).not.toContain("secret_table");
+  });
+
+  it("keeps provider diagnostics private inside a photo MIME mismatch", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "Photo bytes are image/test-secret but were declared as image/private-detail" }), { status: 400 })));
+    const photo = { buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), filename: "lot-001-photo-001.jpg", contentType: "image/jpeg", order: 0 };
+
+    const error = await uploadLotPhotos("lot-guid", [photo]).catch(value => value);
+
+    expect(error).toMatchObject({ code: "AUCTIONEER_PHOTO_REJECTED", upstreamStatus: 400 });
+    expect(error.message).not.toContain("test-secret");
+    expect(error.message).not.toContain("private-detail");
   });
 
   it.each(["not json", JSON.stringify({ code: "OTHER_CONFLICT" })])("keeps unrecognized HTTP 409 responses generic: %s", async body => {
