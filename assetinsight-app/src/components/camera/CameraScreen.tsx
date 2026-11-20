@@ -125,6 +125,8 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraRef>(null);
   const recorderRef = useRef<Recorder | null>(null);
+  const recordingStoppingRef = useRef(false);
+  const recordingPauseRequestRef = useRef<boolean | null>(null);
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingRecordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optimizeQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -385,7 +387,10 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
       if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
       if (pendingRecordTimeoutRef.current) clearTimeout(pendingRecordTimeoutRef.current);
       // Stop/finalize; cancellation would delete the recording original.
-      void recorderRef.current?.stopRecording().catch(() => undefined);
+      if (recorderRef.current && !recordingStoppingRef.current) {
+        recordingStoppingRef.current = true;
+        void recorderRef.current.stopRecording().catch(() => undefined);
+      }
     };
   }, []);
 
@@ -766,6 +771,8 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
     captureInFlight.current = false;
     pendingVideoRequestRef.current = null;
     recorderRef.current = null;
+    recordingStoppingRef.current = false;
+    recordingPauseRequestRef.current = null;
     setIsRecording(false);
     recordingPausedRef.current = false;
     setIsRecordingPaused(false);
@@ -781,7 +788,12 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
     const request = pendingVideoRequestRef.current;
     if (visible && (!request || sameCaptureOwner(request.context))) return;
     const recorder = recorderRef.current;
-    if (recorder) void recorder.stopRecording().catch(() => undefined);
+    if (recorder && !recordingStoppingRef.current) {
+      recordingStoppingRef.current = true;
+      void recorder.stopRecording().catch(() => {
+        if (recorderRef.current === recorder) recordingStoppingRef.current = false;
+      });
+    }
     else if (!captureInFlight.current) clearRecordingState();
   }, [captureContext?.draftId, captureContext?.ownerId, clearRecordingState, sameCaptureOwner, visible]);
 
@@ -851,12 +863,16 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
       setRecordingTime(0);
       recordingIntervalRef.current = setInterval(() => {
         // Paused seconds are not part of the video, so they are not counted.
-        if (recordingPausedRef.current) return;
+        if (recordingPausedRef.current || recordingStoppingRef.current) return;
         setRecordingTime((previous) => previous + 1);
       }, 1000);
 
       await recorder.startRecording(
         async (filePath: string) => {
+          if (recorderRef.current === recorder) {
+            recordingStoppingRef.current = true;
+            recordingPauseRequestRef.current = null;
+          }
           let uri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
           // Relocate the camera's temporary original, rather than keeping a second
           // offline copy. The durable file remains available if the draft save fails.
@@ -909,16 +925,21 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
           }
         },
         (error: Error) => {
+          if (recorderRef.current !== recorder) return;
           console.error('[Camera] Recording failed:', error);
           clearRecordingState();
           Alert.alert('Recording Failed', 'The video could not be completed. Check device storage and record it again. Your existing lot photos are unchanged.');
         },
         // The camera has actually paused / resumed the same recording.
         () => {
+          if (recorderRef.current !== recorder || recordingStoppingRef.current) return;
+          recordingPauseRequestRef.current = null;
           recordingPausedRef.current = true;
           setIsRecordingPaused(true);
         },
         () => {
+          if (recorderRef.current !== recorder || recordingStoppingRef.current) return;
+          recordingPauseRequestRef.current = null;
           recordingPausedRef.current = false;
           setIsRecordingPaused(false);
         }
@@ -970,23 +991,31 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   }, [clearRecordingState, isRecording, videoSessionRequested]);
 
   const stopRecording = useCallback(async () => {
-    if (!recorderRef.current) return;
+    const recorder = recorderRef.current;
+    if (!recorder || recordingStoppingRef.current) return;
+    recordingStoppingRef.current = true;
+    recordingPauseRequestRef.current = null;
     try {
       // Also finishes a paused recording: Stop is what ends and saves the video.
-      await recorderRef.current.stopRecording();
+      await recorder.stopRecording();
     } catch (error) {
+      if (recorderRef.current !== recorder) return;
+      recordingStoppingRef.current = false;
       console.error('[Camera] Failed to stop recording:', error);
-      clearRecordingState();
+      Alert.alert('Stop failed', 'The camera could not finish saving the video. Tap Stop to try again.');
     }
-  }, [clearRecordingState]);
+  }, []);
 
   /** Pause: the camera stops writing, and the same video carries on at Resume. */
   const pauseRecording = useCallback(async () => {
     const recorder = recorderRef.current;
-    if (!recorder || recordingPausedRef.current) return;
+    if (!recorder || recordingPausedRef.current || recordingStoppingRef.current || recordingPauseRequestRef.current !== null) return;
+    recordingPauseRequestRef.current = true;
     try {
       await recorder.pauseRecording();
     } catch (error) {
+      if (recorderRef.current !== recorder || recordingStoppingRef.current) return;
+      recordingPauseRequestRef.current = null;
       console.error('[Camera] Failed to pause recording:', error);
       Alert.alert('Pause unavailable', 'This camera could not pause the video. It is still recording; tap Stop to finish and save it.');
     }
@@ -995,10 +1024,13 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   /** Resume: carries on recording into the same video file. */
   const resumeRecording = useCallback(async () => {
     const recorder = recorderRef.current;
-    if (!recorder || !recordingPausedRef.current) return;
+    if (!recorder || !recordingPausedRef.current || recordingStoppingRef.current || recordingPauseRequestRef.current !== null) return;
+    recordingPauseRequestRef.current = false;
     try {
       await recorder.resumeRecording();
     } catch (error) {
+      if (recorderRef.current !== recorder || recordingStoppingRef.current) return;
+      recordingPauseRequestRef.current = null;
       console.error('[Camera] Failed to resume recording:', error);
       Alert.alert('Resume failed', 'The video could not continue. Tap Stop to save what was recorded.');
     }
@@ -1713,12 +1745,14 @@ const styles = StyleSheet.create({
   },
   performanceRowPortrait: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
   },
   performanceButtonsPortrait: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: 190,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,

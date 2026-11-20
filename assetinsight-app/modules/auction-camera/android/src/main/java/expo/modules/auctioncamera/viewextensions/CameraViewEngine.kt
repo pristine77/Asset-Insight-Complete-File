@@ -1347,20 +1347,40 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
             }
             .start(ContextCompat.getMainExecutor(context)) { event ->
                 when (event) {
-                    is VideoRecordEvent.Start ->
-                        mainHandler.post { onVideoRecordingStarted?.invoke() }
+                    is VideoRecordEvent.Start -> {
+                        val active = recording
+                        mainHandler.post {
+                            if (active != null && recording === active && !isStopping) {
+                                onVideoRecordingStarted?.invoke()
+                            }
+                        }
+                    }
 
                     is VideoRecordEvent.Status ->
                         firstFrameConfirmed = true
 
                     is VideoRecordEvent.Pause -> {
-                        isPaused = true
-                        mainHandler.post { onVideoRecordingPaused?.invoke() }
+                        val active = recording
+                        if (active != null && !isStopping) {
+                            isPaused = true
+                            mainHandler.post {
+                                if (recording === active && !isStopping && isPaused) {
+                                    onVideoRecordingPaused?.invoke()
+                                }
+                            }
+                        }
                     }
 
                     is VideoRecordEvent.Resume -> {
-                        isPaused = false
-                        mainHandler.post { onVideoRecordingResumed?.invoke() }
+                        val active = recording
+                        if (active != null && !isStopping) {
+                            isPaused = false
+                            mainHandler.post {
+                                if (recording === active && !isStopping && !isPaused) {
+                                    onVideoRecordingResumed?.invoke()
+                                }
+                            }
+                        }
                     }
 
                     is VideoRecordEvent.Finalize -> {

@@ -3,7 +3,7 @@
  * (owner, 2026-11-19: video Pause / Resume / Stop).
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen } from '@testing-library/react-native';
 import RecordingIndicator from './RecordingIndicator';
 import RecordButton from './RecordButton';
 
@@ -45,10 +45,20 @@ describe('the record controls', () => {
     const recording = await render(<RecordButton isRecording {...handlers()} compact />);
     expect(screen.getByText('Pause')).toBeTruthy();
     expect(screen.getByText('Stop')).toBeTruthy();
-    recording.unmount();
+    await recording.unmount();
     await render(<RecordButton isRecording isPaused {...handlers()} compact />);
     expect(screen.getByText('Resume')).toBeTruthy();
     expect(screen.getByText('Stop')).toBeTruthy();
     expect(screen.queryByText('Pause')).toBeNull();
+  });
+
+  it.each([false, true])('blocks disabled recording controls when paused is %s', async (isPaused) => {
+    const actions = handlers();
+    await render(<RecordButton isRecording isPaused={isPaused} disabled {...actions} compact />);
+    await fireEvent.press(screen.getByRole('button', { name: isPaused ? 'Resume video recording' : 'Pause video recording' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+    expect(actions.onPauseRecording).not.toHaveBeenCalled();
+    expect(actions.onResumeRecording).not.toHaveBeenCalled();
+    expect(actions.onStopRecording).not.toHaveBeenCalled();
   });
 });

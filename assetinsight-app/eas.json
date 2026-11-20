@@ -30,6 +30,7 @@
     },
     "production-apk": {
       "extends": "production",
+      "resourceClass": "medium",
       "environment": "production",
       "developmentClient": false,
       "env": {

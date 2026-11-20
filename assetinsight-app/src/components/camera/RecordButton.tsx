@@ -66,11 +66,13 @@ export const RecordButton: React.FC<RecordButtonProps> = ({
 
   const canPauseOrResume = isPaused ? Boolean(onResumeRecording) : Boolean(onPauseRecording);
   return (
-    <View style={[styles.controlsRow, compact && styles.controlsRowCompact]}>
+    <View style={[styles.controlsRow, compact && styles.controlsRowCompact, isLandscape && styles.controlsLandscape]}>
       {canPauseOrResume && (
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel={isPaused ? 'Resume video recording' : 'Pause video recording'}
+          accessibilityState={{ disabled }}
+          disabled={disabled}
           hitSlop={8}
           style={[...buttonStyle, isPaused ? styles.resumeBtn : styles.pauseBtn]}
           onPress={() => {
@@ -85,6 +87,8 @@ export const RecordButton: React.FC<RecordButtonProps> = ({
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel="Stop video recording"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
         hitSlop={8}
         style={[...buttonStyle, styles.recordBtnActive]}
         onPress={() => {
@@ -108,6 +112,9 @@ const styles = StyleSheet.create({
   controlsRowCompact: {
     alignSelf: 'auto',
     gap: 6,
+  },
+  controlsLandscape: {
+    flexDirection: 'column',
   },
   recordBtn: {
     flexDirection: 'row',

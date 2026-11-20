@@ -312,6 +312,7 @@ it('pauses and resumes the same recording, and only Stop saves the video', async
 
   // Pause: the recorder itself pauses; nothing is finished or saved.
   await fireEvent.press(screen.getByRole('button', { name: 'Pause video recording' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Pause video recording' }));
   expect(recorder.pauseRecording).toHaveBeenCalledTimes(1);
   await act(async () => { onPaused(); });
   expect(screen.getByRole('button', { name: 'Resume video recording' })).toBeTruthy();
@@ -320,6 +321,7 @@ it('pauses and resumes the same recording, and only Stop saves the video', async
   expect(autoSave).not.toHaveBeenCalled();
 
   // Resume: the same recorder carries on; still one recording, still not saved.
+  await fireEvent.press(screen.getByRole('button', { name: 'Resume video recording' }));
   await fireEvent.press(screen.getByRole('button', { name: 'Resume video recording' }));
   expect(recorder.resumeRecording).toHaveBeenCalledTimes(1);
   await act(async () => { onResumed(); });
@@ -355,6 +357,77 @@ it('can stop a paused recording, which saves it', async () => {
   expect(recorder.stopRecording).toHaveBeenCalledTimes(1);
   await act(async () => { await onFinished('/documents/camera-videos/stable-capture-id.mp4', 'stopped'); });
   expect(savedLots()[0].videoFile).toEqual(expect.objectContaining({ type: 'video/mp4' }));
+});
+
+it('waits for finalization after Stop and ignores repeated Stop and late Pause events', async () => {
+  const recorder = {
+    startRecording: jest.fn(async () => {}),
+    stopRecording: jest.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error('Not currently recording')),
+    pauseRecording: jest.fn(async () => {}),
+    resumeRecording: jest.fn(async () => {}),
+  };
+  fixture().videoOutput.createRecorder.mockResolvedValue(recorder);
+  const autoSave = jest.fn();
+  await render(<Harness onAutoSave={autoSave} />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Start test camera' }));
+  await fireEvent.press(screen.getByText('Rec'));
+  await waitFor(() => expect(recorder.startRecording).toHaveBeenCalledTimes(1));
+  const [onFinished, , onPaused] = recorder.startRecording.mock.calls[0] as any[];
+
+  await fireEvent.press(screen.getByRole('button', { name: 'Pause video recording' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+  expect(recorder.stopRecording).toHaveBeenCalledTimes(1);
+  await act(async () => { onPaused(); });
+  expect(screen.queryByRole('button', { name: 'Resume video recording' })).toBeNull();
+  expect(screen.queryByText('Rec')).toBeNull();
+  expect(autoSave).not.toHaveBeenCalled();
+
+  await act(async () => { await onFinished('/documents/camera-videos/retained.mp4', 'stopped'); });
+  expect(savedLots()[0].videoFile?.uri).toBe('file:///documents/camera-videos/retained.mp4');
+  expect(screen.getByText('Rec')).toBeTruthy();
+});
+
+it('keeps an active recording available when Stop fails, then retries Stop', async () => {
+  const recorder = {
+    startRecording: jest.fn(async () => {}),
+    stopRecording: jest.fn().mockRejectedValueOnce(new Error('Temporary camera failure')).mockResolvedValue(undefined),
+    pauseRecording: jest.fn(async () => {}),
+    resumeRecording: jest.fn(async () => {}),
+  };
+  fixture().videoOutput.createRecorder.mockResolvedValue(recorder);
+  await render(<Harness />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Start test camera' }));
+  await fireEvent.press(screen.getByText('Rec'));
+  await waitFor(() => expect(recorder.startRecording).toHaveBeenCalledTimes(1));
+  await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+  expect(screen.queryByText('Rec')).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+  expect(recorder.stopRecording).toHaveBeenCalledTimes(2);
+});
+
+it('ignores callbacks from a finished recording after the next recording starts', async () => {
+  const recorder = () => ({
+    startRecording: jest.fn(async () => {}),
+    stopRecording: jest.fn(async () => {}),
+    pauseRecording: jest.fn(async () => {}),
+    resumeRecording: jest.fn(async () => {}),
+  });
+  const first = recorder();
+  const next = recorder();
+  fixture().videoOutput.createRecorder.mockResolvedValueOnce(first).mockResolvedValueOnce(next);
+  await render(<Harness />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Start test camera' }));
+  await fireEvent.press(screen.getByText('Rec'));
+  await waitFor(() => expect(first.startRecording).toHaveBeenCalledTimes(1));
+  const [onFinished, , onPaused] = first.startRecording.mock.calls[0] as any[];
+  await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+  await act(async () => { await onFinished('/documents/camera-videos/first.mp4', 'stopped'); });
+  await fireEvent.press(screen.getByText('Rec'));
+  await waitFor(() => expect(next.startRecording).toHaveBeenCalledTimes(1));
+  await act(async () => { onPaused(); });
+  expect(screen.getByRole('button', { name: 'Pause video recording' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Resume video recording' })).toBeNull();
 });
 
 it.each(['Quality', 'Balanced', 'Speed'])('records HD MP4 at 30 fps independently of %s still-photo quality', async (mode) => {
