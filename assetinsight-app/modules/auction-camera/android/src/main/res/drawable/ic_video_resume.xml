@@ -1,0 +1,17 @@
+<!-- Resume a paused video (owner, 2026-11-19: "make the paused button more obvious. Not grey"):
+     solid green circle, white play triangle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:fillColor="#16A34A"
+      android:pathData="M12,1A11,11 0,1 1,12,23A11,11 0,1 1,12,1Z" />
+  <path
+      android:fillColor="#FFFFFF"
+      android:strokeColor="#FFFFFF"
+      android:strokeWidth="1"
+      android:strokeLineJoin="round"
+      android:pathData="M9.5,7.5L17,12L9.5,16.5Z" />
+</vector>

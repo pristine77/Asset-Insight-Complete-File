@@ -288,6 +288,75 @@ it('adds a video to the selected source lot without changing fixed structure', a
   expect(autoSave).toHaveBeenCalledWith(result, 1);
 });
 
+/*
+ * Owner, 2026-11-19: "can the video pause actually pause the video, the paused
+ * video can be unpaused to continue the same video. Stop video is when the
+ * video ends and saves."
+ */
+it('pauses and resumes the same recording, and only Stop saves the video', async () => {
+  const recorder = {
+    startRecording: jest.fn(async () => {}),
+    stopRecording: jest.fn(async () => {}),
+    pauseRecording: jest.fn(async () => {}),
+    resumeRecording: jest.fn(async () => {}),
+  };
+  fixture().videoOutput.createRecorder.mockResolvedValue(recorder);
+  const autoSave = jest.fn();
+  await render(<Harness onAutoSave={autoSave} />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Start test camera' }));
+  await fireEvent.press(screen.getByText('Rec'));
+  await waitFor(() => expect(recorder.startRecording).toHaveBeenCalledTimes(1));
+  const [onFinished, , onPaused, onResumed] = recorder.startRecording.mock.calls[0] as any[];
+  expect(typeof onPaused).toBe('function');
+  expect(typeof onResumed).toBe('function');
+
+  // Pause: the recorder itself pauses; nothing is finished or saved.
+  await fireEvent.press(screen.getByRole('button', { name: 'Pause video recording' }));
+  expect(recorder.pauseRecording).toHaveBeenCalledTimes(1);
+  await act(async () => { onPaused(); });
+  expect(screen.getByRole('button', { name: 'Resume video recording' })).toBeTruthy();
+  // (The PAUSED timer is mocked out in this file; RecordingIndicator.test.tsx covers it.)
+  expect(recorder.stopRecording).not.toHaveBeenCalled();
+  expect(autoSave).not.toHaveBeenCalled();
+
+  // Resume: the same recorder carries on; still one recording, still not saved.
+  await fireEvent.press(screen.getByRole('button', { name: 'Resume video recording' }));
+  expect(recorder.resumeRecording).toHaveBeenCalledTimes(1);
+  await act(async () => { onResumed(); });
+  expect(screen.getByRole('button', { name: 'Pause video recording' })).toBeTruthy();
+  expect(fixture().videoOutput.createRecorder).toHaveBeenCalledTimes(1);
+  expect(recorder.startRecording).toHaveBeenCalledTimes(1);
+
+  // Stop ends the video, and its file is saved to the lot.
+  await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+  expect(recorder.stopRecording).toHaveBeenCalledTimes(1);
+  await act(async () => { await onFinished('/documents/camera-videos/stable-capture-id.mp4', 'stopped'); });
+  expect(savedLots()[0].videoFile).toEqual(expect.objectContaining({ type: 'video/mp4' }));
+  expect(autoSave).toHaveBeenCalled();
+  expect(screen.getByText('Rec')).toBeTruthy();
+});
+
+it('can stop a paused recording, which saves it', async () => {
+  const recorder = {
+    startRecording: jest.fn(async () => {}),
+    stopRecording: jest.fn(async () => {}),
+    pauseRecording: jest.fn(async () => {}),
+    resumeRecording: jest.fn(async () => {}),
+  };
+  fixture().videoOutput.createRecorder.mockResolvedValue(recorder);
+  await render(<Harness />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Start test camera' }));
+  await fireEvent.press(screen.getByText('Rec'));
+  await waitFor(() => expect(recorder.startRecording).toHaveBeenCalledTimes(1));
+  const [onFinished, , onPaused] = recorder.startRecording.mock.calls[0] as any[];
+  await fireEvent.press(screen.getByRole('button', { name: 'Pause video recording' }));
+  await act(async () => { onPaused(); });
+  await fireEvent.press(screen.getByRole('button', { name: 'Stop video recording' }));
+  expect(recorder.stopRecording).toHaveBeenCalledTimes(1);
+  await act(async () => { await onFinished('/documents/camera-videos/stable-capture-id.mp4', 'stopped'); });
+  expect(savedLots()[0].videoFile).toEqual(expect.objectContaining({ type: 'video/mp4' }));
+});
+
 it.each(['Quality', 'Balanced', 'Speed'])('records HD MP4 at 30 fps independently of %s still-photo quality', async (mode) => {
   const recorder = { startRecording: jest.fn(async () => {}), stopRecording: jest.fn(async () => {}) };
   fixture().videoOutput.createRecorder.mockResolvedValue(recorder);

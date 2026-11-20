@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, Animated } from 'react-native';
 
 interface RecordingIndicatorProps {
   isRecording: boolean;
+  /** Paused (owner, 2026-11-19): a steady amber dot and "PAUSED", the time held. */
+  isPaused?: boolean;
   recordingTime: number;
 }
 
@@ -16,12 +18,13 @@ const formatTime = (seconds: number): string => {
 
 export const RecordingIndicator: React.FC<RecordingIndicatorProps> = ({
   isRecording,
+  isPaused = false,
   recordingTime,
 }) => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (isRecording) {
+    if (isRecording && !isPaused) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -41,14 +44,14 @@ export const RecordingIndicator: React.FC<RecordingIndicatorProps> = ({
     } else {
       pulseAnim.setValue(1);
     }
-  }, [isRecording]);
+  }, [isRecording, isPaused]);
 
   if (!isRecording) return null;
 
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.dot, { opacity: pulseAnim }]} />
-      <Text style={styles.text}>REC {formatTime(recordingTime)}</Text>
+      <Animated.View style={[styles.dot, isPaused && styles.dotPaused, { opacity: pulseAnim }]} />
+      <Text style={styles.text}>{isPaused ? 'PAUSED' : 'REC'} {formatTime(recordingTime)}</Text>
     </View>
   );
 };
@@ -71,6 +74,9 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#EF4444',
     marginRight: 10,
+  },
+  dotPaused: {
+    backgroundColor: '#F59E0B',
   },
   text: {
     color: '#fff',

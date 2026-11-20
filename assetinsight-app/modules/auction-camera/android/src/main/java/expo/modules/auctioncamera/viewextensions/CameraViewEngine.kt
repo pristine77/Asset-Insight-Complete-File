@@ -116,6 +116,9 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
     var onPhotoCaptured: ((Uri) -> Unit)? = null
     var onPhotoProcessed: ((Uri, Uri, Int, Int) -> Unit)? = null
     var onVideoRecordingStarted: (() -> Unit)? = null
+    /** The camera has actually paused / resumed the SAME recording (CameraX Pause / Resume events). */
+    var onVideoRecordingPaused: (() -> Unit)? = null
+    var onVideoRecordingResumed: (() -> Unit)? = null
     var onVideoFinalizing: ((Uri) -> Unit)? = null
     var onVideoRecorded: ((Uri) -> Boolean)? = null
     var onRecordingError: ((String) -> Unit)? = null
@@ -138,6 +141,8 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
     private lateinit var orientationListener: OrientationEventListener
     private var recording: Recording? = null
     private var isStopping = false
+    /** True between CameraX's Pause and Resume events; the file stays open the whole time. */
+    private var isPaused = false
     private var currentLensLabel = "Wide"
     private var manualConfig = ManualConfig()
     private var currentRotation = Surface.ROTATION_0
@@ -245,6 +250,7 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
 
     fun isManualSupported() = deviceLimits?.supportsManualSensor == true
     fun isRecording() = recording != null || isStopping
+    fun isRecordingPaused() = recording != null && isPaused
     fun hasFlash() = ::camera.isInitialized && camera.cameraInfo.hasFlashUnit()
     fun getActiveExtensionMode() = activeExtensionMode
 
@@ -1329,6 +1335,7 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
             return
         }
         recordingStartMs = System.currentTimeMillis()
+        isPaused = false
         try {
             recording = videoCapture.output
             .prepareRecording(context, FileOutputOptions.Builder(outputFile).build())
@@ -1346,10 +1353,21 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
                     is VideoRecordEvent.Status ->
                         firstFrameConfirmed = true
 
+                    is VideoRecordEvent.Pause -> {
+                        isPaused = true
+                        mainHandler.post { onVideoRecordingPaused?.invoke() }
+                    }
+
+                    is VideoRecordEvent.Resume -> {
+                        isPaused = false
+                        mainHandler.post { onVideoRecordingResumed?.invoke() }
+                    }
+
                     is VideoRecordEvent.Finalize -> {
                         // Done/Next Lot stay locked until the durable original and final URI
                         // have both been handed to the current lot's metadata journal.
                         isStopping = true
+                        isPaused = false
                         recording = null
                         if (!event.hasError()) {
                             try {
@@ -1390,9 +1408,44 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
             }
         } catch (error: Exception) {
             isStopping = false
+            isPaused = false
             recording = null
             outputFile.delete()
             onRecordingError?.invoke("Unable to start video recording. Check camera and microphone permissions.")
+        }
+    }
+
+    /*
+     * Pause / Resume (owner, 2026-11-19: "can the video pause actually pause the
+     * video, the paused video can be unpaused to continue the same video. Stop
+     * video is when the video ends and saves").
+     *
+     * Both keep the SAME recording and file open; only stopRecording() ends and
+     * saves it. The UI follows CameraX's Pause / Resume events, not these calls.
+     * Pause is refused until the first frame is in and the minimum length has
+     * passed, so a paused-then-stopped clip can never be empty.
+     */
+    fun pauseRecording(): Boolean {
+        val active = recording ?: return false
+        if (isStopping || isPaused) return false
+        val elapsed = System.currentTimeMillis() - recordingStartMs
+        if (!firstFrameConfirmed || elapsed < MIN_RECORDING_MS) return false
+        return try {
+            active.pause()
+            true
+        } catch (error: Exception) {
+            false
+        }
+    }
+
+    fun resumeRecording(): Boolean {
+        val active = recording ?: return false
+        if (isStopping || !isPaused) return false
+        return try {
+            active.resume()
+            true
+        } catch (error: Exception) {
+            false
         }
     }
 
@@ -1401,6 +1454,7 @@ class CameraViewEngine(private val context: Context, private val lifecycleOwner:
         val elapsed = System.currentTimeMillis() - recordingStartMs
         val pending = recording ?: return
         isStopping = true
+        isPaused = false
         recording = null
         if (!firstFrameConfirmed || elapsed < MIN_RECORDING_MS) {
             mainHandler.postDelayed(

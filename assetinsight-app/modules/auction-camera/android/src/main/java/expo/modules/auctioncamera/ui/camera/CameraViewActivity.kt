@@ -113,6 +113,8 @@ class CameraViewActivity : BaseActivity() {
     private var isRecording = false
     private var pendingStartRecording = false
     private var recordingSeconds = 0
+    /** The video is paused (same file, continues at Resume); paused seconds are not counted. */
+    private var isVideoPaused = false
     private var isRecordButtonLocked = false
     private var recordingTimer: Runnable? = null
     private var lastPhotoUri: Uri? = null
@@ -1034,6 +1036,8 @@ class CameraViewActivity : BaseActivity() {
         }
 
         engine.onVideoRecordingStarted = { runOnUiThread { onRecordingStarted() } }
+        engine.onVideoRecordingPaused = { runOnUiThread { showVideoPaused(true) } }
+        engine.onVideoRecordingResumed = { runOnUiThread { showVideoPaused(false) } }
         engine.onVideoReady = {
             runOnUiThread {
                 isVideoReady = true
@@ -1402,9 +1406,10 @@ class CameraViewActivity : BaseActivity() {
         if (isRecording) {
             binding.recordingTimer.visibility = View.VISIBLE
             binding.recordingDot.visibility = View.VISIBLE
-            binding.imageViewRecordVideo.setImageResource(R.drawable.ic_pause)
-            binding.recordingTimer.text =
-                "%02d:%02d".format(recordingSeconds / 60, recordingSeconds % 60)
+            binding.recordingDot.backgroundTintList = if (isVideoPaused) ColorStateList.valueOf(AMBER) else null
+            binding.buttonStopVideo.visibility = View.VISIBLE
+            showRecordButtonAsPause(isVideoPaused)
+            binding.recordingTimer.text = recordingTimerText()
             binding.extensionModeBar.visibility = View.GONE
             binding.buttonFrontCamera.visibility = View.GONE
             binding.btnProMode.visibility = View.GONE
@@ -1965,6 +1970,12 @@ class CameraViewActivity : BaseActivity() {
         binding.imageViewRecordVideo.visibility = if (viewModel.repository.allowVideo) View.VISIBLE else View.INVISIBLE
         binding.imageViewRecordVideo.isEnabled = viewModel.repository.allowVideo
 
+        // Stop (beside the timer) is the only control that ends a video and saves it.
+        binding.buttonStopVideo.setOnClickListener {
+            if (!::engine.isInitialized || engine.isStopping() || !engine.isRecording()) return@setOnClickListener
+            stopVideoAndSave()
+        }
+
         binding.imageViewRecordVideo.setOnClickListener {
             if (!viewModel.repository.allowVideo) return@setOnClickListener
             binding.cameraHeader.collapseExposure()
@@ -1977,18 +1988,14 @@ class CameraViewActivity : BaseActivity() {
             if (engine.isStopping()) return@setOnClickListener
 
             when {
+                // While recording this button pauses and resumes the SAME video
+                // (owner, 2026-11-19); it no longer ends the recording.
                 engine.isRecording() -> {
-                    engine.stopRecording()
-                    isRecording = false
-                    pendingStartRecording = false
-                    binding.recordingTimer.visibility = View.GONE
-                    binding.recordingDot.visibility = View.GONE
-                    recordingTimer?.let { binding.previewView.removeCallbacks(it) }
-                    recordingTimer = null
-                    recordingSeconds = 0
-                    binding.imageViewRecordVideo.setImageResource(R.drawable.ic_record_video)
-                    binding.imageViewRecordVideo.clearColorFilter()
-                    currentCaptureMode?.let { highlightCaptureModeButton(it) }
+                    if (engine.isRecordingPaused()) {
+                        if (!engine.resumeRecording()) toast("The video could not resume. Tap Stop to save it.")
+                    } else if (!engine.pauseRecording()) {
+                        toast("The video is just starting. Try Pause again in a moment.")
+                    }
                 }
 
                 currentCameraMode == CameraMode.VIDEO && isVideoReady -> {
@@ -3415,23 +3422,63 @@ class CameraViewActivity : BaseActivity() {
             applyFlashState(OFF)
         }
 
-        binding.recordingTimer.text = "00:00"
+        isVideoPaused = false
+        binding.recordingTimer.text = recordingTimerText()
         binding.recordingTimer.visibility = View.VISIBLE
         binding.recordingDot.visibility = View.VISIBLE
-        binding.imageViewRecordVideo.setImageResource(R.drawable.ic_pause)
+        binding.buttonStopVideo.visibility = View.VISIBLE
+        showRecordButtonAsPause(paused = false)
         try {
             binding.includeMainExtra.imageViewRecord.visibility = View.VISIBLE
         } catch (_: Exception) {
         }
         recordingTimer = object : Runnable {
             override fun run() {
-                recordingSeconds++
-                binding.recordingTimer.text =
-                    "%02d:%02d".format(recordingSeconds / 60, recordingSeconds % 60)
+                // Paused seconds are not part of the video, so they are not counted.
+                if (!isVideoPaused) recordingSeconds++
+                binding.recordingTimer.text = recordingTimerText()
                 binding.previewView.postDelayed(this, 1000)
             }
         }
         binding.previewView.postDelayed(recordingTimer!!, 1000)
+    }
+
+    private fun recordingTimerText(): String =
+        (if (isVideoPaused) "PAUSED " else "") + "%02d:%02d".format(recordingSeconds / 60, recordingSeconds % 60)
+
+    /** While recording, the record button reads Pause; while paused, a solid green Resume (play). */
+    private fun showRecordButtonAsPause(paused: Boolean) {
+        binding.imageViewRecordVideo.setImageResource(if (paused) R.drawable.ic_video_resume else R.drawable.ic_pause)
+        binding.imageViewRecordVideo.contentDescription = if (paused) "Resume video" else "Pause video"
+        if (paused) binding.imageViewRecordVideo.clearColorFilter()
+    }
+
+    /** CameraX has paused / resumed the same recording: amber dot and PAUSED, time held. */
+    private fun showVideoPaused(paused: Boolean) {
+        if (!isRecording) return
+        isVideoPaused = paused
+        showRecordButtonAsPause(paused)
+        binding.recordingDot.backgroundTintList = if (paused) ColorStateList.valueOf(AMBER) else null
+        binding.recordingTimer.text = recordingTimerText()
+    }
+
+    /** Ends the video and saves it to the lot (paused or not). */
+    private fun stopVideoAndSave() {
+        engine.stopRecording()
+        isRecording = false
+        isVideoPaused = false
+        pendingStartRecording = false
+        binding.recordingTimer.visibility = View.GONE
+        binding.recordingDot.visibility = View.GONE
+        binding.recordingDot.backgroundTintList = null
+        binding.buttonStopVideo.visibility = View.GONE
+        recordingTimer?.let { binding.previewView.removeCallbacks(it) }
+        recordingTimer = null
+        recordingSeconds = 0
+        binding.imageViewRecordVideo.setImageResource(R.drawable.ic_record_video)
+        binding.imageViewRecordVideo.contentDescription = "Video camera"
+        binding.imageViewRecordVideo.clearColorFilter()
+        currentCaptureMode?.let { highlightCaptureModeButton(it) }
     }
 
     private fun onRecordingSaved(uri: Uri): Boolean {
@@ -3448,9 +3495,13 @@ class CameraViewActivity : BaseActivity() {
         // Unlock screen orientation
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         isRecording = false; pendingStartRecording = false
+        isVideoPaused = false
         isRecordButtonLocked = false
         binding.recordingTimer.visibility = View.GONE
         binding.recordingDot.visibility = View.GONE
+        binding.recordingDot.backgroundTintList = null
+        binding.buttonStopVideo.visibility = View.GONE
+        binding.imageViewRecordVideo.contentDescription = "Video camera"
         recordingTimer?.let { binding.previewView.removeCallbacks(it) }
         recordingTimer = null; recordingSeconds = 0
         currentCameraMode = CameraMode.PHOTO

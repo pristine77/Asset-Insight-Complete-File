@@ -197,6 +197,17 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   const [enhanceOn, setEnhanceOn] = useState(enhanceImages);
   const [zoom, setZoom] = useState(1);
   const [isRecording, setIsRecording] = useState(false);
+  /*
+   * PAUSE AND RESUME (owner, 2026-11-19: "can the video pause actually pause
+   * the video, the paused video can be unpaused to continue the same video.
+   * Stop video is when the video ends and saves"). VisionCamera's Recorder
+   * pauses and resumes the SAME file (pauseRecording / resumeRecording); only
+   * Stop finishes it and saves it to the lot. Set from the recorder's own
+   * paused / resumed callbacks, so the screen shows what the camera is doing.
+   * The ref lets the one-second timer skip paused seconds without restarting.
+   */
+  const [isRecordingPaused, setIsRecordingPaused] = useState(false);
+  const recordingPausedRef = useRef(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [videoSessionRequested, setVideoSessionRequested] = useState(false);
   const [videoSessionConfig, setVideoSessionConfig] = useState<{ fps?: number } | null>(null);
@@ -756,6 +767,8 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
     pendingVideoRequestRef.current = null;
     recorderRef.current = null;
     setIsRecording(false);
+    recordingPausedRef.current = false;
+    setIsRecordingPaused(false);
     setVideoSessionRequested(false);
     setVideoSessionConfig(null);
     if (recordingIntervalRef.current) {
@@ -833,8 +846,12 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
       }
       recorderRef.current = recorder;
       setIsRecording(true);
+      recordingPausedRef.current = false;
+      setIsRecordingPaused(false);
       setRecordingTime(0);
       recordingIntervalRef.current = setInterval(() => {
+        // Paused seconds are not part of the video, so they are not counted.
+        if (recordingPausedRef.current) return;
         setRecordingTime((previous) => previous + 1);
       }, 1000);
 
@@ -895,6 +912,15 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
           console.error('[Camera] Recording failed:', error);
           clearRecordingState();
           Alert.alert('Recording Failed', 'The video could not be completed. Check device storage and record it again. Your existing lot photos are unchanged.');
+        },
+        // The camera has actually paused / resumed the same recording.
+        () => {
+          recordingPausedRef.current = true;
+          setIsRecordingPaused(true);
+        },
+        () => {
+          recordingPausedRef.current = false;
+          setIsRecordingPaused(false);
         }
       );
     } catch (error) {
@@ -946,12 +972,37 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   const stopRecording = useCallback(async () => {
     if (!recorderRef.current) return;
     try {
+      // Also finishes a paused recording: Stop is what ends and saves the video.
       await recorderRef.current.stopRecording();
     } catch (error) {
       console.error('[Camera] Failed to stop recording:', error);
       clearRecordingState();
     }
   }, [clearRecordingState]);
+
+  /** Pause: the camera stops writing, and the same video carries on at Resume. */
+  const pauseRecording = useCallback(async () => {
+    const recorder = recorderRef.current;
+    if (!recorder || recordingPausedRef.current) return;
+    try {
+      await recorder.pauseRecording();
+    } catch (error) {
+      console.error('[Camera] Failed to pause recording:', error);
+      Alert.alert('Pause unavailable', 'This camera could not pause the video. It is still recording; tap Stop to finish and save it.');
+    }
+  }, []);
+
+  /** Resume: carries on recording into the same video file. */
+  const resumeRecording = useCallback(async () => {
+    const recorder = recorderRef.current;
+    if (!recorder || !recordingPausedRef.current) return;
+    try {
+      await recorder.resumeRecording();
+    } catch (error) {
+      console.error('[Camera] Failed to resume recording:', error);
+      Alert.alert('Resume failed', 'The video could not continue. Tap Stop to save what was recorded.');
+    }
+  }, []);
 
   const toggleFlash = useCallback(() => {
     setFlash((previous) => (previous === 'off' ? 'on' : 'off'));
@@ -1132,7 +1183,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
         viewHeight={cameraViewSize.height}
         onBoxChange={setFocusBoxRect}
       />
-      <RecordingIndicatorView isRecording={isRecording} recordingTime={recordingTime} />
+      <RecordingIndicatorView isRecording={isRecording} isPaused={isRecordingPaused} recordingTime={recordingTime} />
 
       {tapFocusPoint && (
         <View
@@ -1354,8 +1405,15 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
                   <View style={styles.performanceButtonsPortrait}>{performanceButtonsPortrait}</View>
                   {allowVideo && <RecordButtonView
                     isRecording={isRecording}
+                    isPaused={isRecordingPaused}
                     onStartRecording={() => {
                       void startRecording();
+                    }}
+                    onPauseRecording={() => {
+                      void pauseRecording();
+                    }}
+                    onResumeRecording={() => {
+                      void resumeRecording();
                     }}
                     onStopRecording={() => {
                       void stopRecording();
@@ -1480,8 +1538,15 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
 
                   {allowVideo && <RecordButtonView
                     isRecording={isRecording}
+                    isPaused={isRecordingPaused}
                     onStartRecording={() => {
                       void startRecording();
+                    }}
+                    onPauseRecording={() => {
+                      void pauseRecording();
+                    }}
+                    onResumeRecording={() => {
+                      void resumeRecording();
                     }}
                     onStopRecording={() => {
                       void stopRecording();
