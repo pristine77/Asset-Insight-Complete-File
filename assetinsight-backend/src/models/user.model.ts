@@ -74,6 +74,22 @@ const userSchema = new mongoose.Schema({
   crmDigestLastSentAt: {
     type: Date,
   },
+  /*
+   * A CRM vacant pool (owner, 2026-11-20): a placeholder owner that holds a
+   * territory's leads while it has no salesperson, so they are parked rather
+   * than deleted (service/crmLeadMoveService.ts). Not a person: it is created
+   * blocked and not a CRM agent, so it cannot sign in and is never picked,
+   * listed as an agent or notified; the admin screens refuse to change that.
+   */
+  crmVacantPool: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  crmVacantPoolName: {
+    type: String,
+    trim: true,
+  },
   expoPushTokens: {
     type: [String],
     default: [],

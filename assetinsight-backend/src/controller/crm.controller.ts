@@ -2818,7 +2818,9 @@ export const listCrmUsers = async (req: Request, res: Response) => {
     const page = Math.max(parseInt((req.query.page as string) || "1", 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt((req.query.limit as string) || "25", 10) || 25, 1), 200);
 
-    const filter: Record<string, any> = { role: "user" };
+    // Vacant pools are not people (service/crmLeadMoveService.ts); the Move
+    // leads screen lists them on their own.
+    const filter: Record<string, any> = { role: "user", crmVacantPool: { $ne: true } };
     if (typeof isCrmAgent === "string" && isCrmAgent.trim() !== "") {
       filter.isCrmAgent = parseBoolean(isCrmAgent);
     }
@@ -2856,11 +2858,14 @@ export const setCrmAgentStatus = async (req: AdminAuthRequest, res: Response) =>
     const isCrmAgent = Boolean(req.body?.isCrmAgent);
 
     const user = await User.findById(id).select(
-      "email username role isBlocked isCrmAgent crmAssignedAt crmAssignedBy expoPushTokens"
+      "email username role isBlocked isCrmAgent crmAssignedAt crmAssignedBy expoPushTokens crmVacantPool"
     );
     if (!user) return res.status(404).json({ message: "User not found" });
     if (user.role !== "user") {
       return res.status(403).json({ message: "Only regular users can be assigned as CRM agents" });
+    }
+    if ((user as any).crmVacantPool) {
+      return res.status(403).json({ message: "A vacant pool holds leads for a territory; it is not a person and cannot be a CRM agent" });
     }
 
     const wasCrmAgent = Boolean((user as any).isCrmAgent);

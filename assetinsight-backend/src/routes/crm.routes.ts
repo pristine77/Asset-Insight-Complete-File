@@ -61,6 +61,13 @@ import {
   submitCrmTaskUpdate,
   transcribeCrmCommentAudio,
 } from "../controller/crm.controller.js";
+import {
+  createCrmVacantPoolForAdmin,
+  listCrmLeadMovesForAdmin,
+  listCrmMoveOwnersForAdmin,
+  moveCrmLeadsForAdmin,
+  previewCrmLeadMoveForAdmin,
+} from "../controller/crmLeadMove.controller.js";
 import { adminProtect, requireSuperadmin } from "../middleware/admin.middleware.js";
 import { protect } from "../middleware/auth.middleware.js";
 
@@ -152,6 +159,15 @@ router.post(
   requireSuperadmin,
   startRevenueRadarSearchForAdmin
 );
+
+// Move an owner's leads in bulk, and vacant pools to park them in (owner,
+// 2026-11-20; controller/crmLeadMove.controller.ts). Before "/admin/leads/:id",
+// which would otherwise read "moves" as a lead id.
+router.get("/admin/leads/move/owners", adminProtect, listCrmMoveOwnersForAdmin);
+router.post("/admin/leads/move/preview", adminProtect, previewCrmLeadMoveForAdmin);
+router.post("/admin/leads/move", adminProtect, moveCrmLeadsForAdmin);
+router.get("/admin/leads/moves", adminProtect, listCrmLeadMovesForAdmin);
+router.post("/admin/vacant-pools", adminProtect, createCrmVacantPoolForAdmin);
 
 // Admin & Superadmin CRM lead monitoring
 router.get("/admin/leads", adminProtect, listCrmLeadsForAdmin);

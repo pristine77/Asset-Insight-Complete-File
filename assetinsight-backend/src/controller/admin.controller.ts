@@ -911,7 +911,8 @@ export const getUsers = async (req: Request, res: Response) => {
     const page = Math.max(parseInt((req.query.page as string) || "1", 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt((req.query.limit as string) || "20", 10) || 20, 1), 100);
 
-    const filter: any = { role: "user" };
+    // CRM vacant pools are not people (service/crmLeadMoveService.ts).
+    const filter: any = { role: "user", crmVacantPool: { $ne: true } };
     if (q) {
       const regex = new RegExp(q, "i");
       filter.$or = [{ email: regex }, { username: regex }, { companyName: regex }];
@@ -986,6 +987,11 @@ export const updateAdminUserProfile = async (req: any, res: Response) => {
     const user = await User.findById(id).select(USER_ADMIN_SAFE_SELECT);
     if (!user || user.role !== "user") {
       return res.status(404).json({ message: "User not found" });
+    }
+    // A CRM vacant pool is edited only through the Move leads screen: it must
+    // stay a blocked non-agent (service/crmLeadMoveService.ts).
+    if (await User.exists({ _id: user._id, crmVacantPool: true })) {
+      return res.status(403).json({ message: "A vacant pool is not a person; manage it from CRM > Move leads" });
     }
 
     const body = req.body && typeof req.body === "object" ? req.body : {};
@@ -1279,10 +1285,14 @@ export const blockUserByAdmin = async (req: Request, res: Response) => {
     if (typeof blocked !== "boolean") {
       return res.status(400).json({ message: "blocked must be boolean" });
     }
-    const user = await User.findById(id).select("role isBlocked");
+    const user = await User.findById(id).select("role isBlocked crmVacantPool");
     if (!user) return res.status(404).json({ message: "User not found" });
     if (user.role !== "user") {
       return res.status(403).json({ message: "Cannot change block status for admin accounts here" });
+    }
+    // A CRM vacant pool stays blocked, so it can never sign in (service/crmLeadMoveService.ts).
+    if ((user as any).crmVacantPool) {
+      return res.status(403).json({ message: "A vacant pool is not a person and stays blocked" });
     }
     user.isBlocked = blocked as any;
     await user.save();

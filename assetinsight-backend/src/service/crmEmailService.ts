@@ -64,16 +64,23 @@ export async function sendCrmAgentAssignedEmail(user: CrmEmailUser): Promise<voi
   await sendEmail(to, "CRM access enabled for your Asset Insight account", html);
 }
 
+/**
+ * `totalCount` (optional): how many tasks were assigned when `tasks` lists only
+ * some of them — an admin bulk move of thousands of leads names the first few
+ * and states the full count (service/crmLeadMoveService.ts).
+ */
 export async function sendCrmTasksAssignedEmail(
   user: CrmEmailUser,
-  tasks: AssignedTaskSummary[]
+  tasks: AssignedTaskSummary[],
+  totalCount?: number
 ): Promise<void> {
   const to = String(user.email || "").trim();
   if (!to || tasks.length === 0) return;
+  const count = Math.max(tasks.length, Math.floor(Number(totalCount) || 0));
 
   const html = getCrmTaskAssignedEmailHtml({
     userName: displayName(user),
-    taskCount: tasks.length,
+    taskCount: count,
     crmUrl: crmUrl(),
     tasks: tasks.map((task) => ({
       title: String(task.title || "CRM Follow-up"),
@@ -82,8 +89,8 @@ export async function sendCrmTasksAssignedEmail(
     })),
   });
 
-  const suffix = tasks.length === 1 ? "" : "s";
-  await sendEmail(to, `You have ${tasks.length} new CRM task${suffix}`, html);
+  const suffix = count === 1 ? "" : "s";
+  await sendEmail(to, `You have ${count} new CRM task${suffix}`, html);
 }
 
 export async function sendCrmTaskDigestEmail(user: CrmEmailUser, summary: DigestSummary): Promise<void> {

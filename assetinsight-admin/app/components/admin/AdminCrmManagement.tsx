@@ -28,7 +28,9 @@ import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
+import SwapHorizRoundedIcon from "@mui/icons-material/SwapHorizRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+import AdminCrmMoveLeadsDialog from "./AdminCrmMoveLeadsDialog";
 import {
   Alert,
   alpha,
@@ -1153,6 +1155,7 @@ export default function AdminCrmManagement() {
   const [importing, setImporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showCrmOpsModal, setShowCrmOpsModal] = useState(false);
+  const [showMoveLeadsModal, setShowMoveLeadsModal] = useState(false);
   const [parsingPreview, setParsingPreview] = useState(false);
   const [previewRows, setPreviewRows] = useState<PreviewLeadRow[]>([]);
   const [duplicateIssues, setDuplicateIssues] = useState<DuplicateIssue[]>([]);
@@ -2734,6 +2737,14 @@ export default function AdminCrmManagement() {
                   >
                     Team Ops
                   </Button>
+                  <Button
+                    variant="contained"
+                    color="secondary"
+                    startIcon={<SwapHorizRoundedIcon />}
+                    onClick={() => setShowMoveLeadsModal(true)}
+                  >
+                    Move Leads
+                  </Button>
                 </Stack>
               </Box>
 
@@ -3981,6 +3992,17 @@ export default function AdminCrmManagement() {
             )}
           </DialogContent>
         </Dialog>
+
+        <AdminCrmMoveLeadsDialog
+          open={showMoveLeadsModal}
+          fullScreen={!matchesMd}
+          onClose={() => setShowMoveLeadsModal(false)}
+          onMoved={() => {
+            void loadLeads();
+            void loadUsers();
+          }}
+          notify={pushToast}
+        />
 
         <Dialog open={showCrmOpsModal} onClose={() => setShowCrmOpsModal(false)} maxWidth="xl" fullWidth fullScreen={!matchesMd} scroll="paper">
           <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pb: 1 }}>
