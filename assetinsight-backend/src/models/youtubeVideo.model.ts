@@ -46,7 +46,19 @@ const schema = new Schema({
   providerDataCheckedAt: Date,
   providerAvailable: Boolean,
   dataRemovedAt: Date,
+  // Late delivery to Auctioneer 2.0 (service/auctioneer2LateVideoService.ts,
+  // owner 2026-11-20): a lot sent before its clip went Public gets the link
+  // afterwards. Checked = this video's report has nothing left to give it to;
+  // the rest pace the retries and keep two workers apart. Never touches the
+  // upload/publication lease above.
+  auctioneerVideoCheckedAt: Date,
+  auctioneerVideoLotsSent: Number,
+  auctioneerVideoAttempts: Number,
+  auctioneerVideoNextAt: Date,
+  auctioneerVideoLeaseUntil: Date,
+  auctioneerVideoError: String,
 }, { timestamps: true, versionKey: false });
 schema.index({ reportType: 1, reportId: 1, createdAt: 1 });
 schema.index({ status: 1, nextAttemptAt: 1, leaseUntil: 1 });
+schema.index({ status: 1, auctioneerVideoCheckedAt: 1 });
 export default mongoose.model("YoutubeVideo", schema);

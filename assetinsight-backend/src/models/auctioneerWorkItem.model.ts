@@ -116,6 +116,8 @@ export interface IAuctioneerDeliveryLotCheckpoint {
   patchedAt?: Date;
   photosUploadedAt?: Date;
   videoUploadedAt?: Date;
+  /** The video link reached Auctioneer after the lot was sent, because the clip went Public later (owner 2026-11-20). */
+  videoSentLateAt?: Date;
   conditionReportCompletedAt?: Date;
   /** The lot's own condition-report PDF was stored in Auctioneer (2026-10-29). */
   conditionReportPdfStoredAt?: Date;
@@ -356,6 +358,7 @@ const DeliveryLotCheckpointSchema = new Schema<IAuctioneerDeliveryLotCheckpoint>
     patchedAt: { type: Date },
     photosUploadedAt: { type: Date },
     videoUploadedAt: { type: Date },
+    videoSentLateAt: { type: Date },
     conditionReportCompletedAt: { type: Date },
     conditionReportPdfStoredAt: { type: Date },
     arrivedAt: { type: Date },

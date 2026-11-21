@@ -5,6 +5,7 @@ import YoutubeVideo from "../models/youtubeVideo.model.js";
 import { getYoutubeConnection, assertYoutubeConnection, getYoutubeAccessToken, encryptYoutubeSecret, decryptYoutubeSecret } from "./youtubeConnectionService.js";
 import { headR2Object, readR2ObjectRange, resolveR2ObjectLocationFromUrl } from "../utils/r2Storage/r2Upload.js";
 import { checkYoutubeUpload, publishYoutubeVideo, readYoutubeVideoStates, sendYoutubeChunk, startYoutubeUpload, YoutubeProviderError, type YoutubeUploadResult } from "./youtubeVideoClient.js";
+import { sendLateAuctioneerVideos } from "./auctioneer2LateVideoService.js";
 import { trustedLotVideos, youtubeAutomaticLotMetadata, youtubeReceiptEligible, youtubePublicationCurrent, youtubeReleaseEligible, youtubeVideoIdentity, YOUTUBE_PUBLICATION_POLICY_VERSION, YOUTUBE_CHUNK_BYTES, YOUTUBE_RELEASE_FIELDS, type YoutubeReportType, type YoutubeSubmission } from "./youtubeVideoPolicy.js";
 
 const modelFor = (type: YoutubeReportType): any => type === "asset" ? AssetReport : LotListing;
@@ -416,7 +417,10 @@ export function startYoutubePublicationMaintenance(signal: AbortSignal): () => P
   let pending: Promise<void> | undefined;
   const tick = async () => {
     if (pending || signal.aborted) return;
-    pending = refreshYoutubeVideoMetadata(signal).then(() => uploadReviewedYoutubeVideos(signal)).then(() => publishReleasedYoutubeVideos(signal)).then(() => undefined).catch(() => undefined);
+    // Last: a video that just turned Public is given to any lot already sent
+    // to Auctioneer 2.0 without it (auctioneer2LateVideoService.ts, 2026-11-20).
+    pending = refreshYoutubeVideoMetadata(signal).then(() => uploadReviewedYoutubeVideos(signal)).then(() => publishReleasedYoutubeVideos(signal))
+      .then(() => sendLateAuctioneerVideos(signal)).then(() => undefined).catch(() => undefined);
     try { await pending; } finally { pending = undefined; }
   };
   const timer = setInterval(() => { void tick(); }, 60_000);
