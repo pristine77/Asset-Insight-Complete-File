@@ -361,7 +361,9 @@ describe.sequential("automatic-public YouTube receipt lifecycle", () => {
   it("rejects stale concurrent publication snapshots after backoff and stops at five attempts", async () => {
     const f = await fixture({ status: "approved", release_status: "released" }); await prepareAutomatically(f); await uploadReviewedYoutubeVideos();
     await YoutubeVideo.updateOne({ _id: f.id }, { $set: { publicationAttempts: 3, nextAttemptAt: new Date(0) } });
-    mocks.publish.mockRejectedValue(new YoutubeProviderError("quotaExceeded", "Wait for quota"));
+    // Any failure but the daily limit, which waits for the reset without
+    // spending a try (tests/youtube-quota-resume.integration.test.ts).
+    mocks.publish.mockRejectedValue(new YoutubeProviderError("requestFailed", "YouTube request failed (500)."));
     let releaseFirst!: () => void; let releaseSecond!: () => void;
     const bothCaptured = new Promise<void>((resolve) => { releaseFirst = resolve; });
     const firstFinished = new Promise<void>((resolve) => { releaseSecond = resolve; });

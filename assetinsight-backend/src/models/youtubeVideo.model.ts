@@ -38,6 +38,10 @@ const schema = new Schema({
   leaseToken: { type: String, select: false },
   leaseUntil: Date,
   publicationAttempts: { type: Number, default: 0 },
+  // Daily resets waited through in a row because YouTube's daily limit refused
+  // this video (youtubeVideoPolicy.ts, YOUTUBE_QUOTA_MAX_DEFERRALS); 0 again
+  // once it uploads or publishes.
+  quotaDeferrals: { type: Number, default: 0 },
   nextAttemptAt: { type: Date, default: Date.now },
   lastError: String,
   lastErrorCode: String,

@@ -4,19 +4,11 @@ import YoutubeVideo from "../models/youtubeVideo.model.js";
 import AssetReport from "../models/asset.model.js";
 import LotListing from "../models/lotListing.model.js";
 import { getYoutubeConnection } from "../service/youtubeConnectionService.js";
-import { youtubeDataFresh, youtubeReceiptEligible, youtubePublicationCurrent, youtubeReleaseEligible, YOUTUBE_RELEASE_FIELDS } from "../service/youtubeVideoPolicy.js";
+import { youtubeDataFresh, YOUTUBE_RELEASE_FIELDS } from "../service/youtubeVideoPolicy.js";
+// The retry rule is shared with the automatic resume after YouTube's daily limit.
+import { youtubeRetryKind as publicationRetryKind } from "../service/youtubeVideoService.js";
 
 const reportModel = (type: string): any => type === "asset" ? AssetReport : LotListing;
-function publicationRetryKind(report: any, receipt: any, connection: Awaited<ReturnType<typeof getYoutubeConnection>>): "upload" | "publication" | null {
-  if (!connection || !youtubePublicationCurrent(receipt) || !youtubeReceiptEligible(report, receipt) || report.job_status !== "done" ||
-    report.files_generating || report.files_regenerating || connection.channelId !== receipt.channelId ||
-    connection.revision !== receipt.connectionRevision || (receipt.leaseUntil && receipt.leaseUntil > new Date())) return null;
-  if (!receipt.videoId && ["uploading", "needs_attention"].includes(receipt.status) &&
-    (!report.youtube_submission?.uploadGenerationToken || report.youtube_submission.uploadGenerationToken === receipt.generationToken)) return "upload";
-  if (receipt.videoId && receipt.visibilityPending && ["private", "unlisted", "public", "needs_attention"].includes(receipt.status) &&
-    youtubeReleaseEligible(report, receipt)) return "publication";
-  return null;
-}
 
 export async function listAdminYoutubeVideos(req: AdminAuthRequest, res: Response) {
   res.setHeader("Cache-Control", "no-store, private");
@@ -95,7 +87,7 @@ export async function retryAdminYoutubePublication(req: AdminAuthRequest, res: R
       $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: new Date() } }] }, {
       $set: { ...(retryKind === "upload" ? { status: "uploading", uploadAttempts: 0 } : {
         ...(receipt.status === "needs_attention" ? { status: "private" } : {}), publicationAttempts: 0,
-      }), nextAttemptAt: new Date(), lastError: "", lastErrorCode: "" },
+      }), nextAttemptAt: new Date(), lastError: "", lastErrorCode: "", quotaDeferrals: 0 },
     });
     if (!updated.matchedCount) return res.status(409).json({ code: "YOUTUBE_RETRY_CHANGED", message: "Video status changed. Refresh before retrying." });
     return res.status(202).json({ message: retryKind === "upload"

@@ -123,6 +123,52 @@ export function youtubeUploadOffset(range: string | null, total: number): number
   return offset;
 }
 
+/*
+ * YOUTUBE'S DAILY LIMIT (owner, 2026-11-20: "Yes, build it").
+ *
+ * A project's YouTube Data API quota resets at midnight Pacific time; an
+ * upload or visibility change refused for it (quotaExceeded, or the channel's
+ * uploadLimitExceeded) cannot succeed before then. Retrying it on the usual
+ * 1/2/4/8/16-minute backoff spent all five tries inside the same quota day and
+ * left the video at "Needs attention" until someone pressed Resume — on
+ * 18 Nov 2026 a 21-clip batch stopped that way for two days. Such a stop now
+ * waits for the reset without spending a try, and a video already parked by
+ * one is resumed after it (youtubeVideoService.ts).
+ */
+export const YOUTUBE_QUOTA_ERROR_CODES = ["quotaExceeded", "uploadLimitExceeded"] as const;
+/** Code given when the limit has refused a video this many daily resets running. */
+export const YOUTUBE_QUOTA_PERSISTENT_CODE = "YOUTUBE_QUOTA_PERSISTENT";
+export const YOUTUBE_QUOTA_MAX_DEFERRALS = 7;
+/** Shown on the admin YouTube page while a video waits for the reset. */
+export const YOUTUBE_QUOTA_WAIT_MESSAGE = "YouTube's daily upload limit was reached. This video continues on its own after the limit resets at midnight Pacific time; nothing needs to be done.";
+export const YOUTUBE_QUOTA_PERSISTENT_MESSAGE = `YouTube refused this video for its daily limit ${YOUTUBE_QUOTA_MAX_DEFERRALS} days running. Check the channel's upload limits, then press Resume.`;
+/** Minutes after midnight Pacific before trying, so a clock a little ahead does not try just before the reset. */
+const YOUTUBE_QUOTA_RESET_MARGIN_MS = 10 * 60_000;
+
+export function isYoutubeQuotaError(code: unknown): boolean {
+  return (YOUTUBE_QUOTA_ERROR_CODES as readonly string[]).includes(String(code));
+}
+
+/** Pacific time's offset from UTC at that instant, in minutes (-480 standard, -420 daylight). */
+function pacificOffsetMinutes(at: Date): number {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", timeZoneName: "shortOffset" })
+    .formatToParts(at).find((part) => part.type === "timeZoneName")?.value || "";
+  const match = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(name);
+  if (!match) return -480;
+  return (match[1] === "-" ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] || 0));
+}
+
+/** The next midnight Pacific time after `now`, plus a short margin: when YouTube's daily quota is fresh again. */
+export function nextYoutubeQuotaReset(now: Date = new Date()): Date {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(now).map((part) => [part.type, part.value]));
+  const nextMidnightAsUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + 1);
+  // Midnight there is UTC minus that night's offset; daylight time changes at
+  // 2 a.m., so the offset an hour after midnight is that midnight's offset.
+  const offset = pacificOffsetMinutes(new Date(nextMidnightAsUtc - pacificOffsetMinutes(new Date(nextMidnightAsUtc)) * 60_000 + 3_600_000));
+  return new Date(nextMidnightAsUtc - offset * 60_000 + YOUTUBE_QUOTA_RESET_MARGIN_MS);
+}
+
 export function youtubeReleaseEligible(report: any, receipt: any): boolean {
   const intent = report?.youtube_submission;
   return Boolean(receipt?.status !== "data_removed" && report && report.youtube_videos_enabled === true && intent && report.status === "approved" && report.release_status === "released" &&

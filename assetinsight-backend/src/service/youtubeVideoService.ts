@@ -6,13 +6,28 @@ import { getYoutubeConnection, assertYoutubeConnection, getYoutubeAccessToken, e
 import { headR2Object, readR2ObjectRange, resolveR2ObjectLocationFromUrl } from "../utils/r2Storage/r2Upload.js";
 import { checkYoutubeUpload, publishYoutubeVideo, readYoutubeVideoStates, sendYoutubeChunk, startYoutubeUpload, YoutubeProviderError, type YoutubeUploadResult } from "./youtubeVideoClient.js";
 import { sendLateAuctioneerVideos } from "./auctioneer2LateVideoService.js";
-import { trustedLotVideos, youtubeAutomaticLotMetadata, youtubeReceiptEligible, youtubePublicationCurrent, youtubeReleaseEligible, youtubeVideoIdentity, YOUTUBE_PUBLICATION_POLICY_VERSION, YOUTUBE_CHUNK_BYTES, YOUTUBE_RELEASE_FIELDS, type YoutubeReportType, type YoutubeSubmission } from "./youtubeVideoPolicy.js";
+import { trustedLotVideos, youtubeAutomaticLotMetadata, youtubeReceiptEligible, youtubePublicationCurrent, youtubeReleaseEligible, youtubeVideoIdentity, YOUTUBE_PUBLICATION_POLICY_VERSION, YOUTUBE_CHUNK_BYTES, YOUTUBE_RELEASE_FIELDS, type YoutubeReportType, type YoutubeSubmission,
+  isYoutubeQuotaError, nextYoutubeQuotaReset, YOUTUBE_QUOTA_ERROR_CODES, YOUTUBE_QUOTA_MAX_DEFERRALS, YOUTUBE_QUOTA_PERSISTENT_CODE, YOUTUBE_QUOTA_PERSISTENT_MESSAGE, YOUTUBE_QUOTA_WAIT_MESSAGE } from "./youtubeVideoPolicy.js";
 
 const modelFor = (type: YoutubeReportType): any => type === "asset" ? AssetReport : LotListing;
 const LEASE_MS = 5 * 60_000;
 const safeError = (error: unknown) => error instanceof YoutubeProviderError ? error.message :
   "YouTube video preparation could not finish. Originals are retained. Check the channel connection and video status in Admin YouTube.";
 const safeErrorCode = (error: unknown) => error instanceof YoutubeProviderError ? error.code : "YOUTUBE_PREPARATION_FAILED";
+
+/**
+ * The fields that park a video refused for YouTube's daily limit until the
+ * next reset (youtubeVideoPolicy.ts), giving back the try the attempt was
+ * charged (`restore`). After YOUTUBE_QUOTA_MAX_DEFERRALS resets in a row it
+ * waits for a person instead, under a code the automatic resume leaves alone.
+ */
+function quotaStop(previousDeferrals: unknown, code: string, restore: Record<string, number>) {
+  const quotaDeferrals = (Number(previousDeferrals) || 0) + 1;
+  if (quotaDeferrals >= YOUTUBE_QUOTA_MAX_DEFERRALS) {
+    return { ...restore, quotaDeferrals, status: "needs_attention", lastError: YOUTUBE_QUOTA_PERSISTENT_MESSAGE, lastErrorCode: YOUTUBE_QUOTA_PERSISTENT_CODE };
+  }
+  return { ...restore, quotaDeferrals, nextAttemptAt: nextYoutubeQuotaReset(), lastError: YOUTUBE_QUOTA_WAIT_MESSAGE, lastErrorCode: code };
+}
 
 /** Called only by explicit submit/resubmit; saved in the same parent CAS/outbox. */
 export async function attachYoutubeSubmission(report: any, generationToken: string): Promise<void> {
@@ -268,7 +283,7 @@ async function uploadAutomaticallyAuthorizedVideo(id: string, expectedPublicatio
     const applyResult = async (result: YoutubeUploadResult) => {
       if ("videoId" in result) {
         await write({ ...result, offset: size, status: "private", uploadedAt: new Date(), providerDataCheckedAt: new Date(), providerAvailable: true,
-          lastError: "", lastErrorCode: "", nextAttemptAt: new Date(), publicationAttempts: 0, visibilityPending: true }, { sessionCipher: 1 });
+          lastError: "", lastErrorCode: "", nextAttemptAt: new Date(), publicationAttempts: 0, quotaDeferrals: 0, visibilityPending: true }, { sessionCipher: 1 });
         return true;
       }
       await write({ offset: result.offset });
@@ -315,6 +330,12 @@ async function uploadAutomaticallyAuthorizedVideo(id: string, expectedPublicatio
     }
     throw new Error("YouTube did not confirm the completed video.");
   } catch (error) {
+    if (error instanceof YoutubeProviderError && isYoutubeQuotaError(error.code)) {
+      // YouTube's daily limit: nothing succeeds before the reset, so wait for
+      // it without spending one of the five tries; the saved session is kept.
+      await write(quotaStop(receipt.quotaDeferrals, error.code, { uploadAttempts: expectedAttempts })).catch(() => undefined);
+      throw error;
+    }
     await write({ lastError: safeError(error), lastErrorCode: safeErrorCode(error), nextAttemptAt: new Date(Date.now() + Math.min(3600_000, 60_000 * 2 ** receipt.uploadAttempts)),
       ...(receipt.uploadAttempts >= 5 ? { status: "needs_attention" } : {}),
     }).catch(() => undefined);
@@ -397,20 +418,75 @@ export async function publishReleasedYoutubeVideos(signal?: AbortSignal): Promis
         { title: receipt.title!, description: receipt.description || "" }, "public");
       const persisted = await YoutubeVideo.updateOne({ _id: receipt._id, status: { $ne: "data_removed" },
         publicationToken: receipt.publicationToken, generationToken: receipt.generationToken, leaseToken: token, leaseUntil: { $gt: new Date() } }, { $set: confirmed
-        ? { status: "public", publishedAt: new Date(), providerDataCheckedAt: new Date(), providerAvailable: true, visibilityPending: false, lastError: "", lastErrorCode: "" }
+        ? { status: "public", publishedAt: new Date(), providerDataCheckedAt: new Date(), providerAvailable: true, visibilityPending: false, lastError: "", lastErrorCode: "", quotaDeferrals: 0 }
         : { status: "needs_attention", providerDataCheckedAt: new Date(), providerAvailable: true, lastErrorCode: "YOUTUBE_VISIBILITY_UNCONFIRMED", lastError: "YouTube did not confirm public visibility and saved metadata. Check YouTube Studio and channel eligibility." } });
       if (confirmed && persisted.matchedCount) published += 1;
     } catch (error) {
+      const quota = error instanceof YoutubeProviderError && isYoutubeQuotaError(error.code);
       await YoutubeVideo.updateOne({ _id: receipt._id, status: { $ne: "data_removed" }, publicationToken: receipt.publicationToken,
-        generationToken: receipt.generationToken, leaseToken: token, leaseUntil: { $gt: new Date() } }, { $set: {
-        lastError: safeError(error), lastErrorCode: safeErrorCode(error), nextAttemptAt: new Date(Date.now() + Math.min(3600_000, 60_000 * 2 ** receipt.publicationAttempts)),
-        ...(receipt.publicationAttempts >= 4 ? { status: "needs_attention" } : {}),
-      } });
+        generationToken: receipt.generationToken, leaseToken: token, leaseUntil: { $gt: new Date() } }, { $set: quota
+        // YouTube's daily limit: wait for the reset without spending a try.
+        ? quotaStop(receipt.quotaDeferrals, (error as YoutubeProviderError).code, { publicationAttempts: receipt.publicationAttempts })
+        : {
+          lastError: safeError(error), lastErrorCode: safeErrorCode(error), nextAttemptAt: new Date(Date.now() + Math.min(3600_000, 60_000 * 2 ** receipt.publicationAttempts)),
+          ...(receipt.publicationAttempts >= 4 ? { status: "needs_attention" } : {}),
+        } });
     } finally {
       await YoutubeVideo.updateOne({ _id: receipt._id, leaseToken: token }, { $unset: { leaseToken: 1, leaseUntil: 1 } });
     }
   }
   return published;
+}
+
+/**
+ * Whether a video may be retried now, and how: "upload" resumes the same saved
+ * upload, "publication" asks YouTube again to make the existing video Public.
+ * One rule for the admin page's Resume/Retry (youtubeVideos.controller.ts) and
+ * the automatic resume after YouTube's daily limit below.
+ */
+export function youtubeRetryKind(report: any, receipt: any, connection: Awaited<ReturnType<typeof getYoutubeConnection>>): "upload" | "publication" | null {
+  if (!connection || !youtubePublicationCurrent(receipt) || !youtubeReceiptEligible(report, receipt) || report.job_status !== "done" ||
+    report.files_generating || report.files_regenerating || connection.channelId !== receipt.channelId ||
+    connection.revision !== receipt.connectionRevision || (receipt.leaseUntil && receipt.leaseUntil > new Date())) return null;
+  if (!receipt.videoId && ["uploading", "needs_attention"].includes(receipt.status) &&
+    (!report.youtube_submission?.uploadGenerationToken || report.youtube_submission.uploadGenerationToken === receipt.generationToken)) return "upload";
+  if (receipt.videoId && receipt.visibilityPending && ["private", "unlisted", "public", "needs_attention"].includes(receipt.status) &&
+    youtubeReleaseEligible(report, receipt)) return "publication";
+  return null;
+}
+
+/**
+ * A video parked at "Needs attention" by YouTube's daily limit — by the
+ * five-try backoff before 2026-11-20, or by anything that still parks one —
+ * resumes after the reset that followed its stop, exactly as the admin page's
+ * Resume/Retry would (same rule, same fields). Only the limit: a video stopped
+ * for any other reason, or one the rule will not retry (an uncertain final
+ * upload, a changed report), still waits for a person.
+ */
+export async function resumeQuotaStoppedYoutubeVideos(signal?: AbortSignal): Promise<number> {
+  if (signal?.aborted) return 0;
+  const connection = await getYoutubeConnection();
+  if (!connection) return 0;
+  const candidates = await YoutubeVideo.find({ status: "needs_attention", lastErrorCode: { $in: [...YOUTUBE_QUOTA_ERROR_CODES] },
+    channelId: connection.channelId, connectionRevision: connection.revision,
+    $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: new Date() } }] })
+    .select("+sourceUrl +description +publicationToken").sort({ updatedAt: 1, _id: 1 }).limit(20).lean();
+  let resumed = 0;
+  for (const receipt of candidates) {
+    if (signal?.aborted) break;
+    // Stopped in the current quota day: nothing can succeed before the reset.
+    if (nextYoutubeQuotaReset(new Date(receipt.updatedAt)) > new Date()) continue;
+    const report = await modelFor(receipt.reportType as YoutubeReportType).findById(receipt.reportId).select(YOUTUBE_RELEASE_FIELDS).lean();
+    const kind = youtubeRetryKind(report, receipt, connection);
+    if (!kind) continue;
+    const updated = await YoutubeVideo.updateOne({ _id: receipt._id, status: "needs_attention", publicationToken: receipt.publicationToken, updatedAt: receipt.updatedAt,
+      $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: new Date() } }] }, {
+      $set: { ...(kind === "upload" ? { status: "uploading", uploadAttempts: 0 } : { status: "private", publicationAttempts: 0 }),
+        nextAttemptAt: new Date(), lastError: "", lastErrorCode: "" },
+    });
+    resumed += updated.modifiedCount;
+  }
+  return resumed;
 }
 
 export function startYoutubePublicationMaintenance(signal: AbortSignal): () => Promise<void> {
@@ -419,7 +495,8 @@ export function startYoutubePublicationMaintenance(signal: AbortSignal): () => P
     if (pending || signal.aborted) return;
     // Last: a video that just turned Public is given to any lot already sent
     // to Auctioneer 2.0 without it (auctioneer2LateVideoService.ts, 2026-11-20).
-    pending = refreshYoutubeVideoMetadata(signal).then(() => uploadReviewedYoutubeVideos(signal)).then(() => publishReleasedYoutubeVideos(signal))
+    pending = refreshYoutubeVideoMetadata(signal).then(() => resumeQuotaStoppedYoutubeVideos(signal))
+      .then(() => uploadReviewedYoutubeVideos(signal)).then(() => publishReleasedYoutubeVideos(signal))
       .then(() => sendLateAuctioneerVideos(signal)).then(() => undefined).catch(() => undefined);
     try { await pending; } finally { pending = undefined; }
   };
